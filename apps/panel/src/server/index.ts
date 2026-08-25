@@ -1,21 +1,42 @@
 import { createServer, type Server } from "node:http";
+import type { Express } from "express";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { loadEnv, generateEphemeralSecret, ConfigError } from "./config/env.js";
 import { createLogger } from "./shared/logger.js";
-import { createApp } from "./http/app.js";
+import { createApp, type ReadinessComponent } from "./http/app.js";
+import { openAndMigrate, type Database } from "./infra/db/index.js";
+import { UsersRepo } from "./modules/users/repo.js";
+import { AuthService } from "./modules/auth/service.js";
+import { AuditService } from "./modules/audit/service.js";
+import { authRouter } from "./http/routes/auth.js";
+import { usersRouter } from "./http/routes/users.js";
+
+export interface PanelContext {
+  env: ReturnType<typeof loadEnv>;
+  db: Database;
+  users: UsersRepo;
+  auth: AuthService;
+  audit: AuditService;
+}
 
 /**
- * Composition root: parse env -> logger -> http app -> listen -> graceful shutdown.
- * Socket.IO, database and jobs attach here in later phases.
+ * Composition root: env -> logger -> db/migrations -> services -> http app -> listen.
+ * Socket.IO and background jobs attach here in later slices.
  */
-function main(): void {
+export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
+  ctx: PanelContext;
+  server: Server;
+  app: Express;
+} {
   let env;
   try {
-    env = loadEnv();
+    env = loadEnv(sourceEnv);
   } catch (err) {
-    // Fail closed, visibly, without secrets in output.
     const message = err instanceof ConfigError ? err.message : "Invalid configuration";
     process.stderr.write(`startup_refused: ${message}\n`);
-    process.exit(78); // EX_CONFIG
+    process.exit(78);
   }
 
   // SEC-001 companion: dev/test convenience secret is ephemeral and loudly warned.
@@ -27,15 +48,56 @@ function main(): void {
   }
 
   const logger = createLogger(env.LOG_LEVEL, env.isProduction);
-  const app = createApp({ env, logger });
+
+  const dataDir = resolve(env.DATA_DIR);
+  mkdirSync(dataDir, { recursive: true });
+  const db = openAndMigrate(join(dataDir, "panel.db"));
+
+  const audit = new AuditService(db);
+  const users = new UsersRepo(db, env.BCRYPT_COST);
+  const auth = new AuthService(
+    { secret: jwtSecret, ttlSeconds: env.JWT_TTL_SECONDS },
+    users,
+    audit,
+  );
+
+  const apiRouters = [authRouter(auth, users), usersRouter(users, audit, auth)];
+
+  const app = createApp({
+    env,
+    logger,
+    readiness: async () => {
+      try {
+        const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string };
+        return [
+          { name: "db", ok: row.integrity_check === "ok", detail: row.integrity_check },
+          { name: "engine", ok: true, detail: "not configured yet" },
+        ];
+      } catch (err) {
+        return [{ name: "db", ok: false, detail: String(err) }];
+      }
+    },
+    registerRoutes: (expressApp) => {
+      for (const r of apiRouters) {
+        expressApp.use("/api/v3", r);
+      }
+    },
+  });
+
   const server: Server = createServer(app);
 
-  server.listen(env.PORT, env.HOST, () => {
-    logger.info({ host: env.HOST, port: env.PORT, env: env.NODE_ENV }, "panel_listening");
+  return { ctx: { env, db, users, auth, audit }, server, app };
+}
+
+/** CLI entrypoint. */
+function main(): void {
+  const { server, ctx } = buildPanel();
+  server.listen(ctx.env.PORT, ctx.env.HOST, () => {
+    process.stdout.write(`panel_listening host=${ctx.env.HOST} port=${ctx.env.PORT}\n`);
   });
 
   const shutdown = (signal: string) => {
-    logger.info({ signal }, "shutting_down");
+    process.stdout.write(`shutting_down signal=${signal}\n`);
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 10_000).unref();
   };
@@ -44,15 +106,18 @@ function main(): void {
 
   // NFR-005: crash loudly; supervisor restarts. No half-states are hidden.
   process.on("unhandledRejection", (reason) => {
-    logger.error({ reason }, "unhandled_rejection");
+    process.stderr.write(`unhandled_rejection ${String(reason)}\n`);
   });
   process.on("uncaughtException", (err) => {
-    logger.fatal({ err }, "uncaught_exception");
+    process.stderr.write(`uncaught_exception ${err.stack ?? err.message}\n`);
     process.exit(1);
   });
-
-  // jwtSecret intentionally not exported further yet; auth module consumes it in the next slice.
-  void jwtSecret;
 }
 
-main();
+// Only run the listener when executed directly (tests import buildPanel).
+const invoked = process.argv[1]
+  ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+  : false;
+if (invoked) {
+  main();
+}
