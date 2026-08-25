@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0-alpha.1",
   "license": "Apache-2.0",
+  "type": "module",
   "engines": {
     "node": ">=24"
   },
@@ -11,14 +12,19 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build -w packages/contracts && npm run build -w apps/panel",
+    "lint": "eslint . && prettier --check .",
+    "typecheck": "npm run build -w packages/contracts && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspace apps/panel",
     "dev": "npm run dev --workspace apps/panel",
     "sbom": "cyclonedx-npm --omit=dev --output-file sbom.json"
   },
   "devDependencies": {
-    "@cyclonedx/cyclonedx-npm": "^2.0.0"
+    "@cyclonedx/cyclonedx-npm": "^2.0.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-prettier": "^5.5.6",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.68.0"
   }
 }
