@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "incremental": true,
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["**/*.spec.ts", "test", "dist"]
+}
