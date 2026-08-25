@@ -1,0 +1,35 @@
+# Dependencies / build output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Runtime data & secrets - never commit
+.data/
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Backups / server files / logs
+backups/
+logs/
+*.log
+works/
+tmp/
+.tmp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

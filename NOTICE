@@ -1,0 +1,14 @@
+Renom
+Copyright 2026 the Renom authors
+
+This product includes software developed as a derivative of JTG Panel
+(https://github.com/JishnuTheGamer/Jtg), used with the upstream author's consent.
+
+Conceptual influence (no code copied unless noted):
+- Pterodactyl Panel / wings / yolks (MIT, (c) Matthew Penner and contributors)
+  - permission-string vocabulary, allocations model, egg/blueprint concepts
+- PufferPanel (Apache-2.0) - template schema concepts
+- LinuxGSM (MIT) - stop-signal ladder patterns
+
+Third-party runtime dependencies are listed in apps/panel/package.json; their
+licenses are inventoried in CI (SBOM job).
