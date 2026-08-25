@@ -20,7 +20,7 @@
     "sbom": "cyclonedx-npm --omit=dev --output-file sbom.json"
   },
   "devDependencies": {
-    "@cyclonedx/cyclonedx-npm": "^2.0.0",
+    "@cyclonedx/cyclonedx-npm": "^6.0.1",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-prettier": "^5.5.6",
