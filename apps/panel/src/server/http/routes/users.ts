@@ -1,0 +1,145 @@
+import { Router } from "express";
+import { z } from "zod";
+import type { UsersRepo, UserRow } from "../../modules/users/repo.js";
+import type { AuditService } from "../../modules/audit/service.js";
+import type { AuthService } from "../../modules/auth/service.js";
+import { requireAuth, requireAdmin } from "../middleware/authn.js";
+import { parseBody, parseQuery } from "../../shared/validate.js";
+import { NotFoundError, ConflictError } from "../../shared/errors.js";
+import { pageQuerySchema } from "@renom/contracts";
+import { toPublicUser } from "../../modules/auth/service.js";
+
+const createUserSchema = z.object({
+  username: z.string().regex(/^[a-zA-Z0-9_-]{3,32}$/, "3-32 chars: letters, digits, _ or -"),
+  password: z.string().min(8).max(128),
+  email: z.string().email().optional(),
+  role: z.enum(["admin", "user"]).default("user"),
+  displayName: z.string().max(64).optional(),
+});
+
+const patchUserSchema = z.object({
+  suspended: z.boolean().optional(),
+  displayName: z.string().max(64).optional(),
+  email: z.string().email().optional(),
+  quotaMaxServers: z.number().int().min(0).max(1000).optional(),
+  quotaRamMb: z.number().int().min(0).max(1_048_576).optional(),
+  quotaDiskMb: z.number().int().min(0).max(10_485_760).optional(),
+});
+
+export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthService): Router {
+  const router = Router();
+
+  router.use(requireAuth(auth));
+  router.use(requireAdmin);
+
+  router.get("/users", (req, res, next) => {
+    try {
+      const q = parseQuery(pageQuerySchema, req);
+      const rows = users.list({ limit: q.limit, cursor: q.cursor });
+      res.json({
+        items: rows.map(toPublicUserWithQuotas),
+        nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.post("/users", (req, res, next) => {
+    try {
+      const body = parseBody(createUserSchema, req);
+      if (users.byUsername(body.username)) {
+        throw new ConflictError("Username already taken");
+      }
+      const user = users.create({
+        username: body.username,
+        password: body.password,
+        email: body.email,
+        role: body.role,
+        displayName: body.displayName,
+      });
+      audit.record({
+        event: "user.create",
+        actorUserId: req.principal!.userId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        target: { userId: user.id },
+      });
+      res.status(201).json({ user: toPublicUserWithQuotas(user) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.patch("/users/:id", (req, res, next) => {
+    try {
+      const target = users.byId(req.params.id ?? "");
+      if (!target) throw new NotFoundError("User not found");
+      const body = parseBody(patchUserSchema, req);
+      users.update(target.id, body);
+      if (body.suspended !== undefined) {
+        // FR-007/009: suspension invalidates sessions via passwordVersion bump
+        if (body.suspended) users.bumpPasswordVersion(target.id);
+        audit.record({
+          event: body.suspended ? "user.suspend" : "user.resume",
+          actorUserId: req.principal!.userId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          target: { userId: target.id },
+        });
+      }
+      const updated = users.byId(target.id)!;
+      res.json({ user: toPublicUserWithQuotas(updated) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/users/:id", (req, res, next) => {
+    try {
+      const target = users.byId(req.params.id ?? "");
+      if (!target) throw new NotFoundError("User not found");
+      if (target.role === "owner") {
+        throw new ConflictError("The owner account cannot be deleted");
+      }
+      const owned = users.countOwnedServers(target.id);
+      const transferTo = typeof req.query.transferTo === "string" ? req.query.transferTo : null;
+      if (owned > 0 && !transferTo) {
+        throw new ConflictError("User owns servers; provide transferTo user id", {
+          ownedServers: owned,
+        });
+      }
+      let transferredServers = 0;
+      try {
+        const r = users.deleteCascade(target.id, transferTo);
+        transferredServers = r.transferredServers;
+      } catch (err) {
+        throw new ConflictError(err instanceof Error ? err.message : "Delete failed");
+      }
+      audit.record({
+        event: "user.delete",
+        actorUserId: req.principal!.userId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        target: { userId: target.id, transferredServers },
+      });
+      res.status(204).send();
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  return router;
+}
+
+function toPublicUserWithQuotas(u: UserRow) {
+  return {
+    ...toPublicUser(u),
+    quotas: {
+      maxServers: u.quota_max_servers,
+      ramMb: u.quota_ram_mb,
+      diskMb: u.quota_disk_mb,
+    },
+    suspended: u.suspended === 1,
+  };
+}
