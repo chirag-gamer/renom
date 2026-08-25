@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import type { UsersRepo, UserRow } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
@@ -28,24 +28,29 @@ const patchUserSchema = z.object({
 
 export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthService): Router {
   const router = Router();
+  // Per-route guards ONLY: a router-level .use() would intercept every later-mounted
+  // /api/v3 path (Express routers fall through when no route matches, but a failed
+  // guard short-circuits with its own error).
+  const admin = [requireAuth(auth), requireAdmin] as const;
 
-  router.use(requireAuth(auth));
-  router.use(requireAdmin);
+  router.get(
+    "/users",
+    ...admin,
+    (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const q = parseQuery(pageQuerySchema, req);
+        const rows = users.list({ limit: q.limit, cursor: q.cursor });
+        res.json({
+          items: rows.map(toPublicUserWithQuotas),
+          nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
+        });
+      } catch (e) {
+        next(e);
+      }
+    },
+  );
 
-  router.get("/users", (req, res, next) => {
-    try {
-      const q = parseQuery(pageQuerySchema, req);
-      const rows = users.list({ limit: q.limit, cursor: q.cursor });
-      res.json({
-        items: rows.map(toPublicUserWithQuotas),
-        nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
-      });
-    } catch (e) {
-      next(e);
-    }
-  });
-
-  router.post("/users", (req, res, next) => {
+  router.post("/users", ...admin, (req, res, next) => {
     try {
       const body = parseBody(createUserSchema, req);
       if (users.byUsername(body.username)) {
@@ -71,7 +76,7 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
     }
   });
 
-  router.patch("/users/:id", (req, res, next) => {
+  router.patch("/users/:id", ...admin, (req, res, next) => {
     try {
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
@@ -95,7 +100,7 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
     }
   });
 
-  router.delete("/users/:id", (req, res, next) => {
+  router.delete("/users/:id", ...admin, (req, res, next) => {
     try {
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
