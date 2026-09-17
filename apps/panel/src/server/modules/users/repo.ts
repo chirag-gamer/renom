@@ -28,7 +28,9 @@ export class UsersRepo {
   ) {}
 
   byUsername(username: string): UserRow | null {
-    const row = this.db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(username) as UserRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE")
+      .get(username) as UserRow | undefined;
     return row ?? null;
   }
 
@@ -112,8 +114,7 @@ export class UsersRepo {
 
   bumpPasswordVersion(id: string): number {
     const row = this.db.prepare("SELECT password_version FROM users WHERE id = ?").get(id) as
-      | { password_version: number }
-      | undefined;
+      { password_version: number } | undefined;
     if (!row) throw new Error("user not found");
     const next = row.password_version + 1;
     this.db

@@ -1,17 +1,23 @@
 import { createServer, type Server } from "node:http";
-import type { Express } from "express";
+import express, { type Express } from "express";
+import { existsSync } from "node:fs";
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadEnv, generateEphemeralSecret, ConfigError } from "./config/env.js";
 import { createLogger } from "./shared/logger.js";
-import { createApp, type ReadinessComponent } from "./http/app.js";
+import { createApp } from "./http/app.js";
 import { openAndMigrate, type Database } from "./infra/db/index.js";
 import { UsersRepo } from "./modules/users/repo.js";
 import { AuthService } from "./modules/auth/service.js";
 import { AuditService } from "./modules/audit/service.js";
 import { authRouter } from "./http/routes/auth.js";
+import { setupRouter } from "./http/routes/setup.js";
 import { usersRouter } from "./http/routes/users.js";
+import { filesRouter } from "./http/routes/files.js";
+import { blueprintsRouter } from "./http/routes/blueprints.js";
+import { FilesService } from "./modules/files/service.js";
+import { BlueprintRegistry } from "./modules/blueprints/registry.js";
 
 export interface PanelContext {
   env: ReturnType<typeof loadEnv>;
@@ -60,8 +66,22 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
     users,
     audit,
   );
+  const files = new FilesService();
+  const blueprints = new BlueprintRegistry(db);
+  // Idempotent: only seeds slugs missing from the table (safe on every boot).
+  blueprints.seedBuiltins();
 
-  const apiRouters = [authRouter(auth, users), usersRouter(users, audit, auth)];
+  const apiRouters = [
+    setupRouter(users, audit),
+    authRouter(auth, users),
+    usersRouter(users, audit, auth),
+    filesRouter(db, env, files, audit, auth),
+    blueprintsRouter(blueprints, auth),
+  ];
+
+  // Web client (apps/panel/public): src/server -> ../../public, same for dist/server.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const publicDir = resolve(here, "../../public");
 
   const app = createApp({
     env,
@@ -80,6 +100,15 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
     registerRoutes: (expressApp) => {
       for (const r of apiRouters) {
         expressApp.use("/api/v3", r);
+      }
+      if (existsSync(publicDir)) {
+        expressApp.use(express.static(publicDir, { index: false, maxAge: "1h" }));
+        // Client-side view routing: anything that is not an API call gets the app shell.
+        expressApp.get(/^\/(?!api\/).*/, (_req, res, next) => {
+          res.sendFile(join(publicDir, "index.html"), (err) => {
+            if (err) next(err);
+          });
+        });
       }
     },
   });

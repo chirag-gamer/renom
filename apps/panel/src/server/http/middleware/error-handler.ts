@@ -18,7 +18,9 @@ export function errorHandler(logger: Logger) {
     }
 
     if (isBodyLimitError(err)) {
-      res.status(413).json(new AppError("payload_too_large", 413, "Request body too large").toBody());
+      res
+        .status(413)
+        .json(new AppError("payload_too_large", 413, "Request body too large").toBody());
       return;
     }
 

@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-| Version/channel | Status |
-|---|---|
-| latest tagged release (`x.y.z`) | supported - security fixes |
-| `dev` branch head | development only - no support guarantees |
-| anything older | unsupported - upgrade |
+| Version/channel                 | Status                                   |
+| ------------------------------- | ---------------------------------------- |
+| latest tagged release (`x.y.z`) | supported - security fixes               |
+| `dev` branch head               | development only - no support guarantees |
+| anything older                  | unsupported - upgrade                    |
 
 ## Reporting a vulnerability
 
