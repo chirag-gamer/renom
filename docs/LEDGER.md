@@ -1,9 +1,9 @@
 # Completion ledger
 
 `Requirement → implementation → tests → verification → commit → docs`.
-A requirement is complete only when all five exist. Suite: **107/107 green**
-(`npm test`), `npm run build` + `npm run typecheck` clean, live smoke-tested
-2026-09-17 (setup → owner → login → power → console over real HTTP + WebSocket).
+A requirement is complete only when all five exist. Suite: **127/127 green**
+(`npm test`), `npm run build` + `npm run typecheck` clean, CI green on PR #10,
+live smoke-tested including a real Paper boot (`Done (40.4s)!`).
 
 ## Auth, users, setup (Phases 0–1, 6)
 
@@ -53,6 +53,17 @@ A requirement is complete only when all five exist. Suite: **107/107 green**
 | Idempotent installer, admin prompt | `install.sh`, CLI `--check` | manual review + `bash` unavailable on host; CLI paths executed | partial⚠️ | `24f05ba` / `0166af2` | `README.md` |
 | Provenance / license gate | `docs/PROVENANCE.md` (consent re-affirmed 2026-09-17, f8900ee) | n/a (record) | owner statement | `24f05ba` | `NOTICE`, `LICENSE` |
 
+## Minecraft, tunnels, installer (Phase 5, 7, 9)
+
+| Requirement | Implementation | Tests | Verify | Commit | Docs |
+|---|---|---|---|---|---|
+| Declarative install execution (paper/vanilla/purpur) | `modules/runtime/install.ts` (Fill v3, piston-meta, Purpur v2, checksums) | `minecraft.spec.ts` (fetch, corrupt refusal, escape refusal, unwired op) | suite + real Paper boot | `61156e9` | `CHANGELOG.md` |
+| Explicit EULA acceptance | `createServerSchema.eulaAccepted`, route gate, `recordEula` | `minecraft.spec.ts` (400 without, 201 with) | suite | `61156e9` | UI checkbox |
+| Startup variables API | `GET/PUT /servers/:id/variables` + `validateVariable` | `minecraft.spec.ts` (unknown 400, internal 403, roundtrip) | suite | `61156e9` | UI Startup tab |
+| Minekube tunnel (opt-in) | `modules/tunnels/minekube.ts`, `http/routes/tunnel.ts`, `CONNECT_ENDPOINT` env | `minecraft.spec.ts` (parse/validate/empty) | suite | `61156e9` | UI Network tab |
+| `renom.sh` dashboard + hardened installer | `renom.sh`, `install.sh`, `.env.example` | review (no Linux host) | partial⚠️ | `9f8789d` | `README.md` |
+| Warm-paper theme + server tabs | `public/*` | `setup.spec.ts` (shell served) | suite + live fetch | `8a1d6a4` | — |
+
 ## Honestly deferred (waivers, not silent gaps)
 
 | Item | Status | Reason |
@@ -60,17 +71,37 @@ A requirement is complete only when all five exist. Suite: **107/107 green**
 | Docker engine | Refused loudly (409) for docker blueprints | No Docker on build host; interface boundary (`LocalProcessEngine`) ready for a `DockerEngine` |
 | SFTP daemon | Credential table exists; no daemon | Needs `ssh2` + security review; files API covers management over HTTPS |
 | Remote nodes | `nodes` table + `local` seed only | Single-machine scope per plan; no mutual-auth design accepted yet |
-| `install.sh` end-to-end on Linux | Syntax reviewed, not executed | No Linux host in this environment; marked ⚠️ — run once on target before release |
+| `install.sh`/`renom.sh` end-to-end on Linux | Reviewed + `bash -n` pending a Linux host; CLI paths executed | No Linux host in this environment — run once on target before release |
 | Non-UTC schedule timezones | Rejected at validation (UTC-only storage) | TZ database handling deferred; column exists for later |
+| fabric/forge/neoforge/velocity/bds/modrinth fetchers | Explicit 409 "not wired yet" | Paper/Vanilla/Purpur cover the boot path; one function per provider to add |
+| Unauthenticated unknown API paths → 401 (not 404) | Deliberate | Hides route existence from strangers; stricter than the suggested 404 |
 
-## Verification log (2026-09-17)
+## Review resolutions (cubic PR #10 / #11, 2026-09-17)
+
+All P1s fixed: setup-token gate, `.env` auto-loading, API-key scope enforcement
+(admin routes, minting subset, subuser grants, socket console, server creation),
+suspended-server inertia (kill on suspend/delete, guards on console/files/backups/
+allocations/subusers/schedules), schedule ownership-before-update, RAM/disk quotas,
+async backups with swap restores + fail-closed policies, scheduler claim/finalizer/
+manual-run lifecycle + failure audit, cron strictness, unique-only 409s, atomic CLI
+bootstrap with created data dirs, installer secrets-by-environment + EOF exit +
+loopback default + LAN IP printing. P2s fixed alongside (contrast via new theme,
+boot fallback, pagination, error reporting, pretest, editor clearing, stranger
+socket test, real socket.io client test, README/CHANGELOG/PROVENANCE wording).
+CI fixed (tracked lockfile, gitleaks scope, repo-wide prettier normalization).
+PR #10 merged (`0e2ca5c`).
+
+## Verification log (2026-09-17, evening run)
 
 | Check | Result |
 |---|---|
 | `npm run build` (contracts + panel `tsc`) | clean |
 | `npm run typecheck` | clean |
-| `npm test` (vitest) | 14 files, 107 tests, all pass |
+| `npm test` (vitest) | 16 files, 127 tests, all pass |
 | eslint on all touched files | clean (`--fix` applied, then verified) |
+| prettier `--check .` | clean |
 | Live: setup/status → owner → 2nd setup 409 → login → power → console line over socket | pass |
+| Live: real Paper 1.21.1 download → install → boot `Done (40.4s)!` → stop | pass |
 | CLI `--check` on empty/populated DB | `no` / `yes` |
-| `git status` | clean except intentionally untracked `package-lock.json` |
+| PR #10 CI (build-test + security) | pass → merged as `0e2ca5c` |
+| `git status` | clean (lockfile now tracked) |
