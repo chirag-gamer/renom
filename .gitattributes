@@ -1,0 +1,2 @@
+# Shell scripts must keep LF endings on every platform (CRLF breaks shebang execution).
+*.sh text eol=lf
