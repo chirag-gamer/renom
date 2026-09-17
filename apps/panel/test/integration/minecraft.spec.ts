@@ -298,6 +298,28 @@ describe("EULA gate + variables + tunnel API", () => {
     expect(before.body).toEqual({ provider: null, endpoint: null, address: null });
   });
 
+  it("Minekube refuses Bedrock servers with directions", async () => {
+    const catalog = await request(app).get("/api/v3/blueprints").set("authorization", `Bearer ${ownerToken}`);
+    const bds = (catalog.body.items as Array<{ slug: string; maturity: string }>).find((b) => b.slug === "bedrock-bds");
+    expect(bds?.maturity).toBe("experimental");
+    const paper = (catalog.body.items as Array<{ slug: string; maturity: string }>).find((b) => b.slug === "paper");
+    expect(paper?.maturity).toBe("stable");
+
+    const created = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "bedrock-one", blueprintSlug: "bedrock-bds" });
+    expect(created.status).toBe(201);
+    const bid = created.body.server.id as string;
+
+    const tunnel = await request(app)
+      .post(`/api/v3/servers/${bid}/tunnel`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ endpoint: "bedrock-one" });
+    expect(tunnel.status).toBe(409);
+    expect(String(tunnel.body.error.message)).toContain("docs/tunnels.md");
+  });
+
   it("version change is a variable edit + reinstall (mechanics)", async () => {
     // Point at an exact version, then reinstall. Fabric's fetcher is unwired,
     // so the endpoint fails closed with 409 — proving the flow reaches the

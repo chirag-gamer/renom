@@ -197,7 +197,7 @@ async function refreshBlueprints() {
   for (const b of data.items) {
     const opt = document.createElement("option");
     opt.value = b.slug;
-    opt.textContent = `${b.name} (${b.slug})`;
+    opt.textContent = b.maturity === "experimental" ? `${b.name} (${b.slug}) [experimental]` : `${b.name} (${b.slug})`;
     select.append(opt);
   }
 }

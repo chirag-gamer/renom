@@ -68,6 +68,16 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       const id = req.params.id ?? "";
       const server = servers.byId(id);
       if (!server) throw new NotFoundError("Not found");
+      // Minekube ships a Java plugin: Java servers and Java proxies only.
+      // Bedrock, Python, and Node servers tunnel another way (docs/tunnels.md).
+      const category = db
+        .prepare("SELECT category FROM blueprints WHERE id = ?")
+        .get(server.blueprint_id) as { category: string } | undefined;
+      if (!category || (category.category !== "minecraft-java" && category.category !== "proxy")) {
+        throw new ConflictError(
+          "Minekube tunnels work with Java servers. For Bedrock, Python, or Node, see docs/tunnels.md (Playit.gg / Cloudflare).",
+        );
+      }
       if (engine.stateOf(id) !== "offline") {
         throw new ConflictError("Stop the server before changing its tunnel (restart to activate)");
       }

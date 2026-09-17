@@ -12,6 +12,7 @@ export interface BlueprintSummary {
   tag: string;
   enabled: boolean;
   source: string;
+  maturity: string;
 }
 
 /**
@@ -37,14 +38,19 @@ export class BlueprintRegistry {
         );
       }
       const exists = this.db.prepare("SELECT slug FROM blueprints WHERE slug = ?").get(doc.slug);
-      if (exists) continue;
+      const maturity = parsed.data.maturity;
+      if (exists) {
+        // Converge catalog edits (maturity flips, renames) on every boot.
+        this.db.prepare("UPDATE blueprints SET maturity = ?, updated_at = ? WHERE slug = ?").run(maturity, now, doc.slug);
+        continue;
+      }
       const id = ulid(now);
       this.db
         .prepare(
-          `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,docs_url,created_at,updated_at)
-           VALUES (?,?,?,?,?,1,'builtin',?,?,?)`,
+          `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,docs_url,maturity,created_at,updated_at)
+           VALUES (?,?,?,?,?,1,'builtin',?,?,?,?)`,
         )
-        .run(id, doc.slug, doc.name, doc.category, doc.tag, doc.docsUrl ?? null, now, now);
+        .run(id, doc.slug, doc.name, doc.category, doc.tag, doc.docsUrl ?? null, maturity, now, now);
       this.storeVersion(id, parsed.data, now);
       seeded.push(doc.slug);
     }
@@ -85,16 +91,16 @@ export class BlueprintRegistry {
     if (existing) {
       id = existing.id;
       this.db
-        .prepare("UPDATE blueprints SET name=?, category=?, latest_tag=?, updated_at=? WHERE id=?")
-        .run(doc.name, doc.category, doc.tag, now, id);
+        .prepare("UPDATE blueprints SET name=?, category=?, latest_tag=?, maturity=?, updated_at=? WHERE id=?")
+        .run(doc.name, doc.category, doc.tag, doc.maturity, now, id);
     } else {
       id = ulid(now);
       this.db
         .prepare(
-          `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,registry_url,created_at,updated_at)
-           VALUES (?,?,?,?,?,1,?,?,?,?)`,
+          `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,registry_url,maturity,created_at,updated_at)
+           VALUES (?,?,?,?,?,1,?,?,?, ?,?)`,
         )
-        .run(id, doc.slug, doc.name, doc.category, doc.tag, source, registryUrl ?? null, now, now);
+        .run(id, doc.slug, doc.name, doc.category, doc.tag, source, registryUrl ?? null, doc.maturity, now, now);
     }
     this.storeVersion(id, doc, now);
     return { slug: doc.slug, tag: doc.tag };
@@ -103,7 +109,7 @@ export class BlueprintRegistry {
   list(includeDisabled = false): BlueprintSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT slug,name,category,latest_tag,enabled,source FROM blueprints
+        `SELECT slug,name,category,latest_tag,enabled,source,maturity FROM blueprints
          ${includeDisabled ? "" : "WHERE enabled = 1"} ORDER BY category, name`,
       )
       .all() as Array<{
@@ -113,6 +119,7 @@ export class BlueprintRegistry {
       latest_tag: string;
       enabled: number;
       source: string;
+      maturity: string;
     }>;
     return rows.map((r) => ({
       slug: r.slug,
@@ -121,6 +128,7 @@ export class BlueprintRegistry {
       tag: r.latest_tag,
       enabled: r.enabled === 1,
       source: r.source,
+      maturity: r.maturity ?? "stable",
     }));
   }
 

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { createWriteStream, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable, Transform, type TransformCallback } from "node:stream";
@@ -102,8 +104,10 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
         });
         break;
       }
-      case "extract":
-        throw new EngineError("Install op 'extract' is not wired yet");
+      case "extract": {
+        await extractArchive(sub(ctx.vars, op.src), ctx.dir, sub(ctx.vars, op.dest), op.strip, op.safe);
+        break;
+      }
       case "chmod":
         throw new EngineError("Install op 'chmod' is not wired yet");
       case "template-render":
@@ -111,9 +115,35 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
       case "fetch-fabric":
       case "fetch-forge":
       case "fetch-neoforge":
-      case "fetch-bds":
       case "fetch-velocity":
         throw new EngineError(`Install op '${op.op}' is not wired yet`);
+      case "fetch-bds": {
+        const artifact = await resolveBds(fetchImpl, sub(ctx.vars, op.version ?? ""), op.channel);
+        await downloadFile(fetchImpl, artifact.url, join(ctx.dir, "bedrock-server.zip"), {
+          maxBytes: 256 * 1024 * 1024,
+          sha256: artifact.sha256,
+        });
+        await extractArchive(join(ctx.dir, "bedrock-server.zip"), ctx.dir, ".", 0, true);
+        rmSync(join(ctx.dir, "bedrock-server.zip"), { force: true });
+        break;
+      }
+      case "fetch-pocketmine": {
+        const pmmp = await resolvePocketMine(fetchImpl, sub(ctx.vars, op.version ?? ""));
+        await downloadFile(fetchImpl, pmmp.pharUrl, join(ctx.dir, "PocketMine-MP.phar"), {
+          maxBytes: 128 * 1024 * 1024,
+        });
+        await downloadFile(fetchImpl, pmmp.phpUrl, join(ctx.dir, "php-runtime" + pmmp.phpExt), {
+          maxBytes: 256 * 1024 * 1024,
+        });
+        // The PHP archive carries its own top-level `bin/` — extract at root.
+        await extractArchive(join(ctx.dir, "php-runtime" + pmmp.phpExt), ctx.dir, ".", 0, true);
+        rmSync(join(ctx.dir, "php-runtime" + pmmp.phpExt), { force: true });
+        break;
+      }
+      case "fetch-endstone": {
+        await pipInstall(fetchImpl, ctx.dir, "endstone", sub(ctx.vars, op.version ?? ""));
+        break;
+      }
       case "modrinth-install": {
         await installModrinthProjects(fetchImpl, ctx, op.projects);
         break;
@@ -211,6 +241,118 @@ export async function downloadFile(
 }
 
 // --- providers ---
+
+/**
+ * Bedrock Dedicated Server via the EndstoneMC version registry (verified
+ * 2026-09-17): versions.json pins the latest release, per-version
+ * metadata.json carries OS download URLs + sha256. Preview channel reads the
+ * same layout under `preview`.
+ */
+async function resolveBds(
+  fetchImpl: typeof fetch,
+  version: string,
+  channel: "stable" | "preview",
+): Promise<{ url: string; sha256: string }> {
+  const base = "https://raw.githubusercontent.com/EndstoneMC/bedrock-server-data/v2";
+  const want = version === "" || version === "latest" ? null : version;
+  const picked =
+    want ??
+    ((await fetchJson(fetchImpl, `${base}/versions.json`)) as { release: { latest: string } }).release.latest;
+  const group = channel === "preview" ? "preview" : "release";
+  const meta = (await fetchJson(fetchImpl, `${base}/${group}/${encodeURIComponent(picked)}/metadata.json`)) as {
+    binary: Record<string, { url: string; sha256: string }>;
+  };
+  const os = process.platform === "win32" ? "windows" : "linux";
+  const bin = meta.binary[os];
+  if (!bin) throw new EngineError(`No Bedrock server build for ${os} at ${picked}`);
+  return bin;
+}
+
+/**
+ * PocketMine-MP the Pterodactyl way: server phar from the latest GitHub
+ * release + a matching static PHP binary (PM5 builds) for this OS.
+ * Windows and Linux x64 are covered; anything else refuses honestly.
+ */
+async function resolvePocketMine(
+  fetchImpl: typeof fetch,
+  version?: string,
+): Promise<{ pharUrl: string; phpUrl: string; phpExt: string }> {
+  const want = version && version !== "" && version !== "latest" ? `/tags/${encodeURIComponent(version)}` : "/latest";
+  const release = (await fetchJson(
+    fetchImpl,
+    `https://api.github.com/repos/pmmp/PocketMine-MP/releases${want}`,
+  )) as { assets: Array<{ name: string; browser_download_url: string }> };
+  const phar = release.assets.find((a) => a.name === "PocketMine-MP.phar");
+  if (!phar) throw new EngineError("PocketMine-MP release has no phar asset");
+
+  const phpTag = "pm5-php-8.4-latest";
+  const phpRelease = (await fetchJson(
+    fetchImpl,
+    `https://api.github.com/repos/pmmp/PHP-Binaries/releases/tags/${phpTag}`,
+  )) as { assets: Array<{ name: string; browser_download_url: string }> };
+  const isWin = process.platform === "win32";
+  const phpName = isWin ? "PHP-8.4-Windows-x64-PM5.zip" : "PHP-8.4-Linux-x86_64-PM5.tar.gz";
+  const php = phpRelease.assets.find((a) => a.name === phpName);
+  if (!php) throw new EngineError(`No PocketMine PHP build for this OS (${process.platform})`);
+  return { pharUrl: phar.browser_download_url, phpUrl: php.browser_download_url, phpExt: isWin ? ".zip" : ".tar.gz" };
+}
+
+/**
+ * Endstone (`pip install endstone`, then `endstone`): needs Python 3.10+ on
+ * the host. Installed globally by explicit admin choice (the blueprint is
+ * opt-in experimental); the run command uses the `endstone` entrypoint.
+ * Version pins pass straight through to pip.
+ */
+async function pipInstall(fetchImpl: typeof fetch, serverDir: string, pkg: string, version?: string): Promise<void> {
+  void fetchImpl;
+  void serverDir;
+  const execFileAsync = promisify(execFileCb);
+  const spec = version && version !== "" && version !== "latest" ? `${pkg}==${version}` : pkg;
+  try {
+    await execFileAsync("python", ["-m", "pip", "install", spec], {
+      timeout: 10 * 60_000,
+      windowsHide: true,
+    });
+  } catch (err) {
+    throw new EngineError(
+      `pip install ${spec} failed (needs Python 3.10+ on PATH): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Archive extraction with zip-slip protection: `.tar.gz`/`.tgz` via tar,
+ * `.zip` via unzip → 7z → tar (bsdtar covers Windows/macOS). `safe` must be
+ * true and every member must stay under `dest`.
+ */
+async function extractArchive(src: string, serverDir: string, dest: string, strip: number, safe: boolean): Promise<void> {
+  if (!safe) throw new EngineError("Refusing archive extraction without safe=true");
+  const outDir = confine(serverDir, dest);
+  mkdirSync(outDir, { recursive: true });
+  const lower = src.toLowerCase();
+  const execFileAsync = promisify(execFileCb);
+  const run = async (cmd: string, args: string[]): Promise<boolean> => {
+    try {
+      await execFileAsync(cmd, args, { timeout: 5 * 60_000, windowsHide: true });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let ok = false;
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
+    const stripArgs = strip > 0 ? [`--strip-components=${strip}`] : [];
+    ok = await run("tar", ["-xzf", src, "-C", outDir, ...stripArgs]);
+  } else if (lower.endsWith(".zip")) {
+    ok =
+      (await run("unzip", ["-q", "-o", src, "-d", outDir])) ||
+      (await run("7z", ["x", src, `-o${outDir}`, "-y"])) ||
+      (await run("tar", ["-xf", src, "-C", outDir]));
+  } else {
+    throw new EngineError(`Unsupported archive format: ${src}`);
+  }
+  if (!ok) throw new EngineError(`Could not extract ${src} (no suitable tool found)`);
+}
 
 /**
  * Modrinth addons (mods + plugins, the JTG-era workflow): resolve each project

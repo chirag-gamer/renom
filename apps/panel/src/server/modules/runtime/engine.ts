@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { Database } from "../../infra/db/database.js";
 import type { ServersRepo } from "../servers/repo.js";
@@ -70,12 +70,23 @@ export class LocalProcessEngine {
     // Panel-namespaced keys (tunnel.*) ride outside blueprint variables.
     for (const [k, v] of this.namespacedVariables(serverId)) vars[k] = v;
     const argv = (doc.run?.command ?? []).map((arg) => substitute(arg, vars));
-    const [cmd, ...args] = argv;
+    let [cmd, ...args] = argv;
     if (!cmd) throw new EngineError("Blueprint has an empty start command");
+    // Cross-OS binaries: `bedrock_server` on Linux is `bedrock_server.exe`
+    // next to it on Windows. Prefer the exact name, fall back to .exe there.
+    // (Checked against the server root, where installs place binaries.)
+    const dir = join(this.dataDir, "servers", serverId);
+    if (process.platform === "win32" && !cmd.endsWith(".exe")) {
+      const withExe = `${cmd}.exe`;
+      try {
+        if (existsSync(join(dir, withExe))) cmd = withExe;
+      } catch {
+        // keep the original name; spawn reports the real error
+      }
+    }
 
     // Blueprint workdir maps INSIDE the server directory (default: its root).
     // Anything escaping it is refused rather than launched elsewhere.
-    const dir = join(this.dataDir, "servers", serverId);
     mkdirSync(dir, { recursive: true });
     const cwd = confineWorkdir(dir, doc.run?.workdir ?? "/data");
     mkdirSync(cwd, { recursive: true });

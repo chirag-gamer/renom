@@ -65,7 +65,10 @@ export const installOpSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("fetch-bds"),
     channel: z.enum(["stable", "preview"]).default("stable"),
+    version: z.string().min(1).max(32).optional(),
   }),
+  z.object({ op: z.literal("fetch-pocketmine"), version: z.string().min(1).max(32).optional() }),
+  z.object({ op: z.literal("fetch-endstone"), version: z.string().min(1).max(32).optional() }),
   z.object({ op: z.literal("fetch-velocity"), version: z.string().min(1) }),
   z.object({ op: z.literal("eula-accept") }),
   z.object({ op: z.literal("modrinth-install"), projects: z.array(z.string().min(1)).min(1) }),
@@ -117,6 +120,8 @@ export const blueprintDocSchema = z.object({
   description: z.string().max(512).default(""),
   docsUrl: z.string().url().optional(),
   tag: z.string().regex(semverTag).default("v1"),
+  /** Maturity shown in the panel: experimental blueprints boot but get less verification. */
+  maturity: z.enum(["stable", "experimental"]).default("stable"),
   requirements: z.object({
     engine: z.enum(["docker", "process"]),
     arch: z.array(z.enum(["amd64", "arm64"])).min(1),
