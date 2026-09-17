@@ -60,7 +60,9 @@ describe("http skeleton", () => {
   it("maps unknown routes to structured 404 (RFC-7807 shape)", async () => {
     const res = await request(makeApp()).get("/api/v3/nope");
     expect(res.status).toBe(404);
-    expect(res.body.error).toEqual({ code: "not_found", message: "Not found" });
+    expect(res.body.error.code).toBe("not_found");
+    expect(res.body.error.message).toBe("Not found");
+    expect(typeof res.body.error.requestId).toBe("string");
   });
 
   it("returns 413 for bodies above 1 MB (SEC-010)", async () => {

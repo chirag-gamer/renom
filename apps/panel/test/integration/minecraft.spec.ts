@@ -355,4 +355,50 @@ describe("EULA gate + variables + tunnel API", () => {
     expect(list.status).toBe(200);
     expect(Array.isArray(list.body.addons)).toBe(true);
   });
+
+  it("reinstall succeeds end to end on a no-op blueprint", async () => {
+    // A blueprint with zero install ops exercises the full reinstall path
+    // (offline check, status flips, audit) with no network involved.
+    const now = Date.now();
+    const doc = {
+      schemaVersion: 1,
+      slug: "noop-proc",
+      name: "Noop",
+      category: "generic-process",
+      tag: "v1",
+      requirements: { engine: "process", arch: ["amd64"], hostOs: ["linux", "windows"] },
+      image: "none",
+      install: [],
+      run: { command: ["node", "-e", "1"], workdir: "/data", stop: { kind: "signal" } },
+      variables: [],
+    };
+    ctx.db
+      .prepare(
+        `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,maturity,created_at,updated_at)
+         VALUES ('bp-noop','noop-proc','Noop','generic-process','v1',1,'import','stable',?,?)`,
+      )
+      .run(now, now);
+    ctx.db
+      .prepare(
+        `INSERT INTO blueprint_versions (blueprint_id, tag, schema_version, doc, sha256, published_at)
+         VALUES ('bp-noop','v1',1,?,'x',?)`,
+      )
+      .run(JSON.stringify(doc), now);
+    const created = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "noop", blueprintSlug: "noop-proc" });
+    expect(created.status).toBe(201);
+    const nid = created.body.server.id as string;
+
+    const reinstall = await request(app)
+      .post(`/api/v3/servers/${nid}/install`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(reinstall.status).toBe(200);
+
+    const detail = await request(app)
+      .get(`/api/v3/servers/${nid}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(detail.body.server.status).toBe("ready");
+  });
 });

@@ -174,6 +174,34 @@ describe("auth + users + authorization", () => {
     ctx.users.setSuspended(aliceId, false);
   });
 
+  it("admin password resets rotate credentials immediately", async () => {
+    const mk = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "ivan", password: "ivan-password-1" });
+    expect(mk.status).toBe(201);
+    const ivanId = mk.body.user.id as string;
+
+    const reset = await request(app)
+      .patch(`/api/v3/users/${ivanId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ password: "rotated-password-9" });
+    expect(reset.status).toBe(200);
+
+    const oldLogin = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "ivan", password: "ivan-password-1" });
+    expect(oldLogin.status).toBe(401);
+
+    const fresh = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "ivan", password: "rotated-password-9" });
+    expect(fresh.status).toBe(200);
+
+    const events = ctx.audit.query({ limit: 100 }).map((e) => e.event);
+    expect(events).toContain("user.password.change");
+  });
+
   it("the owner account cannot be suspended (no lockout without recovery)", async () => {
     const rootId = ctx.users.byUsername("root")!.id;
     const res = await request(app)

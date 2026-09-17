@@ -25,6 +25,74 @@ const FETCH_TIMEOUT_MS = 60_000;
 const JSON_TIMEOUT_MS = 30_000;
 
 /**
+ * Hosts the panel may download from. Anything else — cloud metadata,
+ * localhost admin ports, random mirrors — is refused before connecting.
+ * Add a host here only with a pinned reason, never `*`.
+ */
+const ALLOWED_DOWNLOAD_HOSTS = new Set([
+  "fill.papermc.io",
+  "fill-data.papermc.io",
+  "piston-meta.mojang.com",
+  "piston-data.mojang.com",
+  "launchermeta.mojang.com",
+  "api.purpurmc.org",
+  "cdn.purpurmc.org",
+  "api.modrinth.com",
+  "cdn.modrinth.com",
+  "www.minecraft.net",
+  "minecraft.net",
+  "github.com",
+  "api.github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "raw.githubusercontent.com",
+]);
+
+function assertAllowedUrl(url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new EngineError(`Not a valid download URL: ${url}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new EngineError(`Downloads must use https: ${url}`);
+  }
+  if (!ALLOWED_DOWNLOAD_HOSTS.has(parsed.hostname.toLowerCase())) {
+    throw new EngineError(`Download host not allowed: ${parsed.hostname}`);
+  }
+  return parsed;
+}
+
+/**
+ * Fetch with manual redirect following (max 5 hops): every hop is
+ * allowlisted, so a trusted host cannot bounce the panel onto an internal
+ * address. Plain `fetch` follows redirects blindly.
+ */
+export async function guardedFetch(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: { timeoutMs: number },
+): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop < 6; hop++) {
+    assertAllowedUrl(current);
+    const res = await fetchImpl(current, {
+      signal: AbortSignal.timeout(init.timeoutMs),
+      redirect: "manual",
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const next = res.headers.get("location");
+      if (!next) throw new EngineError(`Redirect without location: ${current}`);
+      current = new URL(next, current).toString();
+      continue;
+    }
+    return res;
+  }
+  throw new EngineError(`Too many redirects: ${url}`);
+}
+
+/**
  * Executes a blueprint's declarative install ops into the server directory.
  * Network-touching providers implemented: PaperMC Fill v3, Mojang piston-meta,
  * Purpur v2. `fabric`/`forge`/`neoforge`/`bds`/`velocity`/`modrinth` fetchers
@@ -177,7 +245,7 @@ export function confine(serverDir: string, rel: string): string {
 }
 
 async function fetchJson(fetchImpl: typeof fetch, url: string): Promise<unknown> {
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(JSON_TIMEOUT_MS) });
+  const res = await guardedFetch(fetchImpl, url, { timeoutMs: JSON_TIMEOUT_MS });
   if (!res.ok) throw new EngineError(`Registry request failed (${res.status}): ${url}`);
   return res.json() as Promise<unknown>;
 }
@@ -199,7 +267,7 @@ export async function downloadFile(
 ): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
   const tmp = `${dest}.part`;
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const res = await guardedFetch(fetchImpl, url, { timeoutMs: FETCH_TIMEOUT_MS });
   if (!res.ok || !res.body) {
     throw new EngineError(`Download failed (${res.status}): ${url}`);
   }

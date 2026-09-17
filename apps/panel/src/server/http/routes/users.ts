@@ -20,6 +20,7 @@ const createUserSchema = z.object({
 
 const patchUserSchema = z.object({
   suspended: z.boolean().optional(),
+  password: passwordSchema.optional(),
   displayName: z.string().max(64).optional(),
   email: z.string().email().optional(),
   quotaMaxServers: z.number().int().min(0).max(1000).optional(),
@@ -96,6 +97,19 @@ export function usersRouter(
       // manage users, not each other.
       if (target.role !== "user" && req.principal!.role !== "owner") {
         throw new ForbiddenError("Only the owner can change admins");
+      }
+      // A password change is a credential rotation: it takes effect at once
+      // (old sessions die with the version bump) and is always audited.
+      if (body.password !== undefined) {
+        users.setPassword(target.id, body.password);
+        users.bumpPasswordVersion(target.id);
+        audit.record({
+          event: "user.password.change",
+          actorUserId: req.principal!.userId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          target: { userId: target.id },
+        });
       }
       users.update(target.id, body);
       if (body.suspended !== undefined) {

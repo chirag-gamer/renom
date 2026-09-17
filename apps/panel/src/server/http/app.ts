@@ -25,7 +25,26 @@ export function createApp(deps: AppDeps): Express {
   const app = express();
 
   app.disable("x-powered-by");
-  app.set("trust proxy", false);
+  // Proxy trust is explicit, never guessed: behind a TLS terminator the
+  // panel must see real client IPs (rate limits, audit) — set TRUST_PROXY=1.
+  // Direct exposure keeps the default off so `req.ip` is the socket peer.
+  app.set("trust proxy", deps.env.TRUST_PROXY === "1");
+
+  // Baseline hardening headers (no dependency): no MIME sniffing, no
+  // framing, no referrer leakage, conservative script/style sourcing for the
+  // same-origin client. Tighten `connect-src` if the API ever leaves origin.
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; " +
+        "base-uri 'self'; form-action 'self'",
+    );
+    next();
+  });
 
   app.use(requestId);
 

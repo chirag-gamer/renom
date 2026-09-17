@@ -74,6 +74,8 @@ beforeAll(async () => {
     diskQuotaMb: 1024,
   });
   serverId = created.id;
+  // Direct repo creation leaves status=creating; the API would finish the job.
+  ctx.servers.setStatus(serverId, "ready");
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   port = (server.address() as { port: number }).port;

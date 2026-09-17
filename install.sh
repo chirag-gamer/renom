@@ -170,18 +170,34 @@ if [ -z "$SETUP_TOKEN" ]; then
   SETUP_TOKEN="$(node -e 'console.log(require("node:crypto").randomBytes(24).toString("base64url"))')"
 fi
 
-cat > .env <<EOF
-# Written by install.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ'). Edit freely; never commit this file.
-NODE_ENV=production
-HOST=${HOST}
-PORT=${PORT}
-JWT_SECRET=${JWT_SECRET}
-SETUP_TOKEN=${SETUP_TOKEN}
-DATA_DIR=${DATA_DIR}
-LOG_LEVEL=info
-EOF
+# Upsert managed keys, preserving everything else in .env (custom LOG_LEVEL,
+# CORS_ORIGINS, JWT_TTL_SECONDS, BCRYPT_COST, and your own keys survive).
+upsert_env() { # upsert_env KEY VALUE
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp)" || die "Cannot create temp file."
+  if [ -f .env ]; then
+    awk -v k="$key" -v v="$value" '
+      BEGIN { done = 0 }
+      $0 ~ "^" k "=" { print k "=" v; done = 1; next }
+      { print }
+      END { if (!done) print k "=" v }
+    ' .env >"$tmp" && mv "$tmp" .env
+  else
+    printf '# Written by install.sh. Edit freely; never commit this file.\n' > .env
+    printf '%s=%s\n' "$key" "$value" >> .env
+    rm -f "$tmp"
+  fi
+}
+
+upsert_env NODE_ENV production
+upsert_env HOST "$HOST"
+upsert_env PORT "$PORT"
+upsert_env JWT_SECRET "$JWT_SECRET"
+upsert_env SETUP_TOKEN "$SETUP_TOKEN"
+upsert_env DATA_DIR "$DATA_DIR"
+upsert_env LOG_LEVEL "$(env_default LOG_LEVEL "info")"
 chmod 600 .env
-ok "Wrote .env (port ${PORT}, data in ${DATA_DIR})."
+ok "Wrote .env (port ${PORT}, data in ${DATA_DIR}). Other keys untouched."
 say ""
 
 # --- install + build.
@@ -199,23 +215,25 @@ elif [ "$ADMIN_EXISTS" = "unknown" ]; then
   warn "Could not check for existing accounts. Create the admin from the web page on first open"
   warn "using this setup token: ${SETUP_TOKEN}"
 else
-  say "Now create your admin account. This is the owner of the panel —"
+  say "Now the admin account. This is the owner of the panel —"
   say "after this, new accounts are made from inside, never from the installer."
   say ""
   ADMIN_USER="$(ask "Admin username" "admin")"
-  while true; do
-    ADMIN_PASS="$(ask_secret "Admin password (at least 12 characters)")" \
-      || die "No password entered (EOF) — rerun the installer to try again."
-    if [ "${#ADMIN_PASS}" -ge 12 ]; then break; fi
-    say "Too short — pick at least 12 characters." >&2
-  done
   ADMIN_EMAIL="$(ask "Admin email (optional, Enter to skip)" "")"
+  # The installer generates a strong password and shows it ONCE. Write it
+  # down now: it never appears again, and nothing is stored in shell history.
+  ADMIN_PASS="$(node -e 'console.log(require("node:crypto").randomBytes(12).toString("base64url").slice(0,16))')"
   # Everything travels by environment, never argv (invisible to `ps`).
   export RENOM_ADMIN_USER="$ADMIN_USER" RENOM_ADMIN_PASSWORD="$ADMIN_PASS"
   if [ -n "$ADMIN_EMAIL" ]; then export RENOM_ADMIN_EMAIL="$ADMIN_EMAIL"; fi
   DATA_DIR="$DATA_DIR" \
     npm run setup:admin --workspace @renom/panel -- || die "Admin creation failed."
   unset RENOM_ADMIN_USER RENOM_ADMIN_PASSWORD RENOM_ADMIN_EMAIL
+  say ""
+  say "Your admin password (shown once — save it now):"
+  say "  ${ADMIN_PASS}"
+  say "Change it after first sign-in from the admin Users page."
+  unset ADMIN_PASS
 fi
 say ""
 

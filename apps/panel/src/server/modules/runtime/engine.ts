@@ -48,18 +48,48 @@ export class LocalProcessEngine {
 
   stateOf(serverId: string): "offline" | "starting" | "running" | "stopping" {
     const live = this.live.get(serverId);
-    if (!live?.proc) return "offline";
+    if (!live?.proc) {
+      // No live child: the DB record is the truth (covers "starting" between
+      // state write and spawn, and "offline" after finish/shutdown).
+      const row = this.servers.byId(serverId);
+      if (row?.runtime_state === "starting") return "starting";
+      return "offline";
+    }
     if (live.stopping) return "stopping";
     return live.proc.exitCode === null && live.proc.signalCode === null ? "running" : "offline";
+  }
+
+  /** Drop all engine state for a server (called on delete; history goes with it). */
+  forget(serverId: string): void {
+    this.live.delete(serverId);
+  }
+
+  /** Engine health for readiness: what is tracked, what is actually alive. */
+  health(): { tracked: number; running: number } {
+    let running = 0;
+    for (const id of this.live.keys()) {
+      if (this.stateOf(id) === "running") running++;
+    }
+    return { tracked: this.live.size, running };
   }
 
   async start(serverId: string): Promise<void> {
     const server = this.servers.byId(serverId);
     if (!server) throw new EngineError("Server not found");
     if (server.status === "suspended") throw new EngineError("Server is suspended");
+    // The state machine is enforced, not advisory: installs and failures
+    // must finish before launch, or the process spawns into a half-built dir.
+    if (server.status !== "ready") {
+      throw new EngineError(`Server is not ready to start (status: ${server.status})`);
+    }
     if (this.stateOf(serverId) !== "offline") throw new EngineError("Server is already running");
 
     const doc = this.blueprints.getDoc(server.blueprint_slug, server.blueprint_version_tag);
+    // The EULA gate lives at the runtime boundary, not just the create
+    // route: imports, reinstalls, and direct starts all pass through here.
+    if (doc.features?.includes("eula") && !server.eula_accepted_at) {
+      throw new EngineError("Minecraft EULA has not been accepted for this server");
+    }
     if (doc.requirements?.engine !== "process") {
       throw new EngineError(
         `Blueprint '${doc.slug}' needs the Docker engine, which is not configured on this node`,
@@ -140,9 +170,15 @@ export class LocalProcessEngine {
 
     // Per-stream line buffers: chunks split mid-line must not become
     // separate history entries. Remainders flush on process exit.
+    // Hard cap: a newline-free firehose force-flushes at LINE_MAX instead of
+    // growing the accumulator (and the panel with it) without bound.
     const buffers: Record<"stdout" | "stderr", string> = { stdout: "", stderr: "" };
     const feed = (stream: "stdout" | "stderr", chunk: Buffer) => {
       buffers[stream] += String(chunk);
+      if (buffers[stream].length > LINE_MAX) {
+        emit(stream, buffers[stream].slice(0, LINE_MAX) + "…[truncated]");
+        buffers[stream] = buffers[stream].slice(-1);
+      }
       const parts = buffers[stream].split(/\r?\n/);
       buffers[stream] = parts.pop() ?? "";
       for (const text of parts) {
@@ -224,7 +260,14 @@ export class LocalProcessEngine {
     } catch {
       // already gone
     }
-    await this.waitForExit(serverId, 5000);
+    const exited = await this.waitForExit(serverId, 5000);
+    if (!exited) {
+      // The child survived SIGKILL (kernel I/O, uninterruptible sleep):
+      // keep tracking it as stopping and say so. Marking it offline would
+      // orphan the process and hand its port to the next claimant.
+      this.servers.setRuntimeState(serverId, "stopping");
+      throw new EngineError("Process did not exit after SIGKILL; still tracked as stopping");
+    }
     this.finish(serverId, "offline");
   }
 

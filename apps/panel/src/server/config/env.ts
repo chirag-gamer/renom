@@ -56,6 +56,8 @@ const envSchema = z.object({
   BCRYPT_COST: z.coerce.number().int().min(10).max(15).default(12),
   /** One-time bootstrap token for POST /setup/admin (empty = local-trust mode, dev only). */
   SETUP_TOKEN: z.string().default(""),
+  /** Behind a TLS terminator (reverse proxy)? "1" trusts X-Forwarded-For for IPs. */
+  TRUST_PROXY: z.enum(["0", "1"]).default("0"),
 });
 
 export interface Env extends z.infer<typeof envSchema> {

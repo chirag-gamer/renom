@@ -78,17 +78,36 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function waitForHistory(match: string, timeoutMs = 15000): Promise<boolean> {
+async function waitForHistory(
+  id: string,
+  match: string,
+  timeoutMs = 15000,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const res = await request(app)
-      .get(`/api/v3/servers/${serverId}/console/history?limit=200`)
+      .get(`/api/v3/servers/${id}/console/history?limit=200`)
       .set("authorization", `Bearer ${ownerToken}`);
     const lines = (res.body.lines as Array<{ text: string }>) ?? [];
     if (lines.some((l) => l.text.includes(match))) return true;
     await new Promise((r) => setTimeout(r, 200));
   }
   return false;
+}
+
+/** Fresh server per test: no test depends on another's processes. */
+async function makeServer(name: string): Promise<string> {
+  const created = await request(app)
+    .post("/api/v3/servers")
+    .set("authorization", `Bearer ${ownerToken}`)
+    .send({ name, blueprintSlug: "test-proc" });
+  expect(created.status).toBe(201);
+  return created.body.server.id as string;
+}
+
+async function stopQuiet(id: string): Promise<void> {
+  await ctx.engine.stop(id).catch(() => undefined);
+  await ctx.engine.kill(id).catch(() => undefined);
 }
 
 describe("power + console", () => {
@@ -109,67 +128,94 @@ describe("power + console", () => {
   });
 
   it("start runs the process; console streams and accepts input", async () => {
-    const start = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ action: "start" });
-    expect(start.status).toBe(200);
-    expect(start.body.state).toBe("running");
+    const id = await makeServer("echo-start");
+    try {
+      const start = await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" });
+      expect(start.status).toBe(200);
+      expect(start.body.state).toBe("running");
 
-    expect(await waitForHistory("process started")).toBe(true);
+      expect(await waitForHistory(id, "process started")).toBe(true);
 
-    const send = await request(app)
-      .post(`/api/v3/servers/${serverId}/console/send`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ command: "hello-panel" });
-    expect(send.body.accepted).toBe(true);
-    expect(await waitForHistory("echo:hello-panel")).toBe(true);
+      const send = await request(app)
+        .post(`/api/v3/servers/${id}/console/send`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ command: "hello-panel" });
+      expect(send.body.accepted).toBe(true);
+      expect(await waitForHistory(id, "echo:hello-panel")).toBe(true);
+    } finally {
+      await stopQuiet(id);
+    }
   });
 
   it("stop is graceful and idempotent; restart cycles", async () => {
-    const stop = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ action: "stop" });
-    expect(stop.status).toBe(200);
-    expect(stop.body.state).toBe("offline");
+    const id = await makeServer("echo-stop");
+    try {
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" })
+        .expect(200);
 
-    const stopAgain = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ action: "stop" });
-    expect(stopAgain.status).toBe(200);
+      const stop = await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "stop" });
+      expect(stop.status).toBe(200);
+      expect(stop.body.state).toBe("offline");
 
-    const restart = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ action: "restart" });
-    expect(restart.body.state).toBe("running");
-    expect(await waitForHistory("process started")).toBe(true);
+      const stopAgain = await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "stop" });
+      expect(stopAgain.status).toBe(200);
+
+      const restart = await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "restart" });
+      expect(restart.body.state).toBe("running");
+      expect(await waitForHistory(id, "process started")).toBe(true);
+    } finally {
+      await stopQuiet(id);
+    }
   });
 
   it("kill ends the process; suspended servers refuse power", async () => {
-    const kill = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ action: "kill" });
-    expect(kill.status).toBe(200);
-    expect(kill.body.state).toBe("offline");
+    const id = await makeServer("echo-kill");
+    try {
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" })
+        .expect(200);
 
-    await request(app)
-      .post(`/api/v3/servers/${serverId}/suspend`)
-      .set("authorization", `Bearer ${ownerToken}`);
-    const start = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ action: "start" });
-    expect(start.status).toBe(403);
-    await request(app)
-      .post(`/api/v3/servers/${serverId}/unsuspend`)
-      .set("authorization", `Bearer ${ownerToken}`);
+      const kill = await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "kill" });
+      expect(kill.status).toBe(200);
+      expect(kill.body.state).toBe("offline");
+
+      await request(app)
+        .post(`/api/v3/servers/${id}/suspend`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      const start = await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" });
+      expect(start.status).toBe(403);
+      await request(app)
+        .post(`/api/v3/servers/${id}/unsuspend`)
+        .set("authorization", `Bearer ${ownerToken}`);
+    } finally {
+      await stopQuiet(id);
+    }
   });
 
-  it("tenant isolation: subuser without control.start cannot start", async () => {
+  it("tenant isolation: grants apply per server, strangers see nothing", async () => {
     ctx.users.create({ username: "bob", password: "bob-password-1", role: "user" });
     const login = await request(app)
       .post("/api/v3/auth/login")
@@ -177,27 +223,47 @@ describe("power + console", () => {
     const bob = login.body.token as string;
     const bobRow = ctx.users.byUsername("bob")!;
     const rootRow = ctx.users.byUsername("root")!;
+    const granted = await makeServer("echo-granted");
+    const other = await makeServer("echo-other");
     ctx.db
       .prepare(
         "INSERT INTO subusers (user_id, server_id, permissions_json, granted_by, created_at) VALUES (?,?,?,?,?)",
       )
       .run(
         bobRow.id,
-        serverId,
+        granted,
         JSON.stringify(["websocket.connect", "control.console"]),
         rootRow.id,
         Date.now(),
       );
 
-    const start = await request(app)
-      .post(`/api/v3/servers/${serverId}/power`)
-      .set("authorization", `Bearer ${bob}`)
-      .send({ action: "start" });
-    expect(start.status).toBe(403);
+    try {
+      // No control.start on the granted server.
+      const start = await request(app)
+        .post(`/api/v3/servers/${granted}/power`)
+        .set("authorization", `Bearer ${bob}`)
+        .send({ action: "start" });
+      expect(start.status).toBe(403);
 
-    const history = await request(app)
-      .get(`/api/v3/servers/${serverId}/console/history`)
-      .set("authorization", `Bearer ${bob}`);
-    expect(history.status).toBe(200);
+      // Console reads work where granted...
+      const history = await request(app)
+        .get(`/api/v3/servers/${granted}/console/history`)
+        .set("authorization", `Bearer ${bob}`);
+      expect(history.status).toBe(200);
+
+      // ...and vanish on the server with no grant (read: 404, write: 403).
+      const otherRead = await request(app)
+        .get(`/api/v3/servers/${other}/console/history`)
+        .set("authorization", `Bearer ${bob}`);
+      expect(otherRead.status).toBe(404);
+      const otherWrite = await request(app)
+        .post(`/api/v3/servers/${other}/power`)
+        .set("authorization", `Bearer ${bob}`)
+        .send({ action: "start" });
+      expect(otherWrite.status).toBe(403);
+    } finally {
+      await stopQuiet(granted);
+      await stopQuiet(other);
+    }
   });
 });

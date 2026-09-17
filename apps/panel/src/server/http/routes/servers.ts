@@ -350,6 +350,7 @@ export function serversRouter(deps: ServersDeps): Router {
       // (or leak its port to the next claimant).
       await engine.kill(id);
       servers.remove(id);
+      engine.forget(id);
       audit.record({
         event: "server.delete",
         actorUserId: req.principal!.userId,

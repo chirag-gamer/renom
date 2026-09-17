@@ -172,4 +172,12 @@ describe("files API authorization + confinement", () => {
 
     ctx.db.prepare("UPDATE servers SET status='ready' WHERE id=?").run(serverId);
   });
+
+  it("refuses oversized writes at the ingress bound (SEC-010)", async () => {
+    const big = await request(app)
+      .put(`/api/v3/servers/${serverId}/files/content`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ path: "big.txt", content: "x".repeat(1_500_000) });
+    expect(big.status).toBe(413);
+  });
 });

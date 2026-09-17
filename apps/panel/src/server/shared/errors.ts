@@ -82,6 +82,6 @@ export class RateLimitError extends AppError {
 /** Engine refused a power action (already running, suspended, not configured). */
 export class EngineError extends AppError {
   constructor(message = "Engine operation failed") {
-    super("conflict", 409, message);
+    super("engine_error", 409, message);
   }
 }

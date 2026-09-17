@@ -22,11 +22,17 @@ function fail(el, message) {
 async function api(path, { method = "GET", body, token } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(API + path, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // Unreachable panel (down, wrong origin): status 0, handled like errors.
+    return { status: 0, data: { error: { message: "Couldn't reach the panel. Is it running?" } } };
+  }
   let data = null;
   try {
     data = await res.json();
@@ -234,16 +240,31 @@ async function refreshUsers() {
     const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
     const { status, data } = await api(`/users${qs}`, { token: store.token });
     if (status !== 200) return;
-    for (const u of data.items) {
-      const li = document.createElement("li");
-      const name = document.createElement("span");
-      name.textContent = u.displayName || u.username;
-      const role = document.createElement("span");
-      role.className = "role";
-      role.textContent = u.role + (u.suspended ? " (suspended)" : "");
-      li.append(name, role);
-      list.append(li);
-    }
+  for (const u of data.items) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = u.displayName || u.username;
+    const role = document.createElement("span");
+    role.className = "role";
+    role.textContent = u.role + (u.suspended ? " (suspended)" : "");
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "linklike";
+    reset.textContent = "Set password";
+    reset.addEventListener("click", async () => {
+      const password = window.prompt(`New password for ${u.username} (12+ characters):`);
+      if (!password) return;
+      const err = document.getElementById("user-error");
+      const res = await api(`/users/${u.id}`, {
+        method: "PATCH",
+        token: store.token,
+        body: { password },
+      });
+      if (res.status !== 200) fail(err, describeProblem(res.status, res.data));
+    });
+    li.append(name, role, reset);
+    list.append(li);
+  }
     if (!data.nextCursor) return;
     cursor = data.nextCursor;
   }

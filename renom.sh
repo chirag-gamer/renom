@@ -7,12 +7,16 @@
 # Or straight from the internet (inspect it first — it's short and readable):
 #   curl -fsSL https://raw.githubusercontent.com/chirag-gamer/renom/dev/renom.sh | bash
 #
+# Pinning: `dev` moves. For a reproducible install, fetch a tag instead and
+# check it out: RENOM_REF=v0.1.0 curl ... | bash. Tags are immutable; branches
+# are not. Whatever you pipe from the internet, read it first.
+#
 # When piped through curl, the script clones the panel into ./renom (or
 # $RENOM_DIR) and re-runs itself from there, so every prompt still works.
 set -euo pipefail
 
 REPO_URL="https://github.com/chirag-gamer/renom.git"
-REPO_BRANCH="${RENOM_BRANCH:-dev}"
+RENOM_REF="${RENOM_REF:-dev}"
 TARGET_DIR="${RENOM_DIR:-renom}"
 
 RED='\033[0;31m'
@@ -55,9 +59,9 @@ ensure_repo() {
   if [ -d "$TARGET_DIR" ] && [ -f "$TARGET_DIR/install.sh" ]; then
     info "Using existing checkout at ./$TARGET_DIR."
   else
-    info "Downloading Renom ($REPO_BRANCH) into ./$TARGET_DIR ..."
-    git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$TARGET_DIR" \
-      || die "Clone failed. Check the URL and your connection."
+    info "Downloading Renom ($RENOM_REF) into ./$TARGET_DIR ..."
+    git clone --depth 1 --branch "$RENOM_REF" "$REPO_URL" "$TARGET_DIR" \
+      || die "Clone failed. Check the ref, the URL, and your connection."
   fi
   cd "$TARGET_DIR" || die "Cannot enter $TARGET_DIR."
   exec bash ./renom.sh "$@"
@@ -93,18 +97,13 @@ do_delete() {
   purge="$(ask "Also delete server data (database + server files)? yes/NO" "NO")"
 
   # Stop anything obviously ours before deleting files out from under it.
+  # (.env is parsed, never sourced: executing it would run attacker text.)
   if command -v pm2 >/dev/null 2>&1 && pm2 list 2>/dev/null | grep -qi renom; then
     info "Stopping pm2 process..."
     pm2 delete renom 2>/dev/null || true
   fi
-  if [ -f .env ]; then
-    # shellcheck disable=SC1091
-    set -a; . ./.env 2>/dev/null || true; set +a
-    if [ -n "${PORT:-}" ]; then
-      pkill -f "apps/panel/dist/server/index.js" 2>/dev/null || true
-      info "Stopped processes listening for the panel (if any were running)."
-    fi
-  fi
+  pkill -f "apps/panel/dist/server/index.js" 2>/dev/null || true
+  info "Stopped panel processes, if any were running."
 
   if [ "$purge" = "yes" ] || [ "$purge" = "YES" ]; then
     local data_dir="./data"

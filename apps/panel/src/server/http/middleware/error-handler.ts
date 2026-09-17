@@ -30,13 +30,14 @@ export function errorHandler(logger: Logger) {
     }
 
     if (err instanceof AppError) {
-      res.status(err.status).json(err.toBody());
+      const body = err.toBody();
+      res.status(err.status).json({ error: { ...body.error, requestId: req.requestId } });
       return;
     }
 
     logger.error({ err, reqId: req.requestId, path: req.path }, "unhandled_error");
     res.status(500).json({
-      error: { code: "internal_error", message: "Internal server error" },
+      error: { code: "internal_error", message: "Internal server error", requestId: req.requestId },
     });
   };
 }

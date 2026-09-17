@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { downloadFile } from "../runtime/install.js";
+import { downloadFile, guardedFetch } from "../runtime/install.js";
 import { EngineError } from "../../shared/errors.js";
 
 /**
@@ -26,8 +26,8 @@ export const MINEKUBE_PLUGIN_URL =
 
 /** Resolve the pinned digest for the plugin jar (fail-closed when absent). */
 async function pluginDigest(fetchImpl: typeof fetch): Promise<string> {
-  const res = await fetchImpl("https://api.github.com/repos/minekube/connect-java/releases/latest", {
-    signal: AbortSignal.timeout(30_000),
+  const res = await guardedFetch(fetchImpl, "https://api.github.com/repos/minekube/connect-java/releases/latest", {
+    timeoutMs: 30_000,
   });
   if (!res.ok) throw new EngineError("Could not resolve the Minekube plugin release");
   const release = (await res.json()) as {

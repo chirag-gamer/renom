@@ -143,15 +143,28 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   // it, requests only arrive after listen().
   const gatewayProxy = {} as ConsoleGateway;
 
+  // Integrity scans are expensive: cache the verdict briefly instead of
+  // scanning the whole DB on every (unauthenticated) readiness probe.
+  let dbCheckAt = 0;
+  let dbCheckOk = false;
+  let dbCheckDetail: string | undefined;
+
   const app = createApp({
     env,
     logger,
     readiness: async () => {
       try {
-        const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string };
+        const now = Date.now();
+        if (now - dbCheckAt > 60_000) {
+          const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string };
+          dbCheckOk = row.integrity_check === "ok";
+          dbCheckDetail = row.integrity_check;
+          dbCheckAt = now;
+        }
+        const health = engine.health();
         return [
-          { name: "db", ok: row.integrity_check === "ok", detail: row.integrity_check },
-          { name: "engine", ok: true, detail: "not configured yet" },
+          { name: "db", ok: dbCheckOk, detail: dbCheckDetail },
+          { name: "engine", ok: true, detail: `${health.tracked} tracked, ${health.running} running` },
         ];
       } catch (err) {
         return [{ name: "db", ok: false, detail: String(err) }];

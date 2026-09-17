@@ -7,6 +7,9 @@ import { ulid } from "../../shared/ulid.js";
 import { parseCron, nextRun, CronError } from "./cron.js";
 import { BadRequestError } from "../../shared/errors.js";
 
+/** Crashed runs block their schedule for at most this long, then expire. */
+export const LOCK_TTL_MS = 15 * 60_000;
+
 export interface ScheduleTask {
   seq: number;
   action: "power" | "command" | "backup";
@@ -176,20 +179,24 @@ export class Scheduler {
   async runDue(now = Date.now()): Promise<number> {
     const due = this.db
       .prepare(
-        "SELECT * FROM schedules WHERE is_active = 1 AND is_processing = 0 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at",
+        `SELECT * FROM schedules WHERE is_active = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+           AND (is_processing = 0 OR lock_until <= ?) ORDER BY next_run_at`,
       )
-      .all(now) as ScheduleRow[];
+      .all(now, now) as ScheduleRow[];
     let ran = 0;
     for (const s of due) {
       // Atomic claim that rechecks state: an admin disabling or rescheduling
       // between our SELECT and this UPDATE wins, and we skip the stale run.
+      // The lock expires (LOCK_TTL_MS): a crashed run blocks at most one
+      // window instead of killing the schedule forever.
       const claimed = this.db
         .prepare(
-          `UPDATE schedules SET is_processing = 1, updated_at = ?
-           WHERE id = ? AND is_processing = 0 AND is_active = 1
-             AND next_run_at IS NOT NULL AND next_run_at <= ?`,
+          `UPDATE schedules SET is_processing = 1, lock_until = ?, updated_at = ?
+           WHERE id = ? AND is_active = 1
+             AND next_run_at IS NOT NULL AND next_run_at <= ?
+             AND (is_processing = 0 OR lock_until <= ?)`,
         )
-        .run(now, s.id, now);
+        .run(now + LOCK_TTL_MS, now, s.id, now, now);
       if (Number(claimed.changes) !== 1) continue;
       try {
         await this.execute(s);
@@ -208,9 +215,10 @@ export class Scheduler {
     const now = Date.now();
     const claimed = this.db
       .prepare(
-        "UPDATE schedules SET is_processing = 1, updated_at = ? WHERE id = ? AND is_processing = 0",
+        `UPDATE schedules SET is_processing = 1, lock_until = ?, updated_at = ?
+         WHERE id = ? AND (is_processing = 0 OR lock_until <= ?)`,
       )
-      .run(now, id);
+      .run(now + LOCK_TTL_MS, now, id, now);
     if (Number(claimed.changes) !== 1) {
       throw new BadRequestError("Schedule is already running");
     }
@@ -220,7 +228,7 @@ export class Scheduler {
       // Manual runs don't advance the clock, but they must always release.
       this.db
         .prepare(
-          "UPDATE schedules SET is_processing = 0, last_run_at = ?, updated_at = ? WHERE id = ?",
+          "UPDATE schedules SET is_processing = 0, lock_until = 0, last_run_at = ?, updated_at = ? WHERE id = ?",
         )
         .run(Date.now(), Date.now(), id);
     }
@@ -241,7 +249,7 @@ export class Scheduler {
     }
     this.db
       .prepare(
-        "UPDATE schedules SET is_processing = 0, last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE schedules SET is_processing = 0, lock_until = 0, last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
       )
       .run(Date.now(), next, Date.now(), id);
   }

@@ -24,12 +24,12 @@ describe("database layer", () => {
     const rows = db.prepare("SELECT name FROM _migrations ORDER BY id").all() as Array<{
       name: string;
     }>;
-    expect(rows.map((r) => r.name)).toEqual(["schema-v1", "blueprint-maturity"]);
+    expect(rows.map((r) => r.name)).toEqual(["schema-v1", "blueprint-maturity", "schedule-lock-expiry"]);
 
     db.close();
     const again = openAndMigrate(file);
     const rows2 = again.prepare("SELECT COUNT(*) AS n FROM _migrations").get() as { n: number };
-    expect(Number(rows2.n)).toBe(2);
+    expect(Number(rows2.n)).toBe(3);
     again.close();
   });
 

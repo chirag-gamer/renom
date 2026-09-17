@@ -16,13 +16,14 @@ export interface ServerRow {
   runtime_state: string | null;
   memory_mb: number;
   disk_quota_mb: number;
+  eula_accepted_at: number | null;
   created_at: number;
   updated_at: number;
 }
 
 const PUBLIC_COLUMNS = `s.id, s.name, s.description, s.owner_id, s.blueprint_id, b.slug AS blueprint_slug,
   s.blueprint_version_tag, s.image_ref, s.node_id, s.status, s.runtime_state,
-  s.memory_mb, s.disk_quota_mb, s.created_at, s.updated_at`;
+  s.memory_mb, s.disk_quota_mb, s.eula_accepted_at, s.created_at, s.updated_at`;
 
 export class ServersRepo {
   constructor(private readonly db: Database) {}

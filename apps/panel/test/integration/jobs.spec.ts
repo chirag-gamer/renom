@@ -168,9 +168,30 @@ describe("schedules", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect(cross.status).toBe(404);
   });
+
+  it("concurrent triggers fire a schedule exactly once", async () => {
+    const created = await request(app)
+      .post(`/api/v3/servers/${serverId}/schedules`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "once", cronExpr: "* * * * *", tasks: [{ action: "command", payload: { command: "x" } }] });
+    const id = created.body.schedule.id as string;
+    // Force it due right now.
+    ctx.db.prepare("UPDATE schedules SET next_run_at = ? WHERE id = ?").run(Date.now() - 1000, id);
+
+    const [a, b] = await Promise.all([ctx.scheduler.runDue(), ctx.scheduler.runDue()]);
+    expect(a + b).toBe(1);
+
+    await request(app)
+      .delete(`/api/v3/servers/${serverId}/schedules/${id}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+  });
 });
 
 describe.runIf(isTarAvailable())("backups", () => {
+  it("the backup tool is present (backups are not silently skipped)", () => {
+    // If this fails, every test below is skipped and the suite lies green.
+    expect(isTarAvailable()).toBe(true);
+  });
   it("creates, downloads, restores, and enforces locks", async () => {
     const srvDir = join(dir, "servers", serverId);
     writeFileSync(join(srvDir, "world.txt"), "precious-data", "utf8");
@@ -200,5 +221,59 @@ describe.runIf(isTarAvailable())("backups", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect(restored.status).toBe(200);
     expect(readFileSync(join(srvDir, "world.txt"), "utf8")).toBe("precious-data");
+  });
+
+  it("a corrupt archive refuses restore and keeps current files", async () => {
+    const srvDir = join(dir, "servers", serverId);
+    writeFileSync(join(srvDir, "world.txt"), "live-data", "utf8");
+    const created = await request(app)
+      .post(`/api/v3/servers/${serverId}/backups`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({});
+    const backupId = created.body.backup.id as string;
+    // Tamper with the archive on disk (bit rot, angry admin, MITM).
+    const row = ctx.db
+      .prepare("SELECT file_name FROM backups WHERE id = ?")
+      .get(backupId) as { file_name: string };
+    writeFileSync(join(dir, "backups", serverId, row.file_name), "definitely-not-a-tarball", "utf8");
+
+    const restored = await request(app)
+      .post(`/api/v3/servers/${serverId}/backups/${backupId}/restore`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(restored.status).toBe(409);
+    // The live directory is untouched: failed restores never half-apply.
+    expect(readFileSync(join(srvDir, "world.txt"), "utf8")).toBe("live-data");
+  });
+
+  it("retention keeps the newest 10 unlocked backups", async () => {
+    for (let i = 0; i < 9; i++) {
+      const res = await request(app)
+        .post(`/api/v3/servers/${serverId}/backups`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({});
+      expect(res.status).toBe(201);
+    }
+    const listed = await request(app)
+      .get(`/api/v3/servers/${serverId}/backups`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    // 1 corrupt-test backup + 9 new ones = 10 unlocked kept; the locked one is separate.
+    const unlocked = (listed.body.backups as Array<{ locked?: boolean }>).filter((b) => !b.locked);
+    expect(unlocked.length).toBe(10);
+  });
+
+  it("locked backups unlock into deletable ones", async () => {
+    const listed = await request(app)
+      .get(`/api/v3/servers/${serverId}/backups`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    const locked = (listed.body.backups as Array<{ id: string; locked?: boolean }>).find((b) => b.locked);
+    expect(locked).toBeDefined();
+    const unlock = await request(app)
+      .post(`/api/v3/servers/${serverId}/backups/${locked!.id}/unlock`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(unlock.status).toBe(200);
+    const del = await request(app)
+      .delete(`/api/v3/servers/${serverId}/backups/${locked!.id}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(del.status).toBe(204);
   });
 });

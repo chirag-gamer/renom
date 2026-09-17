@@ -37,11 +37,21 @@ export class BlueprintRegistry {
             .join("; ")}`,
         );
       }
-      const exists = this.db.prepare("SELECT slug FROM blueprints WHERE slug = ?").get(doc.slug);
+      const exists = this.db.prepare("SELECT id FROM blueprints WHERE slug = ?").get(doc.slug) as
+        | { id: string }
+        | undefined;
       const maturity = parsed.data.maturity;
       if (exists) {
         // Converge catalog edits (maturity flips, renames) on every boot.
         this.db.prepare("UPDATE blueprints SET maturity = ?, updated_at = ? WHERE slug = ?").run(maturity, now, doc.slug);
+        // Re-store the document when the shipped content changed: fixes to
+        // install ops, checksums, and commands must reach existing installs.
+        const current = this.db
+          .prepare("SELECT sha256 FROM blueprint_versions WHERE blueprint_id = ? AND tag = ?")
+          .get(exists.id, parsed.data.tag) as { sha256: string } | undefined;
+        if (!current || current.sha256 !== sha256(JSON.stringify(parsed.data))) {
+          this.storeVersion(exists.id, parsed.data, now);
+        }
         continue;
       }
       const id = ulid(now);
