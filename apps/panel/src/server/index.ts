@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadEnv, generateEphemeralSecret, ConfigError } from "./config/env.js";
 import { createLogger } from "./shared/logger.js";
-import { createApp, type ReadinessComponent } from "./http/app.js";
+import { createApp } from "./http/app.js";
 import { openAndMigrate, type Database } from "./infra/db/index.js";
 import { UsersRepo } from "./modules/users/repo.js";
 import { AuthService } from "./modules/auth/service.js";
@@ -17,15 +17,19 @@ import { usersRouter } from "./http/routes/users.js";
 import { filesRouter } from "./http/routes/files.js";
 import { blueprintsRouter } from "./http/routes/blueprints.js";
 import { serversRouter } from "./http/routes/servers.js";
+import { powerRouter } from "./http/routes/power.js";
+import { attachConsoleGateway } from "./http/console-gateway.js";
 import { FilesService } from "./modules/files/service.js";
 import { BlueprintRegistry } from "./modules/blueprints/registry.js";
 import { ServersRepo } from "./modules/servers/repo.js";
+import { LocalProcessEngine } from "./modules/runtime/engine.js";
 
 export interface PanelContext {
   env: ReturnType<typeof loadEnv>;
   db: Database;
   users: UsersRepo;
   servers: ServersRepo;
+  engine: LocalProcessEngine;
   auth: AuthService;
   audit: AuditService;
 }
@@ -81,12 +85,28 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   // Idempotent: only seeds slugs missing from the table (safe on every boot).
   blueprints.seedBuiltins();
   const servers = new ServersRepo(db);
+  const engine = new LocalProcessEngine(db, servers, blueprints, dataDir);
+
+  // Reconcile on boot: child processes do not survive a panel restart, so any
+  // recorded non-offline state is stale. Reset loudly rather than lying.
+  {
+    const stale = db
+      .prepare(
+        "SELECT id FROM servers WHERE runtime_state IS NOT NULL AND runtime_state != 'offline'",
+      )
+      .all() as Array<{ id: string }>;
+    for (const s of stale) {
+      servers.setRuntimeState(s.id, "offline");
+      audit.record({ event: "server.state.reconciled", actorIp: "system", serverId: s.id });
+    }
+  }
 
   const apiRouters = [
     setupRouter(users, audit),
     authRouter(auth, users),
     usersRouter(users, audit, auth),
     serversRouter({ db, users, servers, blueprints, audit, auth, dataDir }),
+    powerRouter({ db, servers, engine, audit, auth }),
     filesRouter(db, env, files, audit, auth),
     blueprintsRouter(blueprints, auth),
   ];
@@ -126,8 +146,9 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   });
 
   const server: Server = createServer(app);
+  attachConsoleGateway(server, { db, auth, engine });
 
-  return { ctx: { env, db, users, servers, auth, audit }, server, app };
+  return { ctx: { env, db, users, servers, engine, auth, audit }, server, app };
 }
 
 /** CLI entrypoint. */
