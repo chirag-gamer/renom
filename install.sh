@@ -2,69 +2,172 @@
 #
 # Renom installer — one machine, one panel.
 #
-# What it does:
-#   1. Checks for Node.js >= 24 (the only requirement — no compilers, no Docker needed for the panel itself).
-#   2. Asks where the panel should listen (host + port) and where to keep its data.
-#   3. Writes a .env with a freshly generated secret, installs dependencies, builds.
-#   4. Asks you to create the admin account, then tells you where to open the panel.
+# Run it from a clone (./install.sh) or through the dashboard (./renom.sh).
+# It works on a bare machine: missing basics (curl, git, tar) and Node.js 24+
+# are installed when a supported package manager is available.
 #
-# Safe to re-run: it never deletes data, and it skips admin creation if accounts already exist.
+# What it asks: port, admin account. Everything else has sane defaults.
+# Safe to re-run: existing .env values become the prompt defaults, your
+# session secret is kept, and admin creation is skipped when users exist.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
 say() { printf '%s\n' "$*"; }
+info() { printf "${BLUE}[INFO]${NC} %s\n" "$*"; }
+ok() { printf "${GREEN}[OK]${NC} %s\n" "$*"; }
+warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
+die() { printf "${RED}[ERROR]${NC} %s\n" "$*"; exit 1; }
+
 ask() { # ask <prompt> <default> -> prints value
   local prompt="$1" default="$2" answer=""
   printf '%s [%s]: ' "$prompt" "$default" >&2
-  IFS= read -r answer || true
+  IFS= read -r answer || answer=""
   if [ -z "$answer" ]; then printf '%s' "$default"; else printf '%s' "$answer"; fi
 }
-ask_secret() { # ask_secret <prompt> -> prints value (input hidden)
+ask_secret() { # ask_secret <prompt> -> prints value (input hidden); fails on EOF
   local prompt="$1" answer=""
   printf '%s: ' "$prompt" >&2
-  IFS= read -rs answer || true
+  IFS= read -rs answer || return 1
   printf '\n' >&2
   printf '%s' "$answer"
 }
 
+# Read one KEY from .env (empty when absent) so reruns keep your settings.
+env_default() {
+  local key="$1" fallback="$2" found=""
+  if [ -f .env ]; then
+    found="$(grep -E "^${key}=" .env 2>/dev/null | cut -d= -f2- | tr -d '\r' | head -n 1 || true)"
+  fi
+  if [ -n "$found" ]; then printf '%s' "$found"; else printf '%s' "$fallback"; fi
+}
+
+banner() {
+  if [ -t 1 ]; then clear 2>/dev/null || true; fi
+  printf "${CYAN}${BOLD}%s${NC}\n" "  ____                        "
+  printf "${CYAN}${BOLD}%s${NC}\n" " |  _ \ ___ _ __   ___  _ __ ___ "
+  printf "${CYAN}${BOLD}%s${NC}\n" " | |_) / _ \ '_ \ / _ \| '_ \` _ \ "
+  printf "${CYAN}${BOLD}%s${NC}\n" " |  _ <  __/ | | | (_) | | | | | |"
+  printf "${CYAN}${BOLD}%s${NC}\n" " |_| \_\___|_| |_|\___/|_| |_| |_|"
+  printf "${CYAN}%s${NC}\n" "            panel installer"
+  say ""
+}
+
+# ---------------------------------------------------------------- dependencies
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+install_basics() {
+  local missing=""
+  for tool in curl git tar; do
+    have "$tool" || missing="$missing $tool"
+  done
+  # Java runs Minecraft servers; warn (don't force) when absent.
+  have java || warn "Java not found — Minecraft servers need it. Install a JRE (17+) to boot them."
+  if [ -z "$missing" ]; then return 0; fi
+  info "Installing basics:$missing ..."
+  if have apt-get; then
+    sudo apt-get update && sudo apt-get install -y $missing
+  elif have dnf; then
+    sudo dnf install -y $missing
+  elif have pacman; then
+    sudo pacman -Sy --noconfirm $missing
+  elif have apk; then
+    sudo apk add $missing
+  else
+    die "Cannot install$missing automatically (no apt/dnf/pacman/apk). Install them and re-run."
+  fi
+}
+
+ensure_node() {
+  if have node; then
+    local major
+    major="$(node -p 'process.versions.node.split(".")[0]')"
+    if [ "$major" -ge 24 ]; then ok "Node.js $(node --version) — good."; return 0; fi
+    warn "Node.js $(node --version) is too old — Renom needs 24+."
+  else
+    info "Node.js not found."
+  fi
+  if have apt-get; then
+    info "Installing Node.js 24 (NodeSource)..."
+    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - \
+      || die "NodeSource setup failed."
+    sudo apt-get install -y nodejs || die "Node.js install failed."
+  elif have dnf; then
+    sudo dnf module install -y nodejs:24/common || sudo dnf install -y nodejs \
+      || die "Node.js install failed."
+  else
+    die "Install Node.js 24+ from https://nodejs.org/en/download and re-run."
+  fi
+  have node || die "Node.js still missing after install."
+  ok "Node.js $(node --version) — good."
+}
+
+# ---------------------------------------------------------------- firewall
+
+lan_ips() {
+  # Best-effort LAN addresses for the "open this" line. Never fatal.
+  if have hostname; then hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^127\.' | head -n 3 || true; fi
+}
+
+open_firewall() {
+  local port="$1"
+  if have ufw && sudo ufw status 2>/dev/null | grep -q 'Status: active'; then
+    sudo ufw allow "$port"/tcp >/dev/null && ok "Opened TCP $port in ufw." && return 0
+  fi
+  if have firewall-cmd && sudo firewall-cmd --state 2>/dev/null | grep -q running; then
+    sudo firewall-cmd --permanent --add-port="$port"/tcp >/dev/null \
+      && sudo firewall-cmd --reload >/dev/null \
+      && ok "Opened TCP $port in firewalld." && return 0
+  fi
+  warn "Could not open TCP $port automatically — allow it in your firewall manually."
+  return 0
+}
+
+# ---------------------------------------------------------------- main
+
+banner
 say "== Renom installer =="
 say ""
 
-# 1. Node check — the only hard requirement.
-if ! command -v node >/dev/null 2>&1; then
-  say "error: Node.js is not installed. Install Node.js 24 or newer, then re-run this script."
-  say "  https://nodejs.org/en/download"
-  exit 1
-fi
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-if [ "$NODE_MAJOR" -lt 24 ]; then
-  say "error: found Node.js $(node --version), but Renom needs Node.js 24 or newer."
-  exit 1
-fi
-say "Node.js $(node --version) — good."
+install_basics
+ensure_node
 say ""
 
-# 2. Where should the panel live on the network?
-HOST="$(ask "Listen address (127.0.0.1 = this machine only, 0.0.0.0 = your whole network)" "0.0.0.0")"
-PORT="$(ask "Port" "8080")"
-DATA_DIR="$(ask "Data directory (database, servers, backups)" "./data")"
+# --- where should the panel listen? Reruns offer the current values.
+HOST="$(ask "Listen address (127.0.0.1 = this machine only, 0.0.0.0 = your network)" "$(env_default HOST "127.0.0.1")")"
+PORT="$(ask "Port" "$(env_default PORT "8080")")"
+DATA_DIR="$(ask "Data directory (database, servers, backups)" "$(env_default DATA_DIR "./data")")"
 case "$PORT" in
-  ''|*[!0-9]*|0|*[0-9][0-9][0-9][0-9][0-9][0-9]*) say "error: port must be a number from 1 to 65535."; exit 1;;
+  '' | *[!0-9]* | 0) die "Port must be a number from 1 to 65535." ;;
 esac
-if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then say "error: port must be 1-65535."; exit 1; fi
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then die "Port must be 1-65535."; fi
+if [ "$HOST" = "0.0.0.0" ]; then
+  warn "Listening on every interface is convenient but exposes logins to your whole network."
+  warn "Prefer 127.0.0.1 + SSH tunnel unless you know this network."
+  open_firewall "$PORT"
+fi
 say ""
 
-# 3. Secrets + config. Re-running keeps your existing JWT secret.
-JWT_SECRET=""
-if [ -f .env ]; then
-  JWT_SECRET="$(node -e 'try{const fs=require("fs");const m=fs.readFileSync(".env","utf8").match(/^JWT_SECRET=(.*)$/m);process.stdout.write(m?m[1].trim():"")}catch{process.stdout.write("")}')"
-fi
+# --- secrets + config. Reruns keep JWT_SECRET and SETUP_TOKEN.
+JWT_SECRET="$(env_default JWT_SECRET "")"
 if [ -z "$JWT_SECRET" ]; then
   JWT_SECRET="$(node -e 'console.log(require("node:crypto").randomBytes(48).toString("base64url"))')"
-  say "Generated a fresh session secret."
+  info "Generated a fresh session secret."
 else
-  say "Keeping your existing session secret."
+  info "Keeping your existing session secret."
+fi
+SETUP_TOKEN="$(env_default SETUP_TOKEN "")"
+if [ -z "$SETUP_TOKEN" ]; then
+  SETUP_TOKEN="$(node -e 'console.log(require("node:crypto").randomBytes(24).toString("base64url"))')"
 fi
 
 cat > .env <<EOF
@@ -73,49 +176,55 @@ NODE_ENV=production
 HOST=${HOST}
 PORT=${PORT}
 JWT_SECRET=${JWT_SECRET}
+SETUP_TOKEN=${SETUP_TOKEN}
 DATA_DIR=${DATA_DIR}
 LOG_LEVEL=info
 EOF
 chmod 600 .env
-say "Wrote .env (port ${PORT}, data in ${DATA_DIR})."
+ok "Wrote .env (port ${PORT}, data in ${DATA_DIR})."
 say ""
 
-# 4. Install + build.
-say "Installing dependencies (this takes a minute)..."
-npm install --no-audit --no-fund
-say "Building..."
-npm run build
+# --- install + build.
+info "Installing dependencies (this takes a minute)..."
+npm install --no-audit --no-fund || die "npm install failed."
+info "Building..."
+npm run build || die "Build failed."
 say ""
 
-# 5. Admin account — only if the panel has no users yet.
-# (--check is the same code path as creation: no node -e subtleties, no drift.)
+# --- admin account, only when the panel has no users yet.
 ADMIN_EXISTS="$(DATA_DIR="$DATA_DIR" npm run --silent setup:admin --workspace @renom/panel -- --check 2>/dev/null || echo unknown)"
 if [ "$ADMIN_EXISTS" = "yes" ]; then
-  say "Accounts already exist — skipping admin creation."
+  info "Accounts already exist — skipping admin creation."
 elif [ "$ADMIN_EXISTS" = "unknown" ]; then
-  say "warning: could not check for existing accounts. Create the admin from the web page on first open."
+  warn "Could not check for existing accounts. Create the admin from the web page on first open"
+  warn "using this setup token: ${SETUP_TOKEN}"
 else
   say "Now create your admin account. This is the owner of the panel —"
   say "after this, new accounts are made from inside, never from the installer."
   say ""
   ADMIN_USER="$(ask "Admin username" "admin")"
   while true; do
-    ADMIN_PASS="$(ask_secret "Admin password (at least 12 characters)")"
+    ADMIN_PASS="$(ask_secret "Admin password (at least 12 characters)")" \
+      || die "No password entered (EOF) — rerun the installer to try again."
     if [ "${#ADMIN_PASS}" -ge 12 ]; then break; fi
     say "Too short — pick at least 12 characters." >&2
   done
   ADMIN_EMAIL="$(ask "Admin email (optional, Enter to skip)" "")"
-  # shellcheck disable=SC2086 # intentional: empty $ADMIN_EMAIL_ARG vanishes
-  ADMIN_EMAIL_ARG=""
-  if [ -n "$ADMIN_EMAIL" ]; then ADMIN_EMAIL_ARG="--email $ADMIN_EMAIL"; fi
-  DATA_DIR="$DATA_DIR" npm run setup:admin --workspace @renom/panel -- \
-    --username "$ADMIN_USER" --password "$ADMIN_PASS" $ADMIN_EMAIL_ARG
+  # Everything travels by environment, never argv (invisible to `ps`).
+  export RENOM_ADMIN_USER="$ADMIN_USER" RENOM_ADMIN_PASSWORD="$ADMIN_PASS"
+  if [ -n "$ADMIN_EMAIL" ]; then export RENOM_ADMIN_EMAIL="$ADMIN_EMAIL"; fi
+  DATA_DIR="$DATA_DIR" \
+    npm run setup:admin --workspace @renom/panel -- || die "Admin creation failed."
+  unset RENOM_ADMIN_USER RENOM_ADMIN_PASSWORD RENOM_ADMIN_EMAIL
 fi
 say ""
 
-# 6. Done. Tell the truth about what happens next.
+# --- done. Print something the user can actually open.
 DISPLAY_HOST="$HOST"
-if [ "$HOST" = "0.0.0.0" ]; then DISPLAY_HOST="<this-machine-ip>"; fi
+if [ "$HOST" = "0.0.0.0" ]; then
+  DISPLAY_HOST="$(lan_ips | head -n 1 || true)"
+  if [ -z "$DISPLAY_HOST" ]; then DISPLAY_HOST="<this-machine-ip>"; fi
+fi
 say "== Done. Renom is installed. =="
 say ""
 say "Start it with:   npm start --workspace @renom/panel"
