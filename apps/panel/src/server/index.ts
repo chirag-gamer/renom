@@ -25,7 +25,7 @@ import { backupsRouter } from "./http/routes/backups.js";
 import { schedulesRouter } from "./http/routes/schedules.js";
 import { tunnelRouter } from "./http/routes/tunnel.js";
 import { addonsRouter } from "./http/routes/addons.js";
-import { attachConsoleGateway } from "./http/console-gateway.js";
+import { attachConsoleGateway, type ConsoleGateway } from "./http/console-gateway.js";
 import { FilesService } from "./modules/files/service.js";
 import { BlueprintRegistry } from "./modules/blueprints/registry.js";
 import { ServersRepo } from "./modules/servers/repo.js";
@@ -45,6 +45,7 @@ export interface PanelContext {
   apiKeys: ApiKeysRepo;
   auth: AuthService;
   audit: AuditService;
+  gateway: ConsoleGateway;
 }
 
 /**
@@ -130,23 +131,17 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   const apiRouters = [
     setupRouter(users, audit, { setupToken: env.SETUP_TOKEN }),
     authRouter(auth, users),
-    usersRouter(users, audit, auth),
-    apiKeysRouter(apiKeys, audit, auth),
-    serversRouter({ db, users, servers, engine, blueprints, audit, auth, dataDir }),
-    powerRouter({ db, servers, engine, audit, auth }),
-    subusersRouter({ db, users, audit, auth }),
-    allocationsRouter({ db, audit, auth }),
-    backupsRouter({ db, backups, audit, auth }),
-    schedulesRouter({ db, scheduler, audit, auth }),
-    tunnelRouter({ db, servers, engine, audit, auth, dataDir }),
-    addonsRouter({ db, servers, audit, auth, dataDir }),
-    filesRouter(db, env, files, audit, auth),
-    blueprintsRouter(blueprints, auth, audit),
   ];
 
   // Web client (apps/panel/public): src/server -> ../../public, same for dist/server.
   const here = dirname(fileURLToPath(import.meta.url));
   const publicDir = resolve(here, "../../public");
+
+  // The gateway object must exist before routers are constructed (they cut
+  // live sockets at request time), but Socket.IO needs the HTTP server that
+  // wraps the app. The proxy breaks the cycle: routes hold it, attach fills
+  // it, requests only arrive after listen().
+  const gatewayProxy = {} as ConsoleGateway;
 
   const app = createApp({
     env,
@@ -163,6 +158,20 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
       }
     },
     registerRoutes: (expressApp) => {
+      apiRouters.push(
+        usersRouter(users, audit, auth, gatewayProxy),
+        apiKeysRouter(apiKeys, audit, auth, gatewayProxy),
+        serversRouter({ db, users, servers, engine, blueprints, audit, auth, gateway: gatewayProxy, dataDir }),
+        powerRouter({ db, servers, engine, audit, auth }),
+        subusersRouter({ db, users, audit, auth, gateway: gatewayProxy }),
+        allocationsRouter({ db, audit, auth }),
+        backupsRouter({ db, backups, audit, auth }),
+        schedulesRouter({ db, scheduler, audit, auth }),
+        tunnelRouter({ db, servers, engine, audit, auth, dataDir }),
+        addonsRouter({ db, servers, audit, auth, dataDir }),
+        filesRouter(db, env, files, audit, auth),
+        blueprintsRouter(blueprints, auth, audit),
+      );
       for (const r of apiRouters) {
         expressApp.use("/api/v3", r);
       }
@@ -179,10 +188,11 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   });
 
   const server: Server = createServer(app);
-  attachConsoleGateway(server, { db, auth, engine });
+  const gateway = attachConsoleGateway(server, { db, auth, engine });
+  Object.assign(gatewayProxy, gateway);
 
   return {
-    ctx: { env, db, users, servers, engine, backups, scheduler, apiKeys, auth, audit },
+    ctx: { env, db, users, servers, engine, backups, scheduler, apiKeys, auth, audit, gateway },
     server,
     app,
   };

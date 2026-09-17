@@ -113,7 +113,7 @@ describe("console gateway", () => {
     );
     expect(joined.ok).toBe(true);
 
-    const linePromise = new Promise<{ text: string }>((resolve) =>
+    const linePromise = new Promise<{ v: number; line: { text: string } }>((resolve) =>
       socket.on("console:line", resolve),
     );
     const sent = await new Promise<{ accepted: boolean }>((resolve) =>
@@ -121,7 +121,8 @@ describe("console gateway", () => {
     );
     expect(sent.accepted).toBe(true);
     const line = await linePromise;
-    expect(line.text).toContain("echo:ping-sock");
+    expect(line.v).toBe(1);
+    expect(line.line.text).toContain("echo:ping-sock");
     socket.close();
     await ctx.engine.stop(serverId);
   });
@@ -153,5 +154,46 @@ describe("console gateway", () => {
     expect(joined.ok).toBe(false);
     expect(joined.reason).toBe("not found");
     socket.close();
+  });
+
+  it("a granted subuser joins; revocation cuts the live stream", async () => {
+    const { default: request } = await import("supertest");
+    const api = request(`http://127.0.0.1:${port}`);
+    const mallory = (
+      await api.post("/api/v3/auth/login").send({ username: "mallory", password: "mallory-pass" })
+    ).body.token as string;
+    const rootRow = ctx.users.byUsername("root")!;
+    const malloryRow = ctx.users.byUsername("mallory")!;
+    ctx.db
+      .prepare(
+        "INSERT INTO subusers (user_id, server_id, permissions_json, granted_by, created_at) VALUES (?,?,?,?,?)",
+      )
+      .run(malloryRow.id, serverId, JSON.stringify(["websocket.connect"]), rootRow.id, Date.now());
+
+    await ctx.engine.start(serverId);
+    const socket = connect(mallory);
+    await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+    const joined = await new Promise<{ ok: boolean }>((resolve) =>
+      socket.emit("console:join", serverId, resolve),
+    );
+    expect(joined.ok).toBe(true);
+
+    const revoked = new Promise<{ serverId: string }>((resolve) =>
+      socket.on("console:revoked", resolve),
+    );
+    // Owner removes the grant through the real route (which sweeps sockets).
+    await api
+      .delete(`/api/v3/servers/${serverId}/users/${malloryRow.id}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .expect(204);
+    const notice = await revoked;
+    expect(notice.serverId).toBe(serverId);
+
+    const rejoined = await new Promise<{ ok: boolean }>((resolve) =>
+      socket.emit("console:join", serverId, resolve),
+    );
+    expect(rejoined.ok).toBe(false);
+    socket.close();
+    await ctx.engine.stop(serverId).catch(() => undefined);
   });
 });

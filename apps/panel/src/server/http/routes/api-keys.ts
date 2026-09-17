@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ApiKeysRepo } from "../../modules/auth/api-keys.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
+import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth } from "../middleware/authn.js";
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
@@ -16,7 +17,12 @@ const createKeySchema = z.object({
 
 const SCOPE_VOCABULARY = new Set<string>([...permissions, "*"]);
 
-export function apiKeysRouter(keys: ApiKeysRepo, audit: AuditService, auth: AuthService): Router {
+export function apiKeysRouter(
+  keys: ApiKeysRepo,
+  audit: AuditService,
+  auth: AuthService,
+  gateway?: ConsoleGateway,
+): Router {
   const router = Router();
   router.use(requireAuth(auth));
 
@@ -64,6 +70,8 @@ export function apiKeysRouter(keys: ApiKeysRepo, audit: AuditService, auth: Auth
     try {
       const ok = keys.revoke(req.params.id ?? "", req.principal!.userId);
       if (!ok) throw new NotFoundError("API key not found");
+      // A revoked key's live sockets die with it.
+      gateway?.dropKey(req.params.id ?? "");
       audit.record({
         event: "apikey.revoke",
         actorUserId: req.principal!.userId,

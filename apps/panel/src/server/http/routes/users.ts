@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { UsersRepo, UserRow } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
+import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
 import { parseBody, parseQuery, passwordSchema } from "../../shared/validate.js";
 import { NotFoundError, ConflictError } from "../../shared/errors.js";
@@ -26,7 +27,12 @@ const patchUserSchema = z.object({
   quotaDiskMb: z.number().int().min(0).max(10_485_760).optional(),
 });
 
-export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthService): Router {
+export function usersRouter(
+  users: UsersRepo,
+  audit: AuditService,
+  auth: AuthService,
+  gateway?: ConsoleGateway,
+): Router {
   const router = Router();
   // Per-route guards ONLY: a router-level .use() would intercept every later-mounted
   // /api/v3 path (Express routers fall through when no route matches, but a failed
@@ -85,7 +91,11 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
       users.update(target.id, body);
       if (body.suspended !== undefined) {
         // FR-007/009: suspension invalidates sessions via passwordVersion bump
-        if (body.suspended) users.bumpPasswordVersion(target.id);
+        if (body.suspended) {
+          users.bumpPasswordVersion(target.id);
+          // Suspended users lose live console streams everywhere immediately.
+          gateway?.dropGrants(undefined, target.id);
+        }
         audit.record({
           event: body.suspended ? "user.suspend" : "user.resume",
           actorUserId: req.principal!.userId,

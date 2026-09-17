@@ -249,12 +249,19 @@ export class LocalProcessEngine {
     }
   }
 
-  /** Write a line to the process stdin. Returns false when nothing is running. */
+  /**
+   * Write a line to the process stdin. Returns false when nothing is running.
+   * Control characters are stripped centrally (both socket and REST paths
+   * land here): one message carries exactly one command, so embedded
+   * newlines cannot smuggle extra commands past the rate limit.
+   */
   sendInput(serverId: string, line: string): boolean {
     const live = this.live.get(serverId);
     const stdin = live?.proc?.stdin;
     if (!live?.proc || !stdin || live.proc.exitCode !== null) return false;
-    stdin.write(`${line.slice(0, LINE_MAX)}\n`);
+    const clean = line.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, LINE_MAX);
+    if (clean.length === 0) return false;
+    stdin.write(`${clean}\n`);
     return true;
   }
 

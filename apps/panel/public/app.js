@@ -407,7 +407,11 @@ function joinConsoleSocket() {
     return;
   }
   socket = window.io({ path: "/socket.io/", auth: { token: store.token } });
-  socket.on("console:line", (line) => appendLine(line.text));
+  socket.on("console:line", (msg) => appendLine(msg.line.text));
+  socket.on("console:revoked", () => {
+    document.getElementById("console-note").textContent =
+      "Your access to this console changed — ask the owner if you need it back.";
+  });
   socket.emit("console:join", currentServer.id, (res) => {
     if (!res || !res.ok) {
       document.getElementById("console-note").textContent =
@@ -424,8 +428,13 @@ document.getElementById("form-console").addEventListener("submit", async (e) => 
   const command = input.value.trim();
   if (!command) return;
   input.value = "";
+  const err = document.getElementById("srv-error");
   if (socket) {
-    socket.emit("console:send", { serverId: currentServer.id, command });
+    socket.emit("console:send", { serverId: currentServer.id, command }, (res) => {
+      if (!res || !res.accepted) {
+        fail(err, "Command not accepted — the server may be offline or input not allowed.");
+      }
+    });
     return;
   }
   await api(`/servers/${currentServer.id}/console/send`, {

@@ -7,6 +7,7 @@ import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import type { Database } from "../../infra/db/database.js";
 import type { LocalProcessEngine } from "../../modules/runtime/engine.js";
+import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
 import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
 import { parseBody, parseQuery } from "../../shared/validate.js";
@@ -29,12 +30,13 @@ export interface ServersDeps {
   blueprints: BlueprintRegistry;
   audit: AuditService;
   auth: AuthService;
+  gateway?: ConsoleGateway;
   /** Resolved DATA_DIR; server directories live at <dataDir>/servers/<id>. */
   dataDir: string;
 }
 
 export function serversRouter(deps: ServersDeps): Router {
-  const { users, servers, engine, blueprints, audit, auth, dataDir } = deps;
+  const { users, servers, engine, blueprints, audit, auth, gateway, dataDir } = deps;
   const router = Router();
   router.use(requireAuth(auth));
 
@@ -356,6 +358,8 @@ export function serversRouter(deps: ServersDeps): Router {
         const id = req.params.id ?? "";
         await engine.kill(id);
         servers.setStatus(id, "suspended");
+        // Nobody streams a suspended server: cut every live subscription.
+        gateway?.dropGrants(id);
         audit.record({
           event: "server.suspend",
           actorUserId: req.principal!.userId,

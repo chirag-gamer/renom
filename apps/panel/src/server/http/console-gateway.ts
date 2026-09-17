@@ -2,7 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import type { Database } from "../infra/db/database.js";
 import type { AuthService, Principal } from "../modules/auth/service.js";
-import type { LocalProcessEngine } from "../modules/runtime/engine.js";
+import type { LocalProcessEngine, ConsoleLine } from "../modules/runtime/engine.js";
 import { resolveEffectivePermissions } from "../modules/servers/permissions.js";
 import { intersectScopes } from "./middleware/authz.js";
 import { hasPermission } from "@renom/contracts";
@@ -13,32 +13,68 @@ export interface ConsoleGatewayDeps {
   engine: LocalProcessEngine;
 }
 
+export interface ConsoleGateway {
+  io: SocketIOServer;
+  /**
+   * Cut live console access: matching sockets leave their rooms, stop
+   * streaming, and are told why. Called on collaborator removal, user or
+   * server suspension, and key revocation. Omitted arguments are wildcards.
+   */
+  dropGrants(serverId?: string, userId?: string): void;
+  /** Cut every socket authenticated with a revoked API key. */
+  dropKey(apiKeyId: string): void;
+}
+
 interface JoinAck {
   ok: boolean;
   reason?: string;
 }
 
+const SEND_MAX = 20;
+const SEND_WINDOW_MS = 10_000;
+/** Command budget per user+server, shared across all their sockets. */
+const sendBuckets = new Map<string, number[]>();
+
+function takeBudget(userId: string, serverId: string): boolean {
+  const key = `${userId}:${serverId}`;
+  const now = Date.now();
+  const times = sendBuckets.get(key) ?? [];
+  while (times.length > 0 && now - (times[0] ?? 0) > SEND_WINDOW_MS) times.shift();
+  if (times.length >= SEND_MAX) {
+    sendBuckets.set(key, times);
+    return false;
+  }
+  times.push(now);
+  sendBuckets.set(key, times);
+  return true;
+}
+
 /**
- * Real-time console (FR-0xx user operations).
- * - Auth: JWT from handshake, same rules as the REST layer (SEC-004).
+ * Real-time console.
+ * - Auth: bearer token from the handshake ONLY (never query strings).
  * - `console:join` needs websocket.connect; `console:send` needs control.console.
  * - Suspended servers stream nothing and accept no input.
- * - Per-socket send rate limit: 30 commands / 10 s (automation uses the REST endpoint).
+ * - Payloads carry `{v:1}` for additive evolution.
+ * - Lines emit volatile: a stalled client is dropped, never buffered forever.
  */
 export function attachConsoleGateway(
   httpServer: HttpServer,
   deps: ConsoleGatewayDeps,
-): SocketIOServer {
+): ConsoleGateway {
   const { db, auth, engine } = deps;
   const io = new SocketIOServer(httpServer, {
     path: "/socket.io/",
     maxHttpBufferSize: 1e5,
   });
 
+  // Live subscriptions for revocation sweeps.
+  const live = new Map<
+    string,
+    { socket: Socket; userId: string; apiKeyId?: string; servers: Set<string> }
+  >();
+
   io.use((socket, next) => {
-    const token =
-      (socket.handshake.auth as { token?: unknown } | undefined)?.token ??
-      (socket.handshake.query as { token?: unknown } | undefined)?.token;
+    const token = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
     const principal =
       typeof token === "string" && token.length > 0 ? auth.authenticateToken(token) : null;
     if (!principal) {
@@ -47,11 +83,21 @@ export function attachConsoleGateway(
     }
     socket.data.principal = principal;
     socket.data.unsubs = new Map<string, () => void>();
-    socket.data.sendTimes = [] as number[];
     next();
   });
 
+  const unsubscribe = (socket: Socket, serverId: string): void => {
+    const unsubs = socket.data.unsubs as Map<string, () => void> | undefined;
+    unsubs?.get(serverId)?.();
+    unsubs?.delete(serverId);
+    void socket.leave(`server:${serverId}`);
+    live.get(socket.id)?.servers.delete(serverId);
+  };
+
   io.on("connection", (socket: Socket) => {
+    const p0 = socket.data.principal as Principal;
+    live.set(socket.id, { socket, userId: p0.userId, apiKeyId: p0.apiKeyId, servers: new Set() });
+
     socket.on("console:join", (serverId: unknown, ack?: (r: JoinAck) => void) => {
       if (typeof serverId !== "string" || serverId.length === 0 || serverId.length > 64) {
         ack?.({ ok: false, reason: "bad server id" });
@@ -79,33 +125,29 @@ export function attachConsoleGateway(
         ack?.({ ok: false, reason: "suspended" });
         return;
       }
-      const unsubs = socket.data.unsubs as Map<string, () => void>;
-      unsubs.get(serverId)?.();
+      unsubscribe(socket, serverId);
       void socket.join(`server:${serverId}`);
-      socket.emit("console:history", engine.history(serverId, 100));
-      unsubs.set(
-        serverId,
-        engine.onLine(serverId, (line) => socket.emit("console:line", line)),
-      );
+      socket.emit("console:history", { v: 1, lines: engine.history(serverId, 100) });
+      const unsubs = socket.data.unsubs as Map<string, () => void>;
+      unsubs.set(serverId, engine.onLine(serverId, (line: ConsoleLine) => {
+        socket.volatile.emit("console:line", { v: 1, line });
+      }));
+      live.get(socket.id)?.servers.add(serverId);
       ack?.({ ok: true });
     });
 
     socket.on("console:send", (msg: unknown, ack?: (r: { accepted: boolean }) => void) => {
-      const { serverId, command } = (msg as { serverId?: unknown; command?: unknown } | null) ?? {};
+      const { serverId, command } =
+        (msg as { serverId?: unknown; command?: unknown } | null) ?? {};
       if (typeof serverId !== "string" || typeof command !== "string" || command.length === 0) {
         ack?.({ accepted: false });
         return;
       }
-      const now = Date.now();
-      const times = socket.data.sendTimes as number[];
-      while (times.length > 0 && now - (times[0] ?? 0) > 10_000) times.shift();
-      if (times.length >= 30) {
+      const p = socket.data.principal as Principal;
+      if (!takeBudget(p.userId, serverId)) {
         ack?.({ accepted: false });
         return;
       }
-      times.push(now);
-
-      const p = socket.data.principal as Principal;
       const effective = intersectScopes(
         resolveEffectivePermissions(db, {
           userId: p.userId,
@@ -125,6 +167,7 @@ export function attachConsoleGateway(
         ack?.({ accepted: false });
         return;
       }
+      // Control characters stripped centrally in sendInput; empty residue refused.
       ack?.({ accepted: engine.sendInput(serverId, command.slice(0, 4096)) });
     });
 
@@ -132,8 +175,32 @@ export function attachConsoleGateway(
       const unsubs = socket.data.unsubs as Map<string, () => void> | undefined;
       unsubs?.forEach((unsub) => unsub());
       unsubs?.clear();
+      live.delete(socket.id);
     });
   });
 
-  return io;
+  return {
+    io,
+    dropGrants(serverId?: string, userId?: string): void {
+      for (const entry of live.values()) {
+        if (userId !== undefined && entry.userId !== userId) continue;
+        const targets =
+          serverId !== undefined ? [serverId] : [...entry.servers];
+        for (const sid of targets) {
+          if (!entry.servers.has(sid)) continue;
+          unsubscribe(entry.socket, sid);
+          entry.socket.emit("console:revoked", { v: 1, serverId: sid });
+        }
+      }
+    },
+    dropKey(apiKeyId: string): void {
+      for (const entry of live.values()) {
+        if (entry.apiKeyId !== apiKeyId) continue;
+        for (const sid of [...entry.servers]) {
+          unsubscribe(entry.socket, sid);
+          entry.socket.emit("console:revoked", { v: 1, serverId: sid });
+        }
+      }
+    },
+  };
 }

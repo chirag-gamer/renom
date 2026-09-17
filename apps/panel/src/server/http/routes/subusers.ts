@@ -4,6 +4,7 @@ import type { Database } from "../../infra/db/database.js";
 import type { UsersRepo } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
+import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth } from "../middleware/authn.js";
 import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
@@ -27,6 +28,7 @@ export interface SubusersDeps {
   users: UsersRepo;
   audit: AuditService;
   auth: AuthService;
+  gateway?: ConsoleGateway;
 }
 
 /**
@@ -35,7 +37,7 @@ export interface SubusersDeps {
  * anything not listed is refused by requireServerPermission.
  */
 export function subusersRouter(deps: SubusersDeps): Router {
-  const { db, users, audit, auth } = deps;
+  const { db, users, audit, auth, gateway } = deps;
   const router = Router();
   router.use(requireAuth(auth));
   const guard = (perm: string) => requireServerPermission(perm, db);
@@ -119,6 +121,8 @@ export function subusersRouter(deps: SubusersDeps): Router {
         .prepare("DELETE FROM subusers WHERE user_id = ? AND server_id = ?")
         .run(userId, serverId);
       if (Number(result.changes) === 0) throw new NotFoundError("Collaborator not found");
+      // Cut their live console stream now, not when they choose to leave.
+      gateway?.dropGrants(serverId, userId);
       audit.record({
         event: "server.subuser.remove",
         actorUserId: req.principal!.userId,

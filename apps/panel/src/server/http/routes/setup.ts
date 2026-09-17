@@ -8,8 +8,6 @@ import { parseBody, passwordSchema } from "../../shared/validate.js";
 import { toPublicUser } from "../../modules/auth/service.js";
 import { RateLimiter } from "../../modules/auth/ratelimit.js";
 
-const setupLimiter = new RateLimiter(5, 60_000);
-
 const setupAdminSchema = z.object({
   username: z.string().regex(/^[a-zA-Z0-9_-]{3,32}$/, "3-32 chars: letters, digits, _ or -"),
   // First account guards everything: demand a real password, not a placeholder.
@@ -43,6 +41,9 @@ export function setupRouter(
   opts: SetupOptions = {},
 ): Router {
   const router = Router();
+  // Per-panel limiter (not module-global): one panel's traffic must not
+  // starve another's, and restarts reset the window like other limiters.
+  const setupLimiter = new RateLimiter(5, 60_000);
 
   router.get("/setup/status", (_req, res) => {
     res.json({
