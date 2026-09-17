@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { confineWorkdir, substitute } from "../../src/server/modules/runtime/engine.js";
 import { confine } from "../../src/server/modules/runtime/install.js";
