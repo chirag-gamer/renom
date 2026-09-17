@@ -1,7 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "packages/contracts" },
-    { "path": "apps/panel" }
-  ]
+  "references": [{ "path": "packages/contracts" }, { "path": "apps/panel" }]
 }

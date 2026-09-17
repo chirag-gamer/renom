@@ -73,7 +73,9 @@ describe("database layer", () => {
     ).run();
     expect(() =>
       db.transaction(() => {
-        db.prepare("INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u2','bob','user',0,0)").run();
+        db.prepare(
+          "INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u2','bob','user',0,0)",
+        ).run();
         throw new Error("boom");
       }),
     ).toThrow("boom");

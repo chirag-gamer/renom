@@ -53,7 +53,12 @@ export function blueprintsRouter(registry: BlueprintRegistry, auth: AuthService)
         items = items.filter((v) => v === q.mc || q.mc!.startsWith(v));
       }
       const image = q.mc ? javaImageForVersion(doc, q.mc) : null;
-      if (q.mc && image === null && doc.versions.javaMapping && doc.versions.javaMapping.length > 0) {
+      if (
+        q.mc &&
+        image === null &&
+        doc.versions.javaMapping &&
+        doc.versions.javaMapping.length > 0
+      ) {
         throw new BadRequestError(
           `Minecraft ${q.mc} has no supported Java mapping for blueprint '${doc.slug}' (FR-044)`,
         );

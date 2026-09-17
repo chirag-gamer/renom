@@ -6,6 +6,7 @@ All notable changes to Renom are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+
 - First-run setup: `GET /setup/status` + one-shot `POST /setup/admin` (owner, 12+ char
   password, closes permanently after first user), `npm run setup:admin` CLI, and a
   first-run screen in the web client. The installer asks for the admin account.
@@ -17,6 +18,7 @@ All notable changes to Renom are documented here. Format based on
   were never mounted); built-in blueprints seed idempotently at boot.
 
 ### Fixed
+
 - Full test suite green (75 tests): upgraded vitest 2 → 3 for `node:sqlite` resolution,
   resolved `@renom/contracts` through the workspace build (contracts build before tests),
   deleted stray `registry.js` that shadowed the real blueprint registry module.
