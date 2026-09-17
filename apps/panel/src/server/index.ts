@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadEnv, generateEphemeralSecret, ConfigError } from "./config/env.js";
 import { createLogger } from "./shared/logger.js";
-import { createApp, type ReadinessComponent } from "./http/app.js";
+import { createApp } from "./http/app.js";
 import { openAndMigrate, type Database } from "./infra/db/index.js";
 import { UsersRepo } from "./modules/users/repo.js";
 import { AuthService } from "./modules/auth/service.js";
