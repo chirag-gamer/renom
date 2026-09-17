@@ -60,6 +60,7 @@ describe("api keys", () => {
     expect(res.status).toBe(201);
     expect(res.body.token).toMatch(/^jtgsk\./);
     keyToken = res.body.token as string;
+    expect(keyToken).toMatch(/^jtgsk\./);
     keyId = res.body.key.id as string;
 
     const list = await request(app)

@@ -3,14 +3,17 @@ import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
 import type { UsersRepo } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
-import { ConflictError, ForbiddenError } from "../../shared/errors.js";
-import { parseBody } from "../../shared/validate.js";
+import { ConflictError, ForbiddenError, RateLimitError } from "../../shared/errors.js";
+import { parseBody, passwordSchema } from "../../shared/validate.js";
 import { toPublicUser } from "../../modules/auth/service.js";
+import { RateLimiter } from "../../modules/auth/ratelimit.js";
+
+const setupLimiter = new RateLimiter(5, 60_000);
 
 const setupAdminSchema = z.object({
   username: z.string().regex(/^[a-zA-Z0-9_-]{3,32}$/, "3-32 chars: letters, digits, _ or -"),
   // First account guards everything: demand a real password, not a placeholder.
-  password: z.string().min(12).max(128),
+  password: passwordSchema,
   email: z.string().email().optional(),
   /** One-time bootstrap token (required when the installer configured one). */
   setupToken: z.string().max(256).optional(),

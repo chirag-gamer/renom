@@ -4,14 +4,14 @@ import type { UsersRepo, UserRow } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
-import { parseBody, parseQuery } from "../../shared/validate.js";
+import { parseBody, parseQuery, passwordSchema } from "../../shared/validate.js";
 import { NotFoundError, ConflictError } from "../../shared/errors.js";
 import { pageQuerySchema } from "@renom/contracts";
 import { toPublicUser } from "../../modules/auth/service.js";
 
 const createUserSchema = z.object({
   username: z.string().regex(/^[a-zA-Z0-9_-]{3,32}$/, "3-32 chars: letters, digits, _ or -"),
-  password: z.string().min(8).max(128),
+  password: passwordSchema,
   email: z.string().email().optional(),
   role: z.enum(["admin", "user"]).default("user"),
   displayName: z.string().max(64).optional(),

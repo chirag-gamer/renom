@@ -1,5 +1,4 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { z } from "zod";
 import type { UsersRepo } from "../../modules/users/repo.js";
 import type { ServersRepo } from "../../modules/servers/repo.js";
 import { toPublicServer } from "../../modules/servers/repo.js";
@@ -18,7 +17,7 @@ import {
   NotFoundError,
 } from "../../shared/errors.js";
 import { runInstallOps } from "../../modules/runtime/install.js";
-import { createServerSchema, patchServerSchema, pageQuerySchema } from "@renom/contracts";
+import { createServerSchema, patchServerSchema, pageQuerySchema, updateVariablesSchema } from "@renom/contracts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -184,6 +183,14 @@ export function serversRouter(deps: ServersDeps): Router {
     try {
       const body = parseBody(patchServerSchema, req);
       const id = req.params.id ?? "";
+      // Renaming is rename-scoped; touching RAM/disk needs the resources
+      // permission on top, so a rename-only collaborator cannot spend quota.
+      if (body.memoryMb !== undefined || body.diskQuotaMb !== undefined) {
+        const allowed = res.locals.effectivePermissions as string[];
+        if (!allowed.includes("*") && !allowed.includes("settings.resources")) {
+          throw new ForbiddenError("Resource changes need the settings.resources permission");
+        }
+      }
       // Resource bumps obey quotas too, not just creation: a collaborator
       // with rename rights must not grow a server past its owner's plan.
       if (req.principal!.role !== "owner" && req.principal!.role !== "admin") {
@@ -283,10 +290,7 @@ export function serversRouter(deps: ServersDeps): Router {
   router.put("/servers/:id/variables", guard("startup.update"), (req, res, next) => {
     try {
       assertNotSuspendedForMutation(req, res);
-      const schema = z.object({
-        values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-      });
-      const body = parseBody(schema, req);
+      const body = parseBody(updateVariablesSchema, req);
       const s = servers.byId(req.params.id ?? "");
       if (!s) throw new NotFoundError("Not found");
       const doc = blueprints.getDoc(s.blueprint_slug, s.blueprint_version_tag);
@@ -318,7 +322,11 @@ export function serversRouter(deps: ServersDeps): Router {
     }
   });
 
-  router.delete("/servers/:id", guard("settings.reinstall"), (req, res, next) => {
+  router.delete(
+    "/servers/:id",
+    requireAdmin,
+    guard("settings.delete"),
+    (req, res, next) => {
     (async () => {
       const id = req.params.id ?? "";
       // Stop first: deleting a running server must not orphan its process

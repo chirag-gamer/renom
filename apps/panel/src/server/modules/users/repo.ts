@@ -18,14 +18,18 @@ export interface UserRow {
   suspended: number;
 }
 
-/** Constant dummy hash so unknown-user logins cost the same as known ones (FR-001). */
-const DUMMY_HASH = "$2a$12$C6UzMDM.H6dfI/f/IKcEeO7ZDZQj1Vp1p2b3c4d5e6f7g8h9i0jKy";
-
 export class UsersRepo {
+  private readonly dummyHash: string;
+
   constructor(
     private readonly db: Database,
     private readonly bcryptCost = 12,
-  ) {}
+  ) {
+    // Dummy work at the configured cost: a hardcoded $12$ hash would run
+    // faster than real comparisons when BCRYPT_COST differs, leaking
+    // existence through timing. One-time cost at construction.
+    this.dummyHash = bcrypt.hashSync("renom-dummy-comparison-secret", bcryptCost);
+  }
 
   byUsername(username: string): UserRow | null {
     const row = this.db
@@ -98,10 +102,10 @@ export class UsersRepo {
     }
   }
 
-  /** Compare against a fixed dummy to equalize timing for missing users. */
+  /** Compare against a cost-matched dummy to equalize timing for missing users. */
   verifyDummy(password: string): boolean {
     try {
-      void bcrypt.compareSync(password, DUMMY_HASH);
+      void bcrypt.compareSync(password, this.dummyHash);
     } catch {
       // ignore
     }

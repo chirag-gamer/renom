@@ -96,6 +96,12 @@ describe("servers CRUD + ownership + quotas", () => {
       .send({ name: "big", blueprintSlug: "paper", memoryMb: 2048, eulaAccepted: true });
     expect(tooBig.status).toBe(409);
 
+    const tooFat = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${dave}`)
+      .send({ name: "fat", blueprintSlug: "paper", memoryMb: 512, diskQuotaMb: 50_000, eulaAccepted: true });
+    expect(tooFat.status).toBe(409);
+
     const fits = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${dave}`)
@@ -174,9 +180,14 @@ describe("servers CRUD + ownership + quotas", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect(unsuspAgain.status).toBe(409);
 
-    const del = await request(app)
+    const delDenied = await request(app)
       .delete(`/api/v3/servers/${aliceServerId}`)
       .set("authorization", `Bearer ${aliceToken}`);
+    expect(delDenied.status).toBe(403);
+
+    const del = await request(app)
+      .delete(`/api/v3/servers/${aliceServerId}`)
+      .set("authorization", `Bearer ${ownerToken}`);
     expect(del.status).toBe(204);
 
     const gone = await request(app)

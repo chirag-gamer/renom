@@ -228,7 +228,7 @@ export function toPublicServer(
     ownerId: s.owner_id,
     blueprintSlug: s.blueprint_slug,
     status: s.status as PublicServer["status"],
-    runtimeState: s.runtime_state,
+    runtimeState: s.runtime_state as PublicServer["runtimeState"],
     memoryMb: s.memory_mb,
     diskQuotaMb: s.disk_quota_mb,
     primaryAllocation: alloc,

@@ -390,7 +390,7 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     versions: {},
     image: "ghcr.io/renom/bds:latest",
     install: [
-      { op: "fetch-bds", channel: "stable" },
+      { op: "fetch-bds", channel: "stable", version: "{mcVersion}" },
       {
         op: "writefile",
         path: "server.properties",

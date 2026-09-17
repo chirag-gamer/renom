@@ -70,10 +70,11 @@ describe("first-run setup", () => {
 
   it("serves the socket.io client for the live console", async () => {
     // Socket.IO owns its client bundle on the real HTTP server (supertest
-    // bypasses it), so bind ephemerally and fetch the genuine artifact.
+    // bypasses it), so bind ephemerally on an isolated database.
+    const dir2 = mkdtempSync(join(tmpdir(), "renom-setup-sock-"));
     const panel2 = buildPanel({
       NODE_ENV: "test",
-      DATA_DIR: dir,
+      DATA_DIR: dir2,
       LOG_LEVEL: "error",
       BCRYPT_COST: 10,
     } as NodeJS.ProcessEnv);
@@ -86,6 +87,7 @@ describe("first-run setup", () => {
     } finally {
       panel2.server.close();
       panel2.ctx.db.close();
+      rmSync(dir2, { recursive: true, force: true });
     }
   });
 });

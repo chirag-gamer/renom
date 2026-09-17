@@ -95,6 +95,8 @@ export const permissions = [
   "activity.read",
   "settings.rename",
   "settings.reinstall",
+  "settings.resources",
+  "settings.delete",
 ] as const;
 export type Permission = (typeof permissions)[number];
 export const WILDCARD_PERMISSION = "*";
@@ -135,7 +137,7 @@ export const publicServerSchema = z.object({
   ownerId: z.string(),
   blueprintSlug: z.string(),
   status: z.enum(serverStatuses),
-  runtimeState: z.string().nullable(),
+  runtimeState: z.enum(runtimeStates).nullable(),
   memoryMb: z.number(),
   diskQuotaMb: z.number(),
   primaryAllocation: z.object({ ip: z.string(), port: z.number() }).nullable(),
@@ -143,3 +145,9 @@ export const publicServerSchema = z.object({
   updatedAt: z.number(),
 });
 export type PublicServer = z.infer<typeof publicServerSchema>;
+
+/** PUT /servers/:id/variables body: overrides for blueprint-declared variables. */
+export const updateVariablesSchema = z.object({
+  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+});
+export type UpdateVariables = z.infer<typeof updateVariablesSchema>;

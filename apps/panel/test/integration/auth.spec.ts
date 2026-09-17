@@ -101,12 +101,12 @@ describe("auth + users + authorization", () => {
       .post("/api/v3/users")
       .set("authorization", `Bearer ${aliceToken}`)
       .send({ username: "mallory", password: "mallory-pass", role: "admin" });
-    expect(create.status).toBe(401);
+    expect(create.status).toBe(403);
 
     const list = await request(app)
       .get("/api/v3/users")
       .set("authorization", `Bearer ${aliceToken}`);
-    expect(list.status).toBe(401);
+    expect(list.status).toBe(403);
   });
 
   it("password change bumps version and invalidates old JWTs (FR-009/SEC-014)", async () => {

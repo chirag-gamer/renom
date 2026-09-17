@@ -148,11 +148,13 @@ describe("files API authorization + confinement", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect([400, 404]).toContain(read.status); // mapped PathEscape/ENOENT, never contents
 
+    // A real NUL byte in the path (not the literal text "%00").
     const nul = await request(app)
       .get(`/api/v3/servers/${serverId}/files/content`)
-      .query({ path: "server.properties%00.png" })
+      .query({ path: "server.properties\0.png" })
       .set("authorization", `Bearer ${ownerToken}`);
     expect(nul.status).toBeLessThan(500);
+    expect([400, 404]).toContain(nul.status);
   });
 
   it("suspension blocks file mutations even for the owner (FR-023)", async () => {

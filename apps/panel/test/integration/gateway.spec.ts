@@ -126,7 +126,7 @@ describe("console gateway", () => {
     await ctx.engine.stop(serverId);
   });
 
-  it("hides strangers with a plain not-found", async () => {
+  it("returns not-found for unknown server ids (no id oracle)", async () => {
     ctx.users.create({ username: "mallory", password: "mallory-pass", role: "user" });
     const socket = connect(ownerToken);
     await new Promise<void>((resolve) => socket.on("connect", () => resolve()));

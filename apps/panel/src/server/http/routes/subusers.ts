@@ -81,11 +81,13 @@ export function subusersRouter(deps: SubusersDeps): Router {
         throw new ForbiddenError("Cannot grant permissions you do not have");
       }
       const target = users.byUsername(body.username);
+      // Uniform 404 whether the account is missing or ungrantable: the
+      // grantor learns nothing about which usernames exist.
       if (!target) throw new NotFoundError("User not found");
       const serverId = req.params.id ?? "";
       const server = res.locals.server as { owner_id: string };
       if (target.id === server.owner_id) {
-        throw new ConflictError("That account already owns this server");
+        throw new NotFoundError("User not found");
       }
       const exists = db
         .prepare("SELECT user_id FROM subusers WHERE user_id = ? AND server_id = ?")
