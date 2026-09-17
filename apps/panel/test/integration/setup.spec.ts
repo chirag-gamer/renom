@@ -65,5 +65,12 @@ describe("first-run setup", () => {
     const res = await request(app).get("/");
     expect(res.status).toBe(200);
     expect(res.text).toContain("Renom");
+    expect(res.text).toContain("/socket.io/socket.io.js");
+  });
+
+  it("serves the socket.io client for the live console", async () => {
+    const res = await request(app).get("/socket.io/socket.io.js");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("socket.io");
   });
 });

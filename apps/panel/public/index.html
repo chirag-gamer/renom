@@ -79,7 +79,26 @@
 
       <section id="view-home" class="card" hidden>
         <h2 id="home-greeting">You're in.</h2>
-        <p id="home-sub">Servers, files and consoles plug in here as the panel grows.</p>
+        <p id="home-sub">These are the game servers on this machine.</p>
+
+        <div id="servers-wrap">
+          <h3>Servers</h3>
+          <ul id="server-list" class="server-list"></ul>
+          <p id="server-empty" class="note" hidden>No servers yet. Create the first one below.</p>
+          <h3>New server</h3>
+          <form id="form-server" class="inline-form">
+            <input
+              name="name"
+              required
+              minlength="1"
+              maxlength="64"
+              placeholder="Name, e.g. survival"
+            />
+            <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
+            <button type="submit">Create</button>
+          </form>
+          <p class="error" id="server-error" role="alert" hidden></p>
+        </div>
 
         <div id="admin-panel" hidden>
           <h3>People with access</h3>
@@ -105,7 +124,83 @@
 
         <p><button type="button" id="btn-signout" class="secondary">Sign out</button></p>
       </section>
+
+      <section id="view-server" class="card wide" hidden>
+        <p><button type="button" id="btn-back" class="secondary">← All servers</button></p>
+        <h2 id="srv-name">Server</h2>
+        <p id="srv-meta" class="note"></p>
+        <div id="srv-power" class="btn-row" role="group" aria-label="Power">
+          <button type="button" data-power="start">Start</button>
+          <button type="button" data-power="restart" class="secondary">Restart</button>
+          <button type="button" data-power="stop" class="secondary">Stop</button>
+          <button type="button" data-power="kill" class="danger">Kill</button>
+        </div>
+        <p class="error" id="srv-error" role="alert" hidden></p>
+
+        <nav class="tabs" aria-label="Server sections">
+          <button type="button" data-tab="console" class="active">Console</button>
+          <button type="button" data-tab="files">Files</button>
+          <button type="button" data-tab="backups">Backups</button>
+          <button type="button" data-tab="schedules">Schedules</button>
+        </nav>
+
+        <div id="tab-console">
+          <pre id="console-log" class="console" aria-live="off"></pre>
+          <form id="form-console" class="inline-form">
+            <input
+              name="command"
+              id="console-input"
+              placeholder="Type a server command, then Enter"
+              autocomplete="off"
+            />
+            <button type="submit">Send</button>
+          </form>
+          <p class="note" id="console-note">Live output appears here while the server runs.</p>
+        </div>
+
+        <div id="tab-files" hidden>
+          <p class="note" id="files-path">/</p>
+          <ul id="file-list" class="file-list"></ul>
+          <form id="form-file-read" class="inline-form">
+            <input name="path" placeholder="File to open, e.g. server.properties" />
+            <button type="submit" class="secondary">Open</button>
+          </form>
+          <label
+            >Editing: <span id="file-editing" class="note">nothing open</span>
+            <textarea
+              id="file-content"
+              rows="10"
+              placeholder="File contents appear here"
+            ></textarea>
+          </label>
+          <p><button type="button" id="btn-file-save">Save file</button></p>
+          <p class="error" id="files-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-backups" hidden>
+          <ul id="backup-list" class="user-list"></ul>
+          <p><button type="button" id="btn-backup">Back up now</button></p>
+          <p class="error" id="backups-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-schedules" hidden>
+          <ul id="schedule-list" class="user-list"></ul>
+          <form id="form-schedule" class="inline-form">
+            <input name="name" required maxlength="64" placeholder="Name, e.g. nightly restart" />
+            <input name="cron" required placeholder="When, e.g. 0 4 * * *" />
+            <select name="action" aria-label="Does">
+              <option value="restart">Restart the server</option>
+              <option value="start">Start the server</option>
+              <option value="stop">Stop the server</option>
+              <option value="backup">Back it up</option>
+            </select>
+            <button type="submit">Add schedule</button>
+          </form>
+          <p class="error" id="schedules-error" role="alert" hidden></p>
+        </div>
+      </section>
     </main>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>
