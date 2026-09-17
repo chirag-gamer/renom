@@ -33,22 +33,18 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
   // guard short-circuits with its own error).
   const admin = [requireAuth(auth), requireAdmin] as const;
 
-  router.get(
-    "/users",
-    ...admin,
-    (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const q = parseQuery(pageQuerySchema, req);
-        const rows = users.list({ limit: q.limit, cursor: q.cursor });
-        res.json({
-          items: rows.map(toPublicUserWithQuotas),
-          nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
-        });
-      } catch (e) {
-        next(e);
-      }
-    },
-  );
+  router.get("/users", ...admin, (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const q = parseQuery(pageQuerySchema, req);
+      const rows = users.list({ limit: q.limit, cursor: q.cursor });
+      res.json({
+        items: rows.map(toPublicUserWithQuotas),
+        nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
 
   router.post("/users", ...admin, (req, res, next) => {
     try {

@@ -46,7 +46,11 @@ describe("auth + users + authorization", () => {
   });
 
   it("owner created via repo can log in (FR-006 seed path; case-insensitive username)", async () => {
-    const owner = ctx.users.create({ username: "root", password: "root-password-1", role: "owner" });
+    const owner = ctx.users.create({
+      username: "root",
+      password: "root-password-1",
+      role: "owner",
+    });
     expect(owner.role).toBe("owner");
 
     const res = await request(app)
@@ -116,7 +120,9 @@ describe("auth + users + authorization", () => {
     ctx.users.setPassword(aliceId, "new-alice-password-2");
     ctx.users.bumpPasswordVersion(aliceId);
 
-    const stale = await request(app).get("/api/v3/auth/me").set("authorization", `Bearer ${oldToken}`);
+    const stale = await request(app)
+      .get("/api/v3/auth/me")
+      .set("authorization", `Bearer ${oldToken}`);
     expect(stale.status).toBe(401);
 
     const fresh = await request(app)

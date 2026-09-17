@@ -113,7 +113,13 @@ describe("files API authorization + confinement", () => {
       .prepare(
         "INSERT INTO subusers (user_id, server_id, permissions_json, granted_by, created_at) VALUES (?,?,?,?,?)",
       )
-      .run(bobId, serverId, JSON.stringify(["file.read"]), ctx.users.byUsername("owner")!.id, Date.now());
+      .run(
+        bobId,
+        serverId,
+        JSON.stringify(["file.read"]),
+        ctx.users.byUsername("owner")!.id,
+        Date.now(),
+      );
 
     const bobToken = await login("bob", BOB_PASS);
     const list = await request(app)

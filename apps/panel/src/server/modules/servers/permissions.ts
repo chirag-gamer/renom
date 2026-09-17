@@ -32,8 +32,7 @@ export function resolveEffectivePermissions(
 ): string[] {
   if (args.role === "owner" || args.role === "admin") return ["*"];
   const server = db.prepare("SELECT owner_id FROM servers WHERE id = ?").get(args.serverId) as
-    | { owner_id: string }
-    | undefined;
+    { owner_id: string } | undefined;
   if (!server) return [];
   if (server.owner_id === args.userId) return ["*"];
   const sub = db

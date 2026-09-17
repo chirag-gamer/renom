@@ -25,7 +25,10 @@ export const installOpSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("download"),
     url: z.string().url(),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     dest: z.string().min(1),
     maxMB: z.number().int().min(1).max(2048),
   }),
