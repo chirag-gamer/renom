@@ -109,7 +109,9 @@ describe("registry", () => {
       const slugs = reg.list().map((b) => b.slug);
       expect(slugs).toContain("vanilla");
       expect(slugs).toContain("paper");
-      expect(slugs).toContain("bedrock-bds");
+      expect(slugs).toContain("purpur");
+      expect(slugs).toContain("velocity");
+      expect(slugs).not.toContain("bedrock-bds");
     } finally {
       db.close();
     }

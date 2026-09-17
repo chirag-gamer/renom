@@ -13,8 +13,13 @@ All notable changes to Renom are documented here. Format based on
   Purpur v2 with checksum verification), explicit EULA acceptance gate, startup variables
   API, background installs with honest `installing → ready / install_failed` states.
   Paper boots for real (verified: `Done (40.4s)!` through the local engine).
-- Bootable Paper/Vanilla/Purpur blueprints on the local process engine; Fabric/Forge
-  declared for Docker (honest 409 locally).
+- Bootable Paper/Vanilla/Purpur blueprints on the local process engine; Fabric/Forge/
+  Velocity declared for Docker (honest 409 locally). Catalog is Minecraft Java
+  software only (Bedrock and generic runtimes removed for now).
+- Modrinth addons: version-pinned, checksum-verified mod/plugin installs with an
+  Addons tab (list/install/remove); Vanilla refuses (no mod platform).
+- Version changer: edit the version on the Startup tab, press Reinstall — the panel
+  re-downloads and swaps server files.
 - Optional Minekube Connect tunnel per Java server: plugin install, `CONNECT_ENDPOINT`
   wiring, public-address scraping from console history into the Network tab.
 - Server detail tabs: Startup (variables), Network (allocations + tunnel), Users

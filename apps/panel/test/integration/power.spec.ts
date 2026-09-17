@@ -96,7 +96,7 @@ describe("power + console", () => {
     const created = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${ownerToken}`)
-      .send({ name: "node-app", blueprintSlug: "generic-nodejs", eulaAccepted: true });
+      .send({ name: "modded", blueprintSlug: "fabric", eulaAccepted: true });
     expect(created.status).toBe(201);
     const id = created.body.server.id as string;
 

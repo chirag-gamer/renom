@@ -14,6 +14,8 @@ export interface InstallContext {
   dir: string;
   /** Variables merged from blueprint defaults + stored overrides + allocation context. */
   vars: Record<string, string>;
+  /** Blueprint slug (drives loader/folder choices for mod platforms). */
+  blueprintSlug?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -111,8 +113,11 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
       case "fetch-neoforge":
       case "fetch-bds":
       case "fetch-velocity":
-      case "modrinth-install":
         throw new EngineError(`Install op '${op.op}' is not wired yet`);
+      case "modrinth-install": {
+        await installModrinthProjects(fetchImpl, ctx, op.projects);
+        break;
+      }
       default:
         throw new EngineError(`Unknown install op '${(op as { op: string }).op}'`);
     }
@@ -142,6 +147,7 @@ async function fetchJson(fetchImpl: typeof fetch, url: string): Promise<unknown>
 interface DownloadGuards {
   maxBytes: number;
   sha256?: string;
+  sha512?: string;
   sha1?: string;
   md5?: string;
 }
@@ -163,13 +169,15 @@ export async function downloadFile(
   if (declared > guards.maxBytes) {
     throw new EngineError(`Download too large (${declared} bytes): ${url}`);
   }
-  const hash = guards.sha256
-    ? createHash("sha256")
-    : guards.sha1
-      ? createHash("sha1")
-      : guards.md5
-        ? createHash("md5")
-        : null;
+  const hash = guards.sha512
+    ? createHash("sha512")
+    : guards.sha256
+      ? createHash("sha256")
+      : guards.sha1
+        ? createHash("sha1")
+        : guards.md5
+          ? createHash("md5")
+          : null;
   let seen = 0;
   const metering = new Transform({
     transform(chunk: Buffer, _enc: string, cb: TransformCallback) {
@@ -194,7 +202,7 @@ export async function downloadFile(
     throw err instanceof EngineError ? err : new EngineError(`Download interrupted: ${url}`);
   }
   const digest = hash?.digest("hex");
-  const want = guards.sha256 ?? guards.sha1 ?? guards.md5;
+  const want = guards.sha512 ?? guards.sha256 ?? guards.sha1 ?? guards.md5;
   if (want && digest !== want.toLowerCase()) {
     rmSync(tmp, { force: true });
     throw new EngineError(`Checksum mismatch for ${url} — refusing a corrupt jar`);
@@ -203,6 +211,62 @@ export async function downloadFile(
 }
 
 // --- providers ---
+
+/**
+ * Modrinth addons (mods + plugins, the JTG-era workflow): resolve each project
+ * to its newest compatible file for this server's loader + MC version and drop
+ * the jar into `mods/` (loaders) or `plugins/` (paper-likes, velocity).
+ * Vanilla has no mod platform and refuses honestly.
+ */
+export async function installModrinthProjects(
+  fetchImpl: typeof fetch,
+  ctx: InstallContext,
+  projects: string[],
+): Promise<void> {
+  const slug = ctx.blueprintSlug ?? "";
+  const platform = modrinthPlatform(slug);
+  if (!platform) {
+    throw new EngineError(`Modrinth addons are not supported on '${slug || "this blueprint"}'`);
+  }
+  const mcVersion = ctx.vars["mcVersion"];
+  if (!mcVersion || mcVersion === "latest") {
+    throw new EngineError("Pick an exact Minecraft version first (Startup tab), then add addons");
+  }
+  const dir = join(ctx.dir, platform.dir);
+  mkdirSync(dir, { recursive: true });
+  for (const project of projects) {
+    const id = project.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-_]{1,63}$/.test(id)) {
+      throw new EngineError(`Not a Modrinth project id: '${project}'`);
+    }
+    const versions = (await fetchJson(
+      fetchImpl,
+      `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +
+        `?loaders=${encodeURIComponent(JSON.stringify(platform.loaders))}` +
+        `&game_versions=${encodeURIComponent(JSON.stringify([mcVersion]))}`,
+    )) as Array<{
+      files: Array<{ url: string; filename: string; hashes: { sha256?: string; sha512?: string }; primary: boolean }>;
+    }>;
+    const newest = versions[0];
+    const file = newest?.files.find((f) => f.primary) ?? newest?.files[0];
+    if (!file) throw new EngineError(`No ${mcVersion} file for '${id}' on Modrinth`);
+    if (!/\.jar$/i.test(file.filename)) throw new EngineError(`Refusing non-jar addon '${file.filename}'`);
+    await downloadFile(fetchImpl, file.url, join(dir, file.filename), {
+      maxBytes: 256 * 1024 * 1024,
+      sha512: file.hashes.sha512,
+      sha256: file.hashes.sha256,
+    });
+  }
+}
+
+function modrinthPlatform(slug: string): { loaders: string[]; dir: string } | null {
+  if (slug === "fabric") return { loaders: ["fabric"], dir: "mods" };
+  if (slug === "forge") return { loaders: ["forge"], dir: "mods" };
+  if (slug === "paper" || slug === "purpur")
+    return { loaders: ["paper", "purpur", "spigot", "bukkit"], dir: "plugins" };
+  if (slug === "velocity") return { loaders: ["velocity"], dir: "plugins" };
+  return null;
+}
 
 async function resolvePaperVersion(fetchImpl: typeof fetch, version: string): Promise<string> {
   if (version !== "" && version !== "latest") return version;

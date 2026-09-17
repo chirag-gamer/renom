@@ -153,6 +153,7 @@
           <button type="button" data-tab="files">Files</button>
           <button type="button" data-tab="backups">Backups</button>
           <button type="button" data-tab="schedules">Schedules</button>
+          <button type="button" data-tab="addons">Addons</button>
           <button type="button" data-tab="startup">Startup</button>
           <button type="button" data-tab="network">Network</button>
           <button type="button" data-tab="users">Users</button>
@@ -217,6 +218,19 @@
             <button type="submit">Add schedule</button>
           </form>
           <p class="error" id="schedules-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-addons" hidden>
+          <p>Mods and plugins from Modrinth. They activate on the next start.</p>
+          <ul id="addon-list" class="user-list"></ul>
+          <form id="form-addon" class="inline-form">
+            <input name="projects" required placeholder="Project ids, e.g. lithium, phosphor" />
+            <button type="submit">Install from Modrinth</button>
+          </form>
+          <p class="note">
+            Set an exact Minecraft version on the Startup tab first — “latest” can't resolve files.
+          </p>
+          <p class="error" id="addons-error" role="alert" hidden></p>
         </div>
 
         <div id="tab-startup" hidden>

@@ -112,6 +112,52 @@ describe("install executor", () => {
     expect(readFileSync(join(srv, "eula.txt"), "utf8")).toContain("eula=true");
   });
 
+  it("installs Modrinth addons with checksum verification", async () => {
+    const addonBytes = Buffer.from("fake-addon-jar");
+    const addonSha512 = createHash("sha512").update(addonBytes).digest("hex");
+    const fetchImpl = stubFetch({
+      "https://api.modrinth.com/v2/project/lithium/version": {
+        json: [
+          {
+            files: [
+              {
+                url: "https://cdn.modrinth.com/lithium.jar",
+                filename: "lithium.jar",
+                hashes: { sha512: addonSha512 },
+                primary: true,
+              },
+            ],
+          },
+        ],
+      },
+      "https://cdn.modrinth.com/lithium.jar": { bytes: addonBytes },
+    });
+    const srv = join(dir, "addons");
+    mkdirSync(srv, { recursive: true });
+    await runInstallOps({ install: [{ op: "modrinth-install", projects: ["lithium"] }] } as never, {
+      serverId: "x",
+      dir: srv,
+      vars: { mcVersion: "1.21.1" },
+      blueprintSlug: "fabric",
+      fetchImpl,
+    });
+    expect(readFileSync(join(srv, "mods", "lithium.jar"))).toEqual(addonBytes);
+  });
+
+  it("refuses Modrinth on vanilla (no mod platform)", async () => {
+    const srv = join(dir, "addons-vanilla");
+    mkdirSync(srv, { recursive: true });
+    await expect(
+      runInstallOps({ install: [{ op: "modrinth-install", projects: ["lithium"] }] } as never, {
+        serverId: "x",
+        dir: srv,
+        vars: { mcVersion: "1.21.1" },
+        blueprintSlug: "vanilla",
+        fetchImpl: stubFetch({}),
+      }),
+    ).rejects.toThrow(/not supported/);
+  });
+
   it("refuses escaping paths and unwired ops", async () => {
     const srv = join(dir, "escape");
     mkdirSync(srv, { recursive: true });
@@ -250,5 +296,41 @@ describe("EULA gate + variables + tunnel API", () => {
       .get(`/api/v3/servers/${serverId}/tunnel`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(before.body).toEqual({ provider: null, endpoint: null, address: null });
+  });
+
+  it("version change is a variable edit + reinstall (mechanics)", async () => {
+    // Point at an exact version, then reinstall. Fabric's fetcher is unwired,
+    // so the endpoint fails closed with 409 — proving the flow reaches the
+    // installer with the edited variables instead of silently succeeding.
+    const fabric = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "modded", blueprintSlug: "fabric", eulaAccepted: true });
+    expect(fabric.status).toBe(201);
+    const fid = fabric.body.server.id as string;
+
+    const set = await request(app)
+      .put(`/api/v3/servers/${fid}/variables`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { mcVersion: "1.21.1" } });
+    expect(set.status).toBe(200);
+
+    const reinstall = await request(app)
+      .post(`/api/v3/servers/${fid}/install`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(reinstall.status).toBe(409);
+
+    const failed = await request(app)
+      .get(`/api/v3/servers/${fid}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(failed.body.server.status).toBe("install_failed");
+  });
+
+  it("addons list scans plugin/mod folders", async () => {
+    const list = await request(app)
+      .get(`/api/v3/servers/${serverId}/addons`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(list.status).toBe(200);
+    expect(Array.isArray(list.body.addons)).toBe(true);
   });
 });

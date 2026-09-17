@@ -24,6 +24,7 @@ import { allocationsRouter } from "./http/routes/allocations.js";
 import { backupsRouter } from "./http/routes/backups.js";
 import { schedulesRouter } from "./http/routes/schedules.js";
 import { tunnelRouter } from "./http/routes/tunnel.js";
+import { addonsRouter } from "./http/routes/addons.js";
 import { attachConsoleGateway } from "./http/console-gateway.js";
 import { FilesService } from "./modules/files/service.js";
 import { BlueprintRegistry } from "./modules/blueprints/registry.js";
@@ -131,6 +132,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
     backupsRouter({ db, backups, audit, auth }),
     schedulesRouter({ db, scheduler, audit, auth }),
     tunnelRouter({ db, servers, engine, audit, auth, dataDir }),
+    addonsRouter({ db, servers, audit, auth, dataDir }),
     filesRouter(db, env, files, audit, auth),
     blueprintsRouter(blueprints, auth),
   ];

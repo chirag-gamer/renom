@@ -93,6 +93,18 @@ Health endpoints: `GET /healthz` (is it alive), `GET /readyz` (is the database r
   and schedule runs land in an append-only audit log.
 - See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
+## What's next (not yet built)
+
+Honest list, not a tease — none of these exist yet:
+
+- **SFTP access** (marked Future): files work over the panel today; a real SFTP
+  subsystem with per-server chroot comes later.
+- **Docker engine**: game blueprints that need containers refuse loudly until then.
+- **Multi-node / remote servers**: one machine is the whole design right now.
+- **Bedrock + non-Java servers**: the catalog is Minecraft Java software only.
+- **Fabric/Forge/Velocity local installs**: declared, wired next (their fetchers
+  fail closed today instead of half-working).
+
 ## License
 
 [Apache-2.0](LICENSE). Where Renom came from and what it learned from others:

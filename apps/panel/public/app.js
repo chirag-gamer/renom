@@ -304,6 +304,7 @@ async function openServer(id) {
     refreshFiles(),
     refreshBackups(),
     refreshSchedules(),
+    refreshAddons(),
     refreshVariables(),
     refreshNetwork(),
     refreshSubusers(),
@@ -366,6 +367,7 @@ function setTab(name) {
     "files",
     "backups",
     "schedules",
+    "addons",
     "startup",
     "network",
     "users",
@@ -671,6 +673,68 @@ function describeProblem(status, data) {
   if (status === 409) return detail || "That conflicts with something that already exists.";
   return detail || "Something went wrong on our side. Try again.";
 }
+
+/* ----- addons ----- */
+
+async function refreshAddons() {
+  const list = document.getElementById("addon-list");
+  const err = document.getElementById("addons-error");
+  err.hidden = true;
+  list.innerHTML = "";
+  const { status, data } = await api(`/servers/${currentServer.id}/addons`, { token: store.token });
+  if (status !== 200) {
+    fail(err, "You don't have permission to see addons.");
+    return;
+  }
+  if (data.addons.length === 0) {
+    const li = document.createElement("li");
+    li.textContent =
+      "No mods or plugins yet. Paper and Velocity servers use plugins/, Fabric and Forge use mods/.";
+    list.append(li);
+  }
+  for (const a of data.addons) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${a.name} (${a.folder}, ${Math.round(a.bytes / 1024)} KB)`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "linklike danger-text";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", async () => {
+      const res = await api(
+        `/servers/${currentServer.id}/addons/${a.folder}/${encodeURIComponent(a.name)}`,
+        {
+          method: "DELETE",
+          token: store.token,
+        },
+      );
+      if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
+      else refreshAddons();
+    });
+    li.append(name, remove);
+    list.append(li);
+  }
+}
+
+document.getElementById("form-addon").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("addons-error");
+  err.hidden = true;
+  const projects = String(new FormData(e.target).get("projects") || "")
+    .split(/[\s,]+/)
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  const { status, data } = await api(`/servers/${currentServer.id}/addons`, {
+    method: "POST",
+    token: store.token,
+    body: { projects },
+  });
+  if (status !== 201) fail(err, describeProblem(status, data));
+  else {
+    e.target.reset();
+    refreshAddons();
+  }
+});
 
 /* ----- startup variables ----- */
 
