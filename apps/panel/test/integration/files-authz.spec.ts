@@ -29,9 +29,10 @@ beforeAll(() => {
   serverId = "srv-test-0001";
 
   const now = Date.now();
+  // buildPanel seeds the 'local' node on every boot; top up paths idempotently.
   ctx.db
     .prepare(
-      "INSERT INTO nodes (id,name,is_local,engine,data_root,backup_root,created_at) VALUES ('local','local',1,'docker',?, ?, ?)",
+      "INSERT INTO nodes (id,name,is_local,engine,data_root,backup_root,created_at) VALUES ('local','local',1,'docker',?, ?, ?) ON CONFLICT(id) DO UPDATE SET data_root=excluded.data_root, backup_root=excluded.backup_root",
     )
     .run(join(dir, "servers"), join(dir, "backups"), now);
   ctx.db

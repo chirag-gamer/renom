@@ -121,6 +121,15 @@ export class BlueprintRegistry {
     }));
   }
 
+  /** Resolve a slug to its row for server creation (throws NotFound when unknown/disabled). */
+  lookup(slug: string): { id: string; slug: string; latestTag: string } {
+    const bp = this.db
+      .prepare("SELECT id, slug, latest_tag, enabled FROM blueprints WHERE slug = ?")
+      .get(slug) as { id: string; slug: string; latest_tag: string; enabled: number } | undefined;
+    if (!bp || bp.enabled !== 1) throw new NotFoundError(`Unknown blueprint '${slug}'`);
+    return { id: bp.id, slug: bp.slug, latestTag: bp.latest_tag };
+  }
+
   getDoc(slug: string, tag?: string): BlueprintDoc {
     const bp = this.db.prepare("SELECT id, latest_tag FROM blueprints WHERE slug = ?").get(slug) as
       | { id: string; latest_tag: string }

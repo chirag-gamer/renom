@@ -103,3 +103,41 @@ export const WILDCARD_PERMISSION = "*";
 export function hasPermission(granted: readonly string[], required: string): boolean {
   return granted.includes(WILDCARD_PERMISSION) || granted.includes(required);
 }
+
+/** POST /servers body: a server is born from a blueprint + a name. */
+export const createServerSchema = z.object({
+  name: z.string().min(1).max(64),
+  description: z.string().max(500).default(""),
+  blueprintSlug: z.string().min(1).max(64),
+  memoryMb: z.number().int().min(128).max(1_048_576).default(1024),
+  diskQuotaMb: z.number().int().min(256).max(10_485_760).default(5120),
+  /** Owner username; admins/owner only. Defaults to the caller. */
+  ownerUsername: z.string().min(1).max(32).optional(),
+});
+export type CreateServer = z.infer<typeof createServerSchema>;
+
+/** PATCH /servers/:id body: only safe-to-change fields; blueprint is immutable. */
+export const patchServerSchema = z.object({
+  name: z.string().min(1).max(64).optional(),
+  description: z.string().max(500).optional(),
+  memoryMb: z.number().int().min(128).max(1_048_576).optional(),
+  diskQuotaMb: z.number().int().min(256).max(10_485_760).optional(),
+});
+export type PatchServer = z.infer<typeof patchServerSchema>;
+
+/** What the API returns for a server (never leaks internal snapshot blobs). */
+export const publicServerSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  ownerId: z.string(),
+  blueprintSlug: z.string(),
+  status: z.enum(serverStatuses),
+  runtimeState: z.string().nullable(),
+  memoryMb: z.number(),
+  diskQuotaMb: z.number(),
+  primaryAllocation: z.object({ ip: z.string(), port: z.number() }).nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+export type PublicServer = z.infer<typeof publicServerSchema>;

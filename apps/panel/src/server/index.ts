@@ -16,13 +16,16 @@ import { setupRouter } from "./http/routes/setup.js";
 import { usersRouter } from "./http/routes/users.js";
 import { filesRouter } from "./http/routes/files.js";
 import { blueprintsRouter } from "./http/routes/blueprints.js";
+import { serversRouter } from "./http/routes/servers.js";
 import { FilesService } from "./modules/files/service.js";
 import { BlueprintRegistry } from "./modules/blueprints/registry.js";
+import { ServersRepo } from "./modules/servers/repo.js";
 
 export interface PanelContext {
   env: ReturnType<typeof loadEnv>;
   db: Database;
   users: UsersRepo;
+  servers: ServersRepo;
   auth: AuthService;
   audit: AuditService;
 }
@@ -59,6 +62,13 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   mkdirSync(dataDir, { recursive: true });
   const db = openAndMigrate(join(dataDir, "panel.db"));
 
+  // The single-machine install always has a 'local' node; servers FK to it.
+  // INSERT OR IGNORE keeps this safe on every boot (idempotent seed).
+  db.prepare(
+    `INSERT OR IGNORE INTO nodes (id, name, is_local, engine, data_root, backup_root, created_at)
+     VALUES ('local', 'local', 1, 'local', ?, ?, ?)`,
+  ).run(join(dataDir, "servers"), join(dataDir, "backups"), Date.now());
+
   const audit = new AuditService(db);
   const users = new UsersRepo(db, env.BCRYPT_COST);
   const auth = new AuthService(
@@ -70,11 +80,13 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   const blueprints = new BlueprintRegistry(db);
   // Idempotent: only seeds slugs missing from the table (safe on every boot).
   blueprints.seedBuiltins();
+  const servers = new ServersRepo(db);
 
   const apiRouters = [
     setupRouter(users, audit),
     authRouter(auth, users),
     usersRouter(users, audit, auth),
+    serversRouter({ db, users, servers, blueprints, audit, auth, dataDir }),
     filesRouter(db, env, files, audit, auth),
     blueprintsRouter(blueprints, auth),
   ];
@@ -115,7 +127,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
 
   const server: Server = createServer(app);
 
-  return { ctx: { env, db, users, auth, audit }, server, app };
+  return { ctx: { env, db, users, servers, auth, audit }, server, app };
 }
 
 /** CLI entrypoint. */
