@@ -1,15 +1,9 @@
 import { defineConfig } from "vitest/config";
-import { fileURLToPath } from "node:url";
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      // Tests consume contracts from TS source; production uses the built dist.
-      "@renom/contracts": fileURLToPath(
-        new URL("../../../packages/contracts/src/index.ts", import.meta.url),
-      ),
-    },
-  },
+  // No resolve.alias: @renom/contracts resolves through the npm workspace
+  // symlink to packages/contracts/dist (built before tests run — see the
+  // root "test" script). Tests therefore exercise the artifact that ships.
   test: {
     include: ["test/**/*.spec.ts"],
     environment: "node",

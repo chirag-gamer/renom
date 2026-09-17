@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Renom — game servers, on your machine</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <h1>Renom</h1>
+        <p class="tagline">Your game servers, on your machine.</p>
+      </header>
+
+      <section id="view-setup" class="card" hidden>
+        <h2>First, create your admin account</h2>
+        <p>
+          This screen only appears once. Whoever you create here owns the panel — after this, new
+          accounts are made from inside, never from this page.
+        </p>
+        <form id="form-setup">
+          <label
+            >Username
+            <input
+              name="username"
+              autocomplete="username"
+              required
+              minlength="3"
+              maxlength="32"
+              placeholder="e.g. admin"
+            />
+          </label>
+          <label
+            >Password <span class="hint">at least 12 characters</span>
+            <input
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              required
+              minlength="12"
+              placeholder="Pick something long you don't reuse"
+            />
+          </label>
+          <label
+            >Email <span class="hint">optional</span>
+            <input name="email" type="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <p class="error" id="setup-error" role="alert" hidden></p>
+          <button type="submit">Create admin account</button>
+        </form>
+      </section>
+
+      <section id="view-login" class="card" hidden>
+        <h2>Sign in</h2>
+        <p>Everything here lives on your own server. Sign in to manage it.</p>
+        <form id="form-login">
+          <label
+            >Username
+            <input name="username" autocomplete="username" required placeholder="Your username" />
+          </label>
+          <label
+            >Password
+            <input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              placeholder="Your password"
+            />
+          </label>
+          <p class="error" id="login-error" role="alert" hidden></p>
+          <button type="submit">Sign in</button>
+        </form>
+        <p class="note">
+          Locked out after too many tries? Wait a minute — the limit resets on its own.
+        </p>
+      </section>
+
+      <section id="view-home" class="card" hidden>
+        <h2 id="home-greeting">You're in.</h2>
+        <p id="home-sub">Servers, files and consoles plug in here as the panel grows.</p>
+
+        <div id="admin-panel" hidden>
+          <h3>People with access</h3>
+          <ul id="user-list" class="user-list"></ul>
+          <h3>Add someone</h3>
+          <form id="form-user" class="inline-form">
+            <input name="username" required minlength="3" maxlength="32" placeholder="Username" />
+            <input
+              name="password"
+              type="password"
+              required
+              minlength="8"
+              placeholder="Password (8+ chars)"
+            />
+            <select name="role" aria-label="Role">
+              <option value="user">Player / user</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button type="submit">Add</button>
+          </form>
+          <p class="error" id="user-error" role="alert" hidden></p>
+        </div>
+
+        <p><button type="button" id="btn-signout" class="secondary">Sign out</button></p>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

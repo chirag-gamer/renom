@@ -15,7 +15,7 @@
     "build": "npm run build -w packages/contracts && npm run build -w apps/panel",
     "lint": "eslint . && prettier --check .",
     "typecheck": "npm run build -w packages/contracts && npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspace apps/panel",
+    "test": "npm run build -w packages/contracts && npm run test --workspace apps/panel",
     "dev": "npm run dev --workspace apps/panel",
     "sbom": "cyclonedx-npm --omit=dev --output-file sbom.json"
   },
