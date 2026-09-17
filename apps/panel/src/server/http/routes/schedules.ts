@@ -5,7 +5,7 @@ import type { Scheduler, ScheduleTask } from "../../modules/schedules/runner.js"
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { NotFoundError } from "../../shared/errors.js";
 
@@ -75,6 +75,7 @@ export function schedulesRouter(deps: SchedulesDeps): Router {
   };
 
   router.get("/servers/:id/schedules", guard("schedule.read"), (req, res) => {
+    assertSuspendedReadable(req, res);
     const items = scheduler.list(req.params.id ?? "").map((s) => shape(s.id));
     res.json({ schedules: items });
   });

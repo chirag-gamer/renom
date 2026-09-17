@@ -203,10 +203,10 @@ export class LocalProcessEngine {
     const stop = doc?.run?.stop;
 
     // Graceful console stop first (e.g. "stop" for Minecraft), then signal, then kill.
-    if (stop?.kind === "console" && stop.command) {
+    if (stop?.kind === "console") {
       this.sendInput(serverId, stop.command);
     } else {
-      live.proc.kill(stop?.signal === "SIGINT" ? "SIGINT" : "SIGTERM");
+      live.proc.kill(stop?.kind === "signal" && stop.signal === "SIGINT" ? "SIGINT" : "SIGTERM");
     }
     const timeoutSec = Math.min(Math.max(stop?.timeoutSec ?? 30, 1), 300);
     const exited = await this.waitForExit(serverId, timeoutSec * 1000);

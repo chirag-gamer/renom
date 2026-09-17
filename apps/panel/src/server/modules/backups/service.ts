@@ -1,12 +1,14 @@
 import { spawnSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, statSync, readFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { createReadStream, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { join, resolve, sep } from "node:path";
 import type { Database } from "../../infra/db/database.js";
 import type { ServersRepo } from "../servers/repo.js";
 import type { BlueprintRegistry } from "../blueprints/registry.js";
 import type { LocalProcessEngine } from "../runtime/engine.js";
+import type { AuditService } from "../audit/service.js";
 import { ulid } from "../../shared/ulid.js";
 import { ConflictError, NotFoundError } from "../../shared/errors.js";
 
@@ -52,14 +54,15 @@ export function isTarAvailable(): boolean {
  */
 export class BackupsService {
   private readonly execTar = promisify(execFile);
+
   constructor(
     private readonly db: Database,
     private readonly servers: ServersRepo,
     private readonly blueprints: BlueprintRegistry,
     private readonly engine: LocalProcessEngine,
     private readonly dataDir: string,
+    private readonly audit?: AuditService,
   ) {}
-
   list(serverId: string): BackupRecord[] {
     return this.db
       .prepare(
@@ -111,8 +114,12 @@ export class BackupsService {
     const dest = join(destDir, fileName);
 
     if (!existsSync(srcDir)) mkdirSync(srcDir, { recursive: true });
-    // Denied files (e.g. live socket files) are excluded by exact relative path.
-    const excludes = (doc.fileDenylist ?? []).flatMap((p) => ["--exclude", sanitizeExclude(p)]);
+    // Blueprint denylist plus the hardcoded secret excludes (n2: tar emits
+    // `./`-prefixed members, so both spellings ship).
+    const excludes = [...DEFAULT_SECRET_EXCLUDES, ...(doc.fileDenylist ?? [])].flatMap((p) => [
+      "--exclude",
+      sanitizeExclude(p),
+    ]);
     try {
       await this.execTar("tar", ["-czf", dest, ...excludes, "-C", srcDir, "."], {
         timeout: 10 * 60_000,
@@ -124,7 +131,7 @@ export class BackupsService {
     }
 
     const bytes = statSync(dest).size;
-    const checksum = sha256File(dest);
+    const checksum = await sha256File(dest);
     const record: BackupRecord = {
       id,
       server_id: serverId,
@@ -175,7 +182,7 @@ export class BackupsService {
     }
     const file = this.pathFor(record);
     if (!existsSync(file)) throw new NotFoundError("Backup file is missing from disk");
-    if (sha256File(file) !== record.checksum_sha256) {
+    if ((await sha256File(file)) !== record.checksum_sha256) {
       throw new ConflictError("Backup file failed checksum verification — refusing to restore");
     }
     const destDir = join(this.dataDir, "servers", record.server_id);
@@ -183,12 +190,14 @@ export class BackupsService {
     rmSync(staging, { recursive: true, force: true });
     mkdirSync(staging, { recursive: true });
     try {
+      await assertTarMembersSafe(file, staging);
       await this.execTar("tar", ["-xzf", file, "-C", staging], {
         timeout: 10 * 60_000,
         windowsHide: true,
       });
-    } catch {
+    } catch (err) {
       rmSync(staging, { recursive: true, force: true });
+      if (err instanceof ConflictError) throw err;
       throw new ConflictError("Restore failed while extracting the archive");
     }
     // Swap: move the live dir aside, move staging in, drop the old copy.
@@ -217,12 +226,31 @@ export class BackupsService {
       )
       .all(serverId) as Array<{ id: string }>;
     for (const extra of rows.slice(RETAIN_UNLOCKED)) {
-      const record = this.byId(extra.id);
-      if (record) rmSync(this.pathFor(record), { force: true });
+      // Mark first, delete second: a crash between them leaves a purged row
+      // pointing at a live file (recoverable) rather than a live row with a
+      // missing file (confusing). Either way the audit trail says what happened.
       this.db
         .prepare("UPDATE backups SET purged_at = ?, retained_reason = 'retention' WHERE id = ?")
         .run(Date.now(), extra.id);
+      const file = this.db
+        .prepare("SELECT file_name FROM backups WHERE id = ?")
+        .get(extra.id) as { file_name: string } | undefined;
+      if (file) rmSync(join(this.dataDir, "backups", serverId, file.file_name), { force: true });
+      this.audit?.record({
+        event: "backup.retention.purge",
+        actorIp: "system",
+        serverId,
+        target: { backupId: extra.id },
+      });
     }
+  }
+
+  /** Unlock a locked backup so it becomes deletable and retention-eligible. */
+  unlock(backupId: string): boolean {
+    const res = this.db
+      .prepare("UPDATE backups SET locked = 0 WHERE id = ? AND purged_at IS NULL AND locked = 1")
+      .run(backupId);
+    return Number(res.changes) === 1;
   }
 }
 
@@ -233,7 +261,54 @@ export function sanitizeExclude(pattern: string): string {
   return trimmed;
 }
 
-/** Synchronous hash (backups hash at creation/restore, never on hot paths). */
-export function sha256File(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+/**
+ * Files that never belong in a backup, no matter what a blueprint says.
+ * Secrets kept inside server directories (plugin configs love them) must not
+ * ride along into downloadable archives. Tar matches these against the
+ * `./`-prefixed member names it actually emits, so both spellings ship.
+ */
+export const DEFAULT_SECRET_EXCLUDES = [
+  ".env",
+  "./.env",
+  "*.pem",
+  "./*.pem",
+  "*.key",
+  "./*.key",
+  "id_rsa*",
+  "./id_rsa*",
+  "*.pfx",
+  "./*.pfx",
+  "*.p12",
+  "./*.p12",
+];
+
+/** Streaming hash (archives are routinely hundreds of MB; never buffer them). */
+export async function sha256File(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(path), hash);
+  return hash.digest("hex");
+}
+
+/** List tar.gz members for zip-slip validation before extraction. */
+async function assertTarMembersSafe(archive: string, destDir: string): Promise<void> {
+  const execFileAsync = promisify(execFile);
+  let listing: string;
+  try {
+    const { stdout } = await execFileAsync("tar", ["-tzf", archive], {
+      timeout: 60_000,
+      windowsHide: true,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    listing = String(stdout);
+  } catch {
+    throw new ConflictError(`Could not list archive members of ${archive}`);
+  }
+  for (const member of listing.split(/\r?\n/)) {
+    const cleaned = member.replace(/^\.\//, "");
+    if (cleaned === "" || cleaned === "." || cleaned.endsWith("/")) continue;
+    const resolved = resolve(destDir, cleaned);
+    if (resolved !== destDir && !resolved.startsWith(destDir + sep)) {
+      throw new ConflictError(`Archive member escapes destination: ${member}`);
+    }
+  }
 }

@@ -53,8 +53,12 @@ export function setupRouter(
 
   router.post("/setup/admin", (req, res, next) => {
     try {
-      if (users.list({ limit: 1 }).length > 0) {
-        throw new ConflictError("Setup is already complete");
+      // Setup attempts are throttled like logins: a fresh panel is exactly
+      // when an attacker wants unlimited guesses at the bootstrap token.
+      const ip = req.ip ?? "unknown";
+      const limit = setupLimiter.take(`setup:${ip}`);
+      if (limit.limited) {
+        throw new RateLimitError(limit.retryAfterSec, "Too many setup attempts");
       }
       const body = parseBody(setupAdminSchema, req);
       const required = opts.setupToken ?? "";
@@ -74,12 +78,15 @@ export function setupRouter(
       if (users.byUsername(body.username)) {
         throw new ConflictError("Username already taken");
       }
-      const owner = users.create({
+      // Atomic: emptiness check + insert in one transaction (no TOCTOU twin owners).
+      const owner = users.createFirstOwner({
         username: body.username,
         password: body.password,
         email: body.email,
-        role: "owner",
       });
+      if (!owner) {
+        throw new ConflictError("Setup is already complete");
+      }
       audit.record({
         event: "setup.admin.created",
         actorUserId: owner.id,

@@ -40,6 +40,32 @@ describe("first-run setup", () => {
     expect(res.status).toBe(400);
   });
 
+  it("concurrent setups mint exactly one owner (no TOCTOU twins)", async () => {
+    const dir3 = mkdtempSync(join(tmpdir(), "renom-setup-race-"));
+    const panel3 = buildPanel({
+      NODE_ENV: "test",
+      DATA_DIR: dir3,
+      LOG_LEVEL: "error",
+      BCRYPT_COST: 10,
+    } as NodeJS.ProcessEnv);
+    try {
+      const [a, b] = await Promise.all([
+        request(panel3.app)
+          .post("/api/v3/setup/admin")
+          .send({ username: "first", password: "a-long-password-1" }),
+        request(panel3.app)
+          .post("/api/v3/setup/admin")
+          .send({ username: "second", password: "a-long-password-2" }),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      expect(statuses).toEqual([201, 409]);
+      expect(panel3.ctx.users.countByRole("owner")).toBe(1);
+    } finally {
+      panel3.ctx.db.close();
+      rmSync(dir3, { recursive: true, force: true });
+    }
+  });
+
   it("creates the owner, then closes the setup door behind it", async () => {
     const created = await request(app)
       .post("/api/v3/setup/admin")

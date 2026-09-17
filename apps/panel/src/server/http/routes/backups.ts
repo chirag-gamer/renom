@@ -85,7 +85,14 @@ export function backupsRouter(deps: BackupsDeps): Router {
           return;
         }
         const file = backups.pathFor(record);
-        const size = statSync(file).size;
+        let size: number;
+        try {
+          size = statSync(file).size;
+        } catch {
+          // Row exists but the archive is gone from disk: 404, not 500.
+          res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+          return;
+        }
         res.setHeader("Content-Type", "application/gzip");
         res.setHeader("Content-Disposition", `attachment; filename="${record.file_name}"`);
         res.setHeader("Content-Length", String(size));
@@ -127,6 +134,29 @@ export function backupsRouter(deps: BackupsDeps): Router {
       backups.remove(record.id);
       auditIt(req, "backup.delete", serverId, { backupId: record.id });
       res.status(204).send();
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Locked backups are never auto-purged and refuse deletion; this is the
+  // only way back to deletable. Guarded by backup.delete (unlocking a backup
+  // you cannot delete would be pointless power).
+  router.post("/servers/:id/backups/:backupId/unlock", guard("backup.delete"), (req, res, next) => {
+    try {
+      assertNotSuspendedForMutation(req, res);
+      const serverId = req.params.id ?? "";
+      const record = backups.byId(req.params.backupId ?? "");
+      if (!record || record.server_id !== serverId) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      if (!backups.unlock(record.id)) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      auditIt(req, "backup.unlock", serverId, { backupId: record.id });
+      res.json({ unlocked: true });
     } catch (e) {
       next(e);
     }

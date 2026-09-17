@@ -84,6 +84,14 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
           "Generate one with: node -e \"console.log(require('node:crypto').randomBytes(48).toString('base64url'))\"",
       );
     }
+    // Without a setup token the first owner is claimable by whoever knocks
+    // first. The installer always writes one; a hand-rolled .env must too.
+    if (!env.SETUP_TOKEN || env.SETUP_TOKEN.length < 16) {
+      throw new ConfigError(
+        "SETUP_TOKEN must be set to at least 16 characters in production. " +
+          "Generate one with: node -e \"console.log(require('node:crypto').randomBytes(24).toString('base64url'))\"",
+      );
+    }
   }
 
   return { ...env, isProduction };

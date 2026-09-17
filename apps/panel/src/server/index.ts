@@ -57,7 +57,14 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   app: Express;
 } {
   // The installer's .env takes effect without wrappers: file fills gaps, real env wins.
-  if (sourceEnv === process.env) loadEnvFile();
+  // npm runs workspace scripts with cwd=apps/panel, but install.sh writes the
+  // .env at the repo root — so look there first, then fall back to cwd.
+  if (sourceEnv === process.env) {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const installRoot = resolve(here, "../../../..");
+    if (existsSync(join(installRoot, ".env"))) loadEnvFile(installRoot);
+    else loadEnvFile();
+  }
   let env;
   try {
     env = loadEnv(sourceEnv);
@@ -103,7 +110,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   blueprints.seedBuiltins();
   const servers = new ServersRepo(db);
   const engine = new LocalProcessEngine(db, servers, blueprints, dataDir);
-  const backups = new BackupsService(db, servers, blueprints, engine, dataDir);
+  const backups = new BackupsService(db, servers, blueprints, engine, dataDir, audit);
   const scheduler = new Scheduler(db, servers, engine, backups, audit);
 
   // Reconcile on boot: child processes do not survive a panel restart, so any

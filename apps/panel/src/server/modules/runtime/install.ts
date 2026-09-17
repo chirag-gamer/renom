@@ -105,7 +105,13 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
         break;
       }
       case "extract": {
-        await extractArchive(sub(ctx.vars, op.src), ctx.dir, sub(ctx.vars, op.dest), op.strip, op.safe);
+        await extractArchive(
+          confine(ctx.dir, sub(ctx.vars, op.src)),
+          ctx.dir,
+          sub(ctx.vars, op.dest),
+          op.strip,
+          op.safe,
+        );
         break;
       }
       case "chmod":
@@ -131,9 +137,11 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
         const pmmp = await resolvePocketMine(fetchImpl, sub(ctx.vars, op.version ?? ""));
         await downloadFile(fetchImpl, pmmp.pharUrl, join(ctx.dir, "PocketMine-MP.phar"), {
           maxBytes: 128 * 1024 * 1024,
+          sha256: pmmp.pharSha256,
         });
         await downloadFile(fetchImpl, pmmp.phpUrl, join(ctx.dir, "php-runtime" + pmmp.phpExt), {
           maxBytes: 256 * 1024 * 1024,
+          sha256: pmmp.phpSha256,
         });
         // The PHP archive carries its own top-level `bin/` — extract at root.
         await extractArchive(join(ctx.dir, "php-runtime" + pmmp.phpExt), ctx.dir, ".", 0, true);
@@ -233,7 +241,10 @@ export async function downloadFile(
   }
   const digest = hash?.digest("hex");
   const want = guards.sha512 ?? guards.sha256 ?? guards.sha1 ?? guards.md5;
-  if (want && digest !== want.toLowerCase()) {
+  if (!want) {
+    throw new EngineError(`Refusing unverified download (no checksum): ${url}`);
+  }
+  if (digest !== want.toLowerCase()) {
     rmSync(tmp, { force: true });
     throw new EngineError(`Checksum mismatch for ${url} — refusing a corrupt jar`);
   }
@@ -276,12 +287,12 @@ async function resolveBds(
 async function resolvePocketMine(
   fetchImpl: typeof fetch,
   version?: string,
-): Promise<{ pharUrl: string; phpUrl: string; phpExt: string }> {
+): Promise<{ pharUrl: string; pharSha256?: string; phpUrl: string; phpSha256?: string; phpExt: string }> {
   const want = version && version !== "" && version !== "latest" ? `/tags/${encodeURIComponent(version)}` : "/latest";
   const release = (await fetchJson(
     fetchImpl,
     `https://api.github.com/repos/pmmp/PocketMine-MP/releases${want}`,
-  )) as { assets: Array<{ name: string; browser_download_url: string }> };
+  )) as { assets: Array<{ name: string; browser_download_url: string; digest?: string }> };
   const phar = release.assets.find((a) => a.name === "PocketMine-MP.phar");
   if (!phar) throw new EngineError("PocketMine-MP release has no phar asset");
 
@@ -289,12 +300,25 @@ async function resolvePocketMine(
   const phpRelease = (await fetchJson(
     fetchImpl,
     `https://api.github.com/repos/pmmp/PHP-Binaries/releases/tags/${phpTag}`,
-  )) as { assets: Array<{ name: string; browser_download_url: string }> };
+  )) as { assets: Array<{ name: string; browser_download_url: string; digest?: string }> };
   const isWin = process.platform === "win32";
   const phpName = isWin ? "PHP-8.4-Windows-x64-PM5.zip" : "PHP-8.4-Linux-x86_64-PM5.tar.gz";
   const php = phpRelease.assets.find((a) => a.name === phpName);
   if (!php) throw new EngineError(`No PocketMine PHP build for this OS (${process.platform})`);
-  return { pharUrl: phar.browser_download_url, phpUrl: php.browser_download_url, phpExt: isWin ? ".zip" : ".tar.gz" };
+  return {
+    pharUrl: phar.browser_download_url,
+    pharSha256: assetDigest(phar.digest),
+    phpUrl: php.browser_download_url,
+    phpSha256: assetDigest(php.digest),
+    phpExt: isWin ? ".zip" : ".tar.gz",
+  };
+}
+
+/** GitHub asset digests look like "sha256:abc…"; pull the hex part. */
+function assetDigest(digest: string | undefined): string | undefined {
+  if (!digest) return undefined;
+  const hex = digest.includes(":") ? digest.split(":")[1] : digest;
+  return hex && /^[a-f0-9]{64}$/i.test(hex) ? hex.toLowerCase() : undefined;
 }
 
 /**
@@ -321,9 +345,11 @@ async function pipInstall(fetchImpl: typeof fetch, serverDir: string, pkg: strin
 }
 
 /**
- * Archive extraction with zip-slip protection: `.tar.gz`/`.tgz` via tar,
+ * Archive extraction with real zip-slip protection: `.tar.gz`/`.tgz` via tar,
  * `.zip` via unzip → 7z → tar (bsdtar covers Windows/macOS). `safe` must be
- * true and every member must stay under `dest`.
+ * true, every member is listed and validated BEFORE extraction, and anything
+ * absolute or escaping `dest` aborts the whole op. When no tool can even list
+ * members, extraction is refused rather than done blind.
  */
 async function extractArchive(src: string, serverDir: string, dest: string, strip: number, safe: boolean): Promise<void> {
   if (!safe) throw new EngineError("Refusing archive extraction without safe=true");
@@ -331,7 +357,19 @@ async function extractArchive(src: string, serverDir: string, dest: string, stri
   mkdirSync(outDir, { recursive: true });
   const lower = src.toLowerCase();
   const execFileAsync = promisify(execFileCb);
-  const run = async (cmd: string, args: string[]): Promise<boolean> => {
+  const runOut = async (cmd: string, args: string[]): Promise<string | null> => {
+    try {
+      const { stdout } = await execFileAsync(cmd, args, {
+        timeout: 5 * 60_000,
+        windowsHide: true,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      return String(stdout);
+    } catch {
+      return null;
+    }
+  };
+  const runOk = async (cmd: string, args: string[]): Promise<boolean> => {
     try {
       await execFileAsync(cmd, args, { timeout: 5 * 60_000, windowsHide: true });
       return true;
@@ -339,19 +377,63 @@ async function extractArchive(src: string, serverDir: string, dest: string, stri
       return false;
     }
   };
-  let ok = false;
+
+  // List members with the same tool family that will extract, then validate.
+  let members: string[] | null = null;
+  let extract: ((archive: string, out: string) => Promise<boolean>) | null = null;
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-    const stripArgs = strip > 0 ? [`--strip-components=${strip}`] : [];
-    ok = await run("tar", ["-xzf", src, "-C", outDir, ...stripArgs]);
+    const listing = await runOut("tar", ["-tzf", src]);
+    if (listing !== null) {
+      members = listing.split(/\r?\n/).filter((l) => l.length > 0);
+      const stripArgs = strip > 0 ? [`--strip-components=${strip}`] : [];
+      extract = (a, o) => runOk("tar", ["-xzf", a, "-C", o, ...stripArgs]);
+    }
   } else if (lower.endsWith(".zip")) {
-    ok =
-      (await run("unzip", ["-q", "-o", src, "-d", outDir])) ||
-      (await run("7z", ["x", src, `-o${outDir}`, "-y"])) ||
-      (await run("tar", ["-xf", src, "-C", outDir]));
+    const unzipList = await runOut("unzip", ["-Z1", src]);
+    if (unzipList !== null) {
+      members = unzipList.split(/\r?\n/).filter((l) => l.length > 0);
+      extract = (a, o) => runOk("unzip", ["-q", "-o", a, "-d", o]);
+    } else {
+      const sevenList = await runOut("7z", ["l", "-slt", src]);
+      if (sevenList !== null) {
+        members = sevenList
+          .split(/\r?\n/)
+          .filter((l) => l.startsWith("Path = "))
+          .map((l) => l.slice("Path = ".length).trim())
+          .filter((l) => l.length > 0 && l !== src.split(/[\\/]/).pop());
+        extract = (a, o) => runOk("7z", ["x", a, `-o${o}`, "-y"]);
+      } else {
+        const tarList = await runOut("tar", ["-tf", src]);
+        if (tarList !== null) {
+          members = tarList.split(/\r?\n/).filter((l) => l.length > 0);
+          extract = (a, o) => runOk("tar", ["-xf", a, "-C", o]);
+        }
+      }
+    }
   } else {
     throw new EngineError(`Unsupported archive format: ${src}`);
   }
-  if (!ok) throw new EngineError(`Could not extract ${src} (no suitable tool found)`);
+  if (!members || !extract) {
+    throw new EngineError(`Could not list archive members of ${src} (no suitable tool found)`);
+  }
+  for (const m of members) {
+    // Strip tar's leading ./ the same way extraction sees it.
+    const cleaned = strip > 0 ? stripLeading(m, strip) : m.replace(/^\.\//, "");
+    if (cleaned === "" || cleaned === "." || cleaned.endsWith("/")) continue; // dir entries
+    const resolved = resolve(outDir, cleaned);
+    if (resolved !== outDir && !resolved.startsWith(outDir + sep)) {
+      throw new EngineError(`Archive member escapes destination: ${m}`);
+    }
+  }
+  if (!(await extract(src, outDir))) {
+    throw new EngineError(`Could not extract ${src} (extraction failed after validation)`);
+  }
+}
+
+/** Remove N leading path segments (mirrors tar --strip-components for validation). */
+function stripLeading(member: string, n: number): string {
+  const parts = member.replace(/^\.\//, "").split("/");
+  return parts.slice(n).join("/");
 }
 
 /**
@@ -393,7 +475,13 @@ export async function installModrinthProjects(
     const file = newest?.files.find((f) => f.primary) ?? newest?.files[0];
     if (!file) throw new EngineError(`No ${mcVersion} file for '${id}' on Modrinth`);
     if (!/\.jar$/i.test(file.filename)) throw new EngineError(`Refusing non-jar addon '${file.filename}'`);
-    await downloadFile(fetchImpl, file.url, join(dir, file.filename), {
+    // The filename comes from the network: strip separators and confine it.
+    // A mismatch with the advertised name aborts rather than writing blind.
+    const safeName = file.filename.replace(/[\\/]/g, "");
+    if (safeName !== file.filename || safeName.includes("..")) {
+      throw new EngineError(`Unsafe addon filename '${file.filename}'`);
+    }
+    await downloadFile(fetchImpl, file.url, confine(ctx.dir, `${platform.dir}/${safeName}`), {
       maxBytes: 256 * 1024 * 1024,
       sha512: file.hashes.sha512,
       sha256: file.hashes.sha256,

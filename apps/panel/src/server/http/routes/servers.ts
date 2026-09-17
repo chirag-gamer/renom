@@ -427,6 +427,11 @@ export function validateVariable(
 ): string {
   const str = String(raw);
   if (str.length > 512) throw new BadRequestError(`Variable '${def.key}' is too long`);
+  // Control characters never belong in a variable: they would smuggle extra
+  // lines into rendered files (server.properties) or argv downstream.
+  if (/[\u0000-\u001f]/.test(str)) {
+    throw new BadRequestError(`Variable '${def.key}' must not contain control characters`);
+  }
   if (def.type === "integer") {
     const n = Number(str);
     if (!Number.isInteger(n)) throw new BadRequestError(`Variable '${def.key}' must be an integer`);

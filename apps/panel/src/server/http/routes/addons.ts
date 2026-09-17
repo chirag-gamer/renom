@@ -7,7 +7,7 @@ import type { ServersRepo } from "../../modules/servers/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, NotFoundError } from "../../shared/errors.js";
 import { installModrinthProjects } from "../../modules/runtime/install.js";
@@ -45,6 +45,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
 
   router.get("/servers/:id/addons", guard("startup.read"), (req, res, next) => {
     try {
+      assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const items: Array<{ name: string; folder: string; bytes: number }> = [];
       for (const folder of ADDON_DIRS) {
@@ -105,6 +106,8 @@ export function addonsRouter(deps: AddonsDeps): Router {
       }
       const file = join(dir, name);
       if (!existsSync(file)) throw new NotFoundError("Addon not found");
+      // Refuse directories/symlinks masquerading as jars.
+      if (!statSync(file).isFile()) throw new BadRequestError("Not a removable addon file");
       rmSync(file);
       audit.record({
         event: "server.addons.remove",

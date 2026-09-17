@@ -43,6 +43,28 @@ export class UsersRepo {
     return row ?? null;
   }
 
+  /**
+   * First-owner bootstrap in ONE transaction: the emptiness check and the
+   * insert run atomically, so two concurrent setups cannot mint two owners.
+   * Returns null when the panel already has any user (caller maps to 409).
+   */
+  createFirstOwner(input: {
+    username: string;
+    password: string;
+    email?: string;
+    displayName?: string;
+    now?: number;
+  }): UserRow | null {
+    // Bcrypt first (CPU only, outside the lock), then check-and-insert inside.
+    const now = input.now ?? Date.now();
+    const hash = bcrypt.hashSync(input.password, this.bcryptCost);
+    return this.db.transaction(() => {
+      const row = this.db.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number };
+      if (Number(row.c) > 0) return null;
+      return this.create({ ...input, role: "owner", passwordHash: hash, now });
+    });
+  }
+
   create(input: {
     username: string;
     password?: string;

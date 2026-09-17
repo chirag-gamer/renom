@@ -27,8 +27,7 @@ export const installOpSchema = z.discriminatedUnion("op", [
     url: z.string().url(),
     sha256: z
       .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
+      .regex(/^[a-f0-9]{64}$/),
     dest: z.string().min(1),
     maxMB: z.number().int().min(1).max(2048),
   }),
@@ -37,7 +36,7 @@ export const installOpSchema = z.discriminatedUnion("op", [
     src: z.string().min(1),
     dest: z.string().min(1),
     strip: z.number().int().min(0).max(8).default(0),
-    safe: z.boolean(), // must be explicitly true; zip-slip guard required
+    safe: z.literal(true), // only explicitly-safe extractions validate
   }),
   z.object({
     op: z.literal("writefile"),
@@ -46,7 +45,7 @@ export const installOpSchema = z.discriminatedUnion("op", [
   }),
   z.object({ op: z.literal("mkdir"), path: z.string().min(1) }),
   z.object({ op: z.literal("move"), from: z.string().min(1), to: z.string().min(1) }),
-  z.object({ op: z.literal("chmod"), path: z.string().min(1), mode: z.number().int() }),
+  z.object({ op: z.literal("chmod"), path: z.string().min(1), mode: z.number().int().min(0).max(0o777) }),
   z.object({ op: z.literal("delete"), path: z.string().min(1) }),
   z.object({ op: z.literal("fetch-vanilla"), version: z.string().min(1) }),
   z.object({
@@ -79,25 +78,39 @@ export const installOpSchema = z.discriminatedUnion("op", [
   }),
 ]);
 
-export const variableSchema = z.object({
-  key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/),
-  label: z.string().min(1).max(128),
-  type: z.enum(["string", "integer", "boolean", "enum"]),
-  default: z.union([z.string(), z.number(), z.boolean()]),
-  userViewable: z.boolean().default(true),
-  userEditable: z.boolean().default(true),
-  internal: z.boolean().default(false),
-  options: z.array(z.string()).optional(),
-  rules: z
-    .object({
-      min: z.number().optional(),
-      max: z.number().optional(),
-      maxLength: z.number().optional(),
-      pattern: z.string().max(256).optional(),
-      required: z.boolean().optional(),
-    })
-    .optional(),
-});
+export const variableSchema = z
+  .object({
+    key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/),
+    label: z.string().min(1).max(128),
+    type: z.enum(["string", "integer", "boolean", "enum"]),
+    default: z.union([z.string(), z.number(), z.boolean()]),
+    userViewable: z.boolean().default(true),
+    userEditable: z.boolean().default(true),
+    internal: z.boolean().default(false),
+    options: z.array(z.string()).optional(),
+    rules: z
+      .object({
+        min: z.number().optional(),
+        max: z.number().optional(),
+        maxLength: z.number().optional(),
+        pattern: z.string().max(256).optional(),
+        required: z.boolean().optional(),
+      })
+      .optional(),
+  })
+  .superRefine((v, ctx) => {
+    // An enum without options accepts anything at runtime: fail the document.
+    if (v.type === "enum" && (!v.options || v.options.length === 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `enum variable '${v.key}' needs options` });
+    }
+    if (v.rules?.pattern) {
+      try {
+        new RegExp(v.rules.pattern);
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `variable '${v.key}' has an invalid pattern` });
+      }
+    }
+  });
 
 export const portSchema = z.object({
   name: z.string().min(1).max(32),
@@ -156,12 +169,20 @@ export const blueprintDocSchema = z.object({
   run: z.object({
     command: z.array(z.string().max(4096)).min(1), // argv template; never a shell string
     workdir: z.string().max(256).default("/data"),
-    stop: z.object({
-      kind: z.enum(["console", "signal"]),
-      command: z.string().max(256).optional(),
-      signal: z.enum(["SIGTERM", "SIGINT"]).optional(),
-      timeoutSec: z.number().int().min(1).max(300).default(30),
-    }),
+    // The stop shape must match its kind: console stops carry a command,
+    // signal stops carry a signal. Anything else fails validation.
+    stop: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("console"),
+        command: z.string().min(1).max(256),
+        timeoutSec: z.number().int().min(1).max(300).default(30),
+      }),
+      z.object({
+        kind: z.literal("signal"),
+        signal: z.enum(["SIGTERM", "SIGINT"]).default("SIGTERM"),
+        timeoutSec: z.number().int().min(1).max(300).default(30),
+      }),
+    ]),
     envCanon: z.record(z.string(), z.string().max(512)).default({}),
   }),
   variables: z.array(variableSchema).max(64).default([]),
@@ -185,6 +206,47 @@ export const blueprintDocSchema = z.object({
     .default({ strategy: "none", onStart: false }),
   fileDenylist: z.array(z.string().max(128)).max(64).default([]),
   features: z.array(z.enum(["eula", "query"])).default([]),
+}).superRefine((doc, ctx) => {
+  // Every {TOKEN} referenced anywhere must resolve: declared variables or
+  // the allocation context the panel injects. Unknown tokens would otherwise
+  // reach argv and files as literal text (silent misconfiguration).
+  const known = new Set([...doc.variables.map((v) => v.key), "allocation.ip", "allocation.port"]);
+  const texts: string[] = [
+    ...doc.run.command,
+    ...(typeof doc.run.workdir === "string" ? [doc.run.workdir] : []),
+  ];
+  for (const op of doc.install) {
+    const blobs: unknown[] = [];
+    if (op.op === "writefile") blobs.push(op.path, op.contentTemplate);
+    else if (op.op === "download") blobs.push(op.url, op.dest);
+    else if (op.op === "mkdir" || op.op === "delete") blobs.push(op.path);
+    else if (op.op === "move") blobs.push(op.from, op.to);
+    else if (op.op === "extract") blobs.push(op.src, op.dest);
+    else if (op.op === "chmod") blobs.push(op.path);
+    else if (op.op === "template-render") blobs.push(op.src, op.dest);
+    else if (op.op === "fetch-vanilla" || op.op === "fetch-paper" || op.op === "fetch-purpur") blobs.push(op.version);
+    else if (op.op === "fetch-fabric") blobs.push(op.mcVersion);
+    else if (op.op === "fetch-neoforge" || op.op === "fetch-forge") blobs.push(op.mcVersion);
+    else if (op.op === "fetch-velocity") blobs.push(op.version);
+    else if (op.op === "fetch-bds" || op.op === "fetch-pocketmine" || op.op === "fetch-endstone") {
+      if (op.version) blobs.push(op.version);
+    }
+    for (const blob of blobs) {
+      if (typeof blob !== "string") continue;
+      for (const m of blob.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+        if (!known.has(m[1]!)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown token {${m[1]}} has no variable` });
+        }
+      }
+    }
+  }
+  for (const text of texts) {
+    for (const m of text.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+      if (!known.has(m[1]!)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown token {${m[1]}} has no variable` });
+      }
+    }
+  }
 });
 
 export type BlueprintDoc = z.infer<typeof blueprintDocSchema>;

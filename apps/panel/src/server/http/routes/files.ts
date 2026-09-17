@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Database } from "../../infra/db/database.js";
-import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
 import { requireAuth } from "../middleware/authn.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { parseQuery, parseBody } from "../../shared/validate.js";
@@ -48,6 +48,7 @@ export function filesRouter(
 
   router.get("/servers/:id/files", guard("file.read"), (req, res, next) => {
     try {
+      assertSuspendedReadable(req, res);
       const q = parseQuery(listQuery, req);
       const root = serverDataDir(env, req.params.id!);
       const entries = files.list(root, q.path);
@@ -59,6 +60,7 @@ export function filesRouter(
 
   router.get("/servers/:id/files/content", guard("file.read-content"), (req, res, next) => {
     try {
+      assertSuspendedReadable(req, res);
       const q = parseQuery(contentQuery, req);
       const root = serverDataDir(env, req.params.id!);
       const result = files.readText(root, q.path);
