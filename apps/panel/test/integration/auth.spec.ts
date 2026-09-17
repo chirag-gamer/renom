@@ -91,6 +91,30 @@ describe("auth + users + authorization", () => {
     expect(res.body.user.quotas.maxServers).toBeGreaterThan(0);
   });
 
+  it("admins manage users but cannot mint or touch other admins (owner-only)", async () => {
+    const mkAdmin = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "carol", password: "carol-password-1", role: "admin" });
+    expect(mkAdmin.status).toBe(201);
+    const carolLogin = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "carol", password: "carol-password-1" });
+    const carol = carolLogin.body.token as string;
+
+    const mkAdmin2 = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${carol}`)
+      .send({ username: "dave-admin", password: "dave-password-1", role: "admin" });
+    expect(mkAdmin2.status).toBe(403);
+
+    const mkUser = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${carol}`)
+      .send({ username: "erin", password: "erin-password-1", role: "user" });
+    expect(mkUser.status).toBe(201);
+  });
+
   it("non-admin cannot create users or list them (PERMISSIONS matrix)", async () => {
     const login = await request(app)
       .post("/api/v3/auth/login")

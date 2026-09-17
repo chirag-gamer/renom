@@ -90,38 +90,75 @@ export class ServersRepo {
   }): ServerRow {
     const now = input.now ?? Date.now();
     const id = ulid(now);
-    return this.db.transaction(() => {
-      this.db
-        .prepare(
-          `INSERT INTO servers (id, name, description, owner_id, blueprint_id, blueprint_version_tag,
-             image_ref, status, runtime_state, memory_mb, disk_quota_mb, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'creating', 'offline', ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          input.name,
-          input.description,
-          input.ownerId,
-          input.blueprintId,
-          input.versionTag,
-          input.imageRef,
-          input.memoryMb,
-          input.diskQuotaMb,
-          now,
-          now,
-        );
-      // Primary allocation: first free game port on all interfaces, claimed atomically.
-      const port = this.claimFreePort("0.0.0.0", 25565, 26565);
-      this.db
-        .prepare(
-          `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
-           VALUES (?, ?, '0.0.0.0', ?, 'primary', ?, ?)`,
-        )
-        .run(ulid(now), id, port, now, now);
-      const created = this.byId(id);
-      if (!created) throw new Error("server creation failed");
-      return created;
-    });
+    // Port-claim races abort the transaction via the UNIQUE index; retry a
+    // few times with a fresh scan instead of surfacing a 500.
+    let lastError: unknown = new Error("no free ports in allocation range");
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        return this.db.transaction(() => this.createOnce(id, input, now));
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastError;
+  }
+
+  private createOnce(
+    id: string,
+    input: {
+      name: string;
+      description: string;
+      ownerId: string;
+      blueprintId: string;
+      versionTag: string;
+      imageRef: string;
+      memoryMb: number;
+      diskQuotaMb: number;
+    },
+    now: number,
+  ): ServerRow {
+    this.db
+      .prepare(
+        `INSERT INTO servers (id, name, description, owner_id, blueprint_id, blueprint_version_tag,
+           image_ref, status, runtime_state, memory_mb, disk_quota_mb, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'creating', 'offline', ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.name,
+        input.description,
+        input.ownerId,
+        input.blueprintId,
+        input.versionTag,
+        input.imageRef,
+        input.memoryMb,
+        input.diskQuotaMb,
+        now,
+        now,
+      );
+    // Seed the JVM-facing variables from the chosen plan: without this the
+    // engine falls back to blueprint defaults and the quota is a fiction.
+    this.db
+      .prepare(
+        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(id, "maxMemory", String(input.memoryMb));
+    // Primary allocation: first free game port on all interfaces, claimed atomically.
+    const port = this.claimFreePort("0.0.0.0", 25565, 26565);
+    this.db
+      .prepare(
+        `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
+         VALUES (?, ?, '0.0.0.0', ?, 'primary', ?, ?)`,
+      )
+      .run(ulid(now), id, port, now, now);
+    const created = this.byId(id);
+    if (!created) throw new Error("server creation failed");
+    return created;
   }
 
   /**
@@ -168,6 +205,15 @@ export class ServersRepo {
     sets.push("updated_at = ?");
     params.push(Date.now(), id);
     this.db.prepare(`UPDATE servers SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    if (patch.memoryMb !== undefined) {
+      // Keep the JVM flag in lockstep with the plan, like creation does.
+      this.db
+        .prepare(
+          `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+           ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+        )
+        .run(id, "maxMemory", String(patch.memoryMb));
+    }
     return this.byId(id);
   }
 

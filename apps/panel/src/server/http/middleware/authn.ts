@@ -51,3 +51,17 @@ export function requireAdmin(req: Request, _res: Response, next: NextFunction): 
   }
   next();
 }
+
+/** Requires the single owner account (managing admins is owner-only). */
+export function requireOwner(req: Request, _res: Response, next: NextFunction): void {
+  const p = req.principal;
+  if (!p) {
+    next(new UnauthorizedError("Authentication required"));
+    return;
+  }
+  if (p.role !== "owner" || (p.scopes !== undefined && !p.scopes.includes("*"))) {
+    next(new ForbiddenError("Owner role required"));
+    return;
+  }
+  next();
+}

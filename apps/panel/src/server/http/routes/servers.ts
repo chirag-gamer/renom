@@ -14,6 +14,7 @@ import { parseBody, parseQuery } from "../../shared/validate.js";
 import {
   BadRequestError,
   ConflictError,
+  EngineError,
   ForbiddenError,
   NotFoundError,
 } from "../../shared/errors.js";
@@ -119,7 +120,16 @@ export function serversRouter(deps: ServersDeps): Router {
         diskQuotaMb: body.diskQuotaMb,
       });
       const serverDir = join(dataDir, "servers", created.id);
-      mkdirSync(serverDir, { recursive: true });
+      try {
+        mkdirSync(serverDir, { recursive: true });
+      } catch (err) {
+        // The row + allocation are already durable: compensate instead of
+        // leaving a `creating` row pinning a port nobody can use.
+        servers.remove(created.id);
+        throw new EngineError(
+          `Could not create the server directory: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       if (doc.features?.includes("eula")) {
         servers.recordEula(created.id, req.ip ?? null);
       }
@@ -160,7 +170,12 @@ export function serversRouter(deps: ServersDeps): Router {
           });
       }
       const fresh = servers.byId(created.id)!;
-      res.status(201).json({ server: toPublicServer(fresh, servers.primaryAllocation(fresh.id)) });
+      // The install state rides along explicitly: clients poll
+      // GET /servers/:id until status leaves "installing".
+      res.status(201).json({
+        server: toPublicServer(fresh, servers.primaryAllocation(fresh.id)),
+        install: { state: fresh.status },
+      });
     } catch (e) {
       next(e);
     }

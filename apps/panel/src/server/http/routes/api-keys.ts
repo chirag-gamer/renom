@@ -6,8 +6,7 @@ import type { AuthService } from "../../modules/auth/service.js";
 import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth } from "../middleware/authn.js";
 import { parseBody } from "../../shared/validate.js";
-import { BadRequestError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
-import { permissions } from "@renom/contracts";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../shared/errors.js";import { permissions } from "@renom/contracts";
 
 const createKeySchema = z.object({
   memo: z.string().max(128).default(""),
@@ -25,6 +24,17 @@ export function apiKeysRouter(
 ): Router {
   const router = Router();
   router.use(requireAuth(auth));
+  // Key management is session-or-wildcard only: a narrowed key inherits no
+  // key-management surface at all — not even inside its own scopes. Listing,
+  // minting, and revoking siblings stays with the human (or a '*' key).
+  router.use((req, _res, next) => {
+    const scopes = req.principal!.scopes;
+    if (scopes !== undefined && !scopes.includes("*")) {
+      next(new ForbiddenError("API key management needs a session or a full key"));
+      return;
+    }
+    next();
+  });
 
   router.get("/api-keys", (req: Request, res: Response) => {
     res.json({ keys: keys.listForUser(req.principal!.userId) });
@@ -37,15 +47,8 @@ export function apiKeysRouter(
       if (unknown.length > 0) {
         throw new BadRequestError(`Unknown scope: ${unknown[0]}`);
       }
-      // A key can only mint within its own ceiling: requested scopes must be
-      // a subset of the caller's, or a scoped key could bootstrap itself to '*'.
-      const callerScopes = req.principal!.scopes;
-      if (callerScopes !== undefined && !callerScopes.includes("*")) {
-        const excess = body.scopes.filter((s) => !callerScopes.includes(s));
-        if (excess.length > 0) {
-          throw new ForbiddenError("Cannot grant scopes this key does not have");
-        }
-      }
+      // (Subset enforcement lives at the router: only sessions and '*'
+      // keys reach this handler at all.)
       const { row, token } = keys.create(req.principal!.userId, {
         memo: body.memo,
         scopes: [...new Set(body.scopes)],

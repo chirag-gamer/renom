@@ -95,7 +95,7 @@ describe("api keys", () => {
     expect(start.status).toBe(403);
   });
 
-  it("a scoped key cannot mint a wider key (no privilege bootstrap)", async () => {
+  it("a scoped key cannot mint keys at all (management is session-or-wildcard)", async () => {
     const res = await request(app)
       .post("/api/v3/api-keys")
       .set("authorization", `Bearer ${ownerToken}`)
@@ -112,7 +112,7 @@ describe("api keys", () => {
       .post("/api/v3/api-keys")
       .set("authorization", `Bearer ${narrow}`)
       .send({ scopes: ["file.read"] });
-    expect(same.status).toBe(201);
+    expect(same.status).toBe(403);
   });
 
   it("a scoped key cannot create servers at all", async () => {

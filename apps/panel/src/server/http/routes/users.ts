@@ -6,7 +6,7 @@ import type { AuthService } from "../../modules/auth/service.js";
 import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
 import { parseBody, parseQuery, passwordSchema } from "../../shared/validate.js";
-import { NotFoundError, ConflictError } from "../../shared/errors.js";
+import { NotFoundError, ConflictError, ForbiddenError } from "../../shared/errors.js";
 import { pageQuerySchema } from "@renom/contracts";
 import { toPublicUser } from "../../modules/auth/service.js";
 
@@ -55,6 +55,10 @@ export function usersRouter(
   router.post("/users", ...admin, (req, res, next) => {
     try {
       const body = parseBody(createUserSchema, req);
+      // Minting admins is owner-only: admins manage users, not each other.
+      if (body.role === "admin" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can create admins");
+      }
       if (users.byUsername(body.username)) {
         throw new ConflictError("Username already taken");
       }
@@ -88,6 +92,11 @@ export function usersRouter(
       if (target.role === "owner" && body.suspended === true) {
         throw new ConflictError("The owner account cannot be suspended");
       }
+      // Touching admins (suspend, quotas, profile) is owner-only: admins
+      // manage users, not each other.
+      if (target.role !== "user" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can change admins");
+      }
       users.update(target.id, body);
       if (body.suspended !== undefined) {
         // FR-007/009: suspension invalidates sessions via passwordVersion bump
@@ -117,6 +126,9 @@ export function usersRouter(
       if (!target) throw new NotFoundError("User not found");
       if (target.role === "owner") {
         throw new ConflictError("The owner account cannot be deleted");
+      }
+      if (target.role !== "user" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can delete admins");
       }
       const owned = users.countOwnedServers(target.id);
       const transferTo = typeof req.query.transferTo === "string" ? req.query.transferTo : null;
