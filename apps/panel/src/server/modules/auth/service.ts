@@ -1,5 +1,6 @@
 import { signAccessToken, verifyAccessToken, type JwtConfig } from "./jwt.js";
 import { RateLimiter } from "./ratelimit.js";
+import type { ApiKeysRepo } from "./api-keys.js";
 import type { UsersRepo, UserRow } from "../users/repo.js";
 import type { AuditService } from "../audit/service.js";
 import { UnauthorizedError, RateLimitError } from "../../shared/errors.js";
@@ -47,6 +48,7 @@ export class AuthService {
     private readonly jwtCfg: JwtConfig,
     private readonly users: UsersRepo,
     private readonly audit: AuditService,
+    private readonly apiKeys?: ApiKeysRepo,
   ) {}
 
   async login(
@@ -96,9 +98,16 @@ export class AuthService {
 
   /**
    * Verify a bearer token against the CURRENT user record; enforces passwordVersion
-   * invalidation (SEC-014). Returns principal or null.
+   * invalidation (SEC-014). Falls back to scoped API keys (`jtgsk.*`). Returns principal or null.
    */
   authenticateToken(token: string): Principal | null {
+    if (token.startsWith("jtgsk.") && this.apiKeys) {
+      const key = this.apiKeys.verify(token);
+      if (!key) return null;
+      const user = this.users.byId(key.userId);
+      if (!user || user.suspended === 1) return null;
+      return { userId: user.id, role: user.role as Role, apiKeyId: key.keyId, scopes: key.scopes };
+    }
     try {
       const payload = verifyAccessToken(this.jwtCfg, token);
       if (!payload) return null;
