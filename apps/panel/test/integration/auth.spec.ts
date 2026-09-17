@@ -150,6 +150,20 @@ describe("auth + users + authorization", () => {
     ctx.users.setSuspended(aliceId, false);
   });
 
+  it("the owner account cannot be suspended (no lockout without recovery)", async () => {
+    const rootId = ctx.users.byUsername("root")!.id;
+    const res = await request(app)
+      .patch(`/api/v3/users/${rootId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ suspended: true });
+    expect(res.status).toBe(409);
+
+    const stillIn = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "root", password: "root-password-1" });
+    expect(stillIn.status).toBe(200);
+  });
+
   it("audit trail records login success/fail (SEC-012)", () => {
     const events = ctx.audit.query({ limit: 50 }).map((e) => e.event);
     expect(events).toContain("auth.login.success");

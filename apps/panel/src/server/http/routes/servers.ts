@@ -80,6 +80,9 @@ export function serversRouter(deps: ServersDeps): Router {
         ownerId = target.id;
       }
       const ownerRow = users.byId(ownerId)!;
+      if (ownerRow.suspended === 1) {
+        throw new ForbiddenError("Cannot create servers for a suspended account");
+      }
 
       // Quotas: count, RAM, and disk — admins/owner are unbound, users stop
       // at their plan including what their existing servers already use.
@@ -180,7 +183,24 @@ export function serversRouter(deps: ServersDeps): Router {
   router.patch("/servers/:id", guard("settings.rename"), (req, res, next) => {
     try {
       const body = parseBody(patchServerSchema, req);
-      const updated = servers.update(req.params.id ?? "", body);
+      const id = req.params.id ?? "";
+      // Resource bumps obey quotas too, not just creation: a collaborator
+      // with rename rights must not grow a server past its owner's plan.
+      if (req.principal!.role !== "owner" && req.principal!.role !== "admin") {
+        const current = servers.byId(id);
+        if (current && (body.memoryMb !== undefined || body.diskQuotaMb !== undefined)) {
+          const ownerRow = users.byId(current.owner_id);
+          if (ownerRow) {
+            const usage = servers.resourceUsage(current.owner_id);
+            const ram = usage.memoryMb - current.memory_mb + (body.memoryMb ?? current.memory_mb);
+            const disk = usage.diskMb - current.disk_quota_mb + (body.diskQuotaMb ?? current.disk_quota_mb);
+            if (ram > ownerRow.quota_ram_mb || disk > ownerRow.quota_disk_mb) {
+              throw new ConflictError("That exceeds the owner's resource quota");
+            }
+          }
+        }
+      }
+      const updated = servers.update(id, body);
       if (!updated) throw new NotFoundError("Not found");
       audit.record({
         event: "server.update",
@@ -346,6 +366,11 @@ export function serversRouter(deps: ServersDeps): Router {
     guard("settings.reinstall"),
     (req: Request, res: Response, next: NextFunction) => {
       try {
+        const current = servers.byId(req.params.id ?? "");
+        if (!current) throw new NotFoundError("Not found");
+        if (current.status !== "suspended") {
+          throw new ConflictError("Only suspended servers can be unsuspended");
+        }
         servers.setStatus(req.params.id ?? "", "ready");
         audit.record({
           event: "server.unsuspend",

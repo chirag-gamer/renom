@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { BlueprintRegistry } from "../../modules/blueprints/registry.js";
 import type { AuthService } from "../../modules/auth/service.js";
+import type { AuditService } from "../../modules/audit/service.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
 import { parseQuery } from "../../shared/validate.js";
 import { javaImageForVersion } from "../../modules/blueprints/schema.js";
@@ -10,7 +11,11 @@ import { BadRequestError } from "../../shared/errors.js";
 const versionsQuery = z.object({ mc: z.string().max(32).optional() });
 
 /** Blueprint catalog API. Authenticated users browse; admin-only import. */
-export function blueprintsRouter(registry: BlueprintRegistry, auth: AuthService): Router {
+export function blueprintsRouter(
+  registry: BlueprintRegistry,
+  auth: AuthService,
+  audit?: AuditService,
+): Router {
   const router = Router();
   router.use(requireAuth(auth));
 
@@ -81,6 +86,13 @@ export function blueprintsRouter(registry: BlueprintRegistry, auth: AuthService)
   router.post("/blueprints/import", requireAdmin, (req, res, next) => {
     try {
       const result = registry.importDoc(req.body, "import");
+      audit?.record({
+        event: "blueprint.import",
+        actorUserId: req.principal!.userId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        target: { slug: result.slug, tag: result.tag },
+      });
       res.status(201).json(result);
     } catch (e) {
       next(e);

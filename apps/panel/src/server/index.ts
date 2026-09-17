@@ -134,7 +134,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
     tunnelRouter({ db, servers, engine, audit, auth, dataDir }),
     addonsRouter({ db, servers, audit, auth, dataDir }),
     filesRouter(db, env, files, audit, auth),
-    blueprintsRouter(blueprints, auth),
+    blueprintsRouter(blueprints, auth, audit),
   ];
 
   // Web client (apps/panel/public): src/server -> ../../public, same for dist/server.

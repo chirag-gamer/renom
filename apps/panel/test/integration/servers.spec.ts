@@ -169,6 +169,11 @@ describe("servers CRUD + ownership + quotas", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect(unsusp.status).toBe(204);
 
+    const unsuspAgain = await request(app)
+      .post(`/api/v3/servers/${aliceServerId}/unsuspend`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(unsuspAgain.status).toBe(409);
+
     const del = await request(app)
       .delete(`/api/v3/servers/${aliceServerId}`)
       .set("authorization", `Bearer ${aliceToken}`);

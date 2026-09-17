@@ -20,6 +20,10 @@ All notable changes to Renom are documented here. Format based on
   Addons tab (list/install/remove); Vanilla refuses (no mod platform).
 - Version changer: edit the version on the Startup tab, press Reinstall — the panel
   re-downloads and swaps server files.
+- Bedrock, Python, and Node return as Experimental blueprints: official BDS via the
+  EndstoneMC registry, PocketMine-MP with its PHP binary, Endstone via pip, plain
+  Python/Node runtimes. Minekube stays Java-only; other tunnels follow docs/tunnels.md.
+- Docs for every feature and game server (`docs/features`, `docs/servers`, `docs/tunnels.md`).
 - Optional Minekube Connect tunnel per Java server: plugin install, `CONNECT_ENDPOINT`
   wiring, public-address scraping from console history into the Network tab.
 - Server detail tabs: Startup (variables), Network (allocations + tunnel), Users
@@ -68,6 +72,10 @@ All notable changes to Renom are documented here. Format based on
   map only unique violations to 409; CLI creates missing data dirs and bootstraps
   atomically; installer uses existing `.env` as prompt defaults, passes secrets by
   environment, exits on EOF, and defaults to loopback.
+- Admin audit pass: owner accounts cannot be suspended, blueprint imports are
+  audited, servers cannot be created for suspended accounts, resource bumps obey
+  quotas, unsuspend requires suspended state, and `blueprint_id` is actually
+  selected (the tunnel category check read it before it existed).
 - Full test suite green (127 tests): upgraded vitest 2 → 3 for `node:sqlite` resolution,
   resolved `@renom/contracts` through the workspace build (contracts build before tests),
   deleted stray `registry.js` that shadowed the real blueprint registry module.

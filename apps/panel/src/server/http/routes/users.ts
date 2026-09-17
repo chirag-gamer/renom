@@ -77,6 +77,11 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
       const body = parseBody(patchUserSchema, req);
+      // The owner account cannot be suspended: bricking the one account that
+      // can always unsuspend would lock the panel with no recovery path.
+      if (target.role === "owner" && body.suspended === true) {
+        throw new ConflictError("The owner account cannot be suspended");
+      }
       users.update(target.id, body);
       if (body.suspended !== undefined) {
         // FR-007/009: suspension invalidates sessions via passwordVersion bump
