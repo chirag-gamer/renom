@@ -7,7 +7,11 @@ import type { ServersRepo } from "../../modules/servers/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, NotFoundError } from "../../shared/errors.js";
 import { installModrinthProjects } from "../../modules/runtime/install.js";
@@ -80,7 +84,12 @@ export function addonsRouter(deps: AddonsDeps): Router {
       if (mcRow) vars["mcVersion"] = mcRow.value;
       await installModrinthProjects(
         fetch,
-        { serverId: id, dir: join(dataDir, "servers", id), vars, blueprintSlug: server.blueprint_slug },
+        {
+          serverId: id,
+          dir: join(dataDir, "servers", id),
+          vars,
+          blueprintSlug: server.blueprint_slug,
+        },
         body.projects,
       );
       audit.record({

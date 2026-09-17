@@ -1,7 +1,7 @@
 # Completion ledger
 
 `Requirement → implementation → tests → verification → commit → docs`.
-A requirement is complete only when all five exist. Suite: **127/127 green**
+A requirement is complete only when all five exist. Suite: **145/145 green**
 (`npm test`), `npm run build` + `npm run typecheck` clean, CI green on PR #10,
 live smoke-tested including a real Paper boot (`Done (40.4s)!`).
 
@@ -76,32 +76,46 @@ live smoke-tested including a real Paper boot (`Done (40.4s)!`).
 | fabric/forge/neoforge/velocity/bds/modrinth fetchers | Explicit 409 "not wired yet"                                  | Paper/Vanilla/Purpur cover the boot path; one function per provider to add                    |
 | Unauthenticated unknown API paths → 401 (not 404)    | Deliberate                                                    | Hides route existence from strangers; stricter than the suggested 404                         |
 
-## Review resolutions (cubic PR #10 / #11, 2026-09-17)
+## Review resolutions (PR-11-REVIEW.md, 2026-09-18)
 
-All P1s fixed: setup-token gate, `.env` auto-loading, API-key scope enforcement
-(admin routes, minting subset, subuser grants, socket console, server creation),
-suspended-server inertia (kill on suspend/delete, guards on console/files/backups/
-allocations/subusers/schedules), schedule ownership-before-update, RAM/disk quotas,
-async backups with swap restores + fail-closed policies, scheduler claim/finalizer/
-manual-run lifecycle + failure audit, cron strictness, unique-only 409s, atomic CLI
-bootstrap with created data dirs, installer secrets-by-environment + EOF exit +
-loopback default + LAN IP printing. P2s fixed alongside (contrast via new theme,
-boot fallback, pagination, error reporting, pretest, editor clearing, stranger
-socket test, real socket.io client test, README/CHANGELOG/PROVENANCE wording).
-CI fixed (tracked lockfile, gitleaks scope, repo-wide prettier normalization).
-PR #10 merged (`0e2ca5c`).
+8 blockers + 47 majors + 27 minors closed. Highlights: checksums required on
+every download path (GitHub asset digests for PMMP/PHP/Minekube), extract src
+confinement + pre-listed zip-slip validation (also on backup restore), `.env`
+loaded from the install root, socket revocation sweeps on every grant change,
+central console sanitization, atomic owner bootstrap + setup rate limit,
+schema superRefine (enum/pattern/stop/chmod/safe/token cross-check), memory
+seeding + claim retries + mkdir compensation, session-or-wildcard key
+management, owner-only admin tier, EULA + ready gates at start(), honest kill,
+bounded line buffers, install state in responses, catalog convergence, SSRF
+allowlist with manual redirects, Modrinth filename confinement, expiring
+schedule locks, backup unlock + secret excludes + streaming hashes, per-user
+socket budgets, no query tokens, volatile emits, `{v: 1}` envelopes, SPEC
+amended to the shipped socket contract, generated installer passwords with
+reset UI, production SETUP_TOKEN gate, oldest-bucket eviction, no `.env`
+sourcing, RENOM_REF pinning, `.env` upsert, TRUST_PROXY + CSP headers, cached
+readyz with engine health, entryFile patterns, BDS version wiring, plus the
+full negative-test battery (revocation, corrupt restore, retention, once-only,
+oversized writes, cross-server denial, order-independent power tests).
 
-## Verification log (2026-09-17, evening run)
+Deliberate deviations (logged, not silent): error codes stay lowercase
+(stable API); unknown API paths stay 401 for strangers (hides existence);
+password changes do not kill API keys (separate revocation model, documented);
+`ghcr.io/renom/*` image refs remain placeholders until the Docker engine lands.
+
+## Verification log (2026-09-18, review-fix run)
 
 | Check                                                                                 | Result                                 |
 | ------------------------------------------------------------------------------------- | -------------------------------------- |
 | `npm run build` (contracts + panel `tsc`)                                             | clean                                  |
 | `npm run typecheck`                                                                   | clean                                  |
-| `npm test` (vitest)                                                                   | 16 files, 127 tests, all pass          |
+| `npm test` (vitest)                                                                   | 16 files, 145 tests, all pass          |
 | eslint on all touched files                                                           | clean (`--fix` applied, then verified) |
 | prettier `--check .`                                                                  | clean                                  |
 | Live: setup/status → owner → 2nd setup 409 → login → power → console line over socket | pass                                   |
 | Live: real Paper 1.21.1 download → install → boot `Done (40.4s)!` → stop              | pass                                   |
+| Live: real BDS install → boot `Server started.` → kill                                | pass                                   |
+| Live: real PocketMine install → boot `Done (4.3s)!` → kill                            | pass                                   |
 | CLI `--check` on empty/populated DB                                                   | `no` / `yes`                           |
 | PR #10 CI (build-test + security)                                                     | pass → merged as `0e2ca5c`             |
+| PR #11 CI (build-test + security)                                                     | pass                                   |
 | `git status`                                                                          | clean (lockfile now tracked)           |

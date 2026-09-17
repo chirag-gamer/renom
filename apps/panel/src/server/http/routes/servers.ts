@@ -19,7 +19,12 @@ import {
   NotFoundError,
 } from "../../shared/errors.js";
 import { runInstallOps } from "../../modules/runtime/install.js";
-import { createServerSchema, patchServerSchema, pageQuerySchema, updateVariablesSchema } from "@renom/contracts";
+import {
+  createServerSchema,
+  patchServerSchema,
+  pageQuerySchema,
+  updateVariablesSchema,
+} from "@renom/contracts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -217,7 +222,8 @@ export function serversRouter(deps: ServersDeps): Router {
           if (ownerRow) {
             const usage = servers.resourceUsage(current.owner_id);
             const ram = usage.memoryMb - current.memory_mb + (body.memoryMb ?? current.memory_mb);
-            const disk = usage.diskMb - current.disk_quota_mb + (body.diskQuotaMb ?? current.disk_quota_mb);
+            const disk =
+              usage.diskMb - current.disk_quota_mb + (body.diskQuotaMb ?? current.disk_quota_mb);
             if (ram > ownerRow.quota_ram_mb || disk > ownerRow.quota_disk_mb) {
               throw new ConflictError("That exceeds the owner's resource quota");
             }
@@ -339,11 +345,7 @@ export function serversRouter(deps: ServersDeps): Router {
     }
   });
 
-  router.delete(
-    "/servers/:id",
-    requireAdmin,
-    guard("settings.delete"),
-    (req, res, next) => {
+  router.delete("/servers/:id", requireAdmin, guard("settings.delete"), (req, res, next) => {
     (async () => {
       const id = req.params.id ?? "";
       // Stop first: deleting a running server must not orphan its process

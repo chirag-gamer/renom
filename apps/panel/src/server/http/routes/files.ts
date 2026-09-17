@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Database } from "../../infra/db/database.js";
-import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { requireAuth } from "../middleware/authn.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { parseQuery, parseBody } from "../../shared/validate.js";

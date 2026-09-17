@@ -203,7 +203,10 @@ async function refreshBlueprints() {
   for (const b of data.items) {
     const opt = document.createElement("option");
     opt.value = b.slug;
-    opt.textContent = b.maturity === "experimental" ? `${b.name} (${b.slug}) [experimental]` : `${b.name} (${b.slug})`;
+    opt.textContent =
+      b.maturity === "experimental"
+        ? `${b.name} (${b.slug}) [experimental]`
+        : `${b.name} (${b.slug})`;
     select.append(opt);
   }
 }
@@ -240,31 +243,31 @@ async function refreshUsers() {
     const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
     const { status, data } = await api(`/users${qs}`, { token: store.token });
     if (status !== 200) return;
-  for (const u of data.items) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = u.displayName || u.username;
-    const role = document.createElement("span");
-    role.className = "role";
-    role.textContent = u.role + (u.suspended ? " (suspended)" : "");
-    const reset = document.createElement("button");
-    reset.type = "button";
-    reset.className = "linklike";
-    reset.textContent = "Set password";
-    reset.addEventListener("click", async () => {
-      const password = window.prompt(`New password for ${u.username} (12+ characters):`);
-      if (!password) return;
-      const err = document.getElementById("user-error");
-      const res = await api(`/users/${u.id}`, {
-        method: "PATCH",
-        token: store.token,
-        body: { password },
+    for (const u of data.items) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = u.displayName || u.username;
+      const role = document.createElement("span");
+      role.className = "role";
+      role.textContent = u.role + (u.suspended ? " (suspended)" : "");
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "linklike";
+      reset.textContent = "Set password";
+      reset.addEventListener("click", async () => {
+        const password = window.prompt(`New password for ${u.username} (12+ characters):`);
+        if (!password) return;
+        const err = document.getElementById("user-error");
+        const res = await api(`/users/${u.id}`, {
+          method: "PATCH",
+          token: store.token,
+          body: { password },
+        });
+        if (res.status !== 200) fail(err, describeProblem(res.status, res.data));
       });
-      if (res.status !== 200) fail(err, describeProblem(res.status, res.data));
-    });
-    li.append(name, role, reset);
-    list.append(li);
-  }
+      li.append(name, role, reset);
+      list.append(li);
+    }
     if (!data.nextCursor) return;
     cursor = data.nextCursor;
   }

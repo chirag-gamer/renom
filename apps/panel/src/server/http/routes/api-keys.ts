@@ -6,7 +6,8 @@ import type { AuthService } from "../../modules/auth/service.js";
 import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth } from "../middleware/authn.js";
 import { parseBody } from "../../shared/validate.js";
-import { BadRequestError, ForbiddenError, NotFoundError } from "../../shared/errors.js";import { permissions } from "@renom/contracts";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
+import { permissions } from "@renom/contracts";
 
 const createKeySchema = z.object({
   memo: z.string().max(128).default(""),

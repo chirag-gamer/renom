@@ -164,7 +164,11 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
         const health = engine.health();
         return [
           { name: "db", ok: dbCheckOk, detail: dbCheckDetail },
-          { name: "engine", ok: true, detail: `${health.tracked} tracked, ${health.running} running` },
+          {
+            name: "engine",
+            ok: true,
+            detail: `${health.tracked} tracked, ${health.running} running`,
+          },
         ];
       } catch (err) {
         return [{ name: "db", ok: false, detail: String(err) }];
@@ -174,7 +178,17 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
       apiRouters.push(
         usersRouter(users, audit, auth, gatewayProxy),
         apiKeysRouter(apiKeys, audit, auth, gatewayProxy),
-        serversRouter({ db, users, servers, engine, blueprints, audit, auth, gateway: gatewayProxy, dataDir }),
+        serversRouter({
+          db,
+          users,
+          servers,
+          engine,
+          blueprints,
+          audit,
+          auth,
+          gateway: gatewayProxy,
+          dataDir,
+        }),
         powerRouter({ db, servers, engine, audit, auth }),
         subusersRouter({ db, users, audit, auth, gateway: gatewayProxy }),
         allocationsRouter({ db, audit, auth }),

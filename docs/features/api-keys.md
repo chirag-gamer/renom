@@ -8,8 +8,15 @@ after that only its hash exists in the database.
 
 A key intersects your own permissions. An owner's `file.read` key can read
 files and nothing else: it cannot start servers, create accounts, mint wider
-keys, or touch admin routes. A key can mint new keys only inside its own
-scope ceiling. Keys expire when you say so and die immediately on revoke.
+keys, or touch admin routes. Key management itself (list, mint, revoke)
+needs your session or a full `*` key; narrowed keys inherit none of it.
+
+## Long-lived by design
+
+Changing your password does not kill your keys. Keys have their own
+lifetime: expiry dates plus immediate revocation. If a password change is
+meant to cut everything off, revoke the keys too; the audit trail shows
+which key acted, so you know what to cut.
 
 ## Using one
 

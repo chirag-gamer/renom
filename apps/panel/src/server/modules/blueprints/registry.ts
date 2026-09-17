@@ -38,12 +38,13 @@ export class BlueprintRegistry {
         );
       }
       const exists = this.db.prepare("SELECT id FROM blueprints WHERE slug = ?").get(doc.slug) as
-        | { id: string }
-        | undefined;
+        { id: string } | undefined;
       const maturity = parsed.data.maturity;
       if (exists) {
         // Converge catalog edits (maturity flips, renames) on every boot.
-        this.db.prepare("UPDATE blueprints SET maturity = ?, updated_at = ? WHERE slug = ?").run(maturity, now, doc.slug);
+        this.db
+          .prepare("UPDATE blueprints SET maturity = ?, updated_at = ? WHERE slug = ?")
+          .run(maturity, now, doc.slug);
         // Re-store the document when the shipped content changed: fixes to
         // install ops, checksums, and commands must reach existing installs.
         const current = this.db
@@ -60,7 +61,17 @@ export class BlueprintRegistry {
           `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,docs_url,maturity,created_at,updated_at)
            VALUES (?,?,?,?,?,1,'builtin',?,?,?,?)`,
         )
-        .run(id, doc.slug, doc.name, doc.category, doc.tag, doc.docsUrl ?? null, maturity, now, now);
+        .run(
+          id,
+          doc.slug,
+          doc.name,
+          doc.category,
+          doc.tag,
+          doc.docsUrl ?? null,
+          maturity,
+          now,
+          now,
+        );
       this.storeVersion(id, parsed.data, now);
       seeded.push(doc.slug);
     }
@@ -101,7 +112,9 @@ export class BlueprintRegistry {
     if (existing) {
       id = existing.id;
       this.db
-        .prepare("UPDATE blueprints SET name=?, category=?, latest_tag=?, maturity=?, updated_at=? WHERE id=?")
+        .prepare(
+          "UPDATE blueprints SET name=?, category=?, latest_tag=?, maturity=?, updated_at=? WHERE id=?",
+        )
         .run(doc.name, doc.category, doc.tag, doc.maturity, now, id);
     } else {
       id = ulid(now);
@@ -110,7 +123,18 @@ export class BlueprintRegistry {
           `INSERT INTO blueprints (id,slug,name,category,latest_tag,enabled,source,registry_url,maturity,created_at,updated_at)
            VALUES (?,?,?,?,?,1,?,?,?, ?,?)`,
         )
-        .run(id, doc.slug, doc.name, doc.category, doc.tag, source, registryUrl ?? null, doc.maturity, now, now);
+        .run(
+          id,
+          doc.slug,
+          doc.name,
+          doc.category,
+          doc.tag,
+          source,
+          registryUrl ?? null,
+          doc.maturity,
+          now,
+          now,
+        );
     }
     this.storeVersion(id, doc, now);
     return { slug: doc.slug, tag: doc.tag };

@@ -37,7 +37,12 @@ vars["allocation.ip"] = alloc.ip;
 vars["allocation.port"] = String(alloc.port);
 
 console.log("installing bds...");
-await runInstallOps(doc, { serverId: created.id, dir: serverDir, vars, blueprintSlug: "bedrock-bds" });
+await runInstallOps(doc, {
+  serverId: created.id,
+  dir: serverDir,
+  vars,
+  blueprintSlug: "bedrock-bds",
+});
 console.log("installed. starting...");
 await ctx.engine.start(created.id);
 const deadline = Date.now() + 120_000;

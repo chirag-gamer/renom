@@ -24,6 +24,14 @@ All notable changes to Renom are documented here. Format based on
   EndstoneMC registry, PocketMine-MP with its PHP binary, Endstone via pip, plain
   Python/Node runtimes. Minekube stays Java-only; other tunnels follow docs/tunnels.md.
 - Docs for every feature and game server (`docs/features`, `docs/servers`, `docs/tunnels.md`).
+- Security review pass (PR-11-REVIEW.md): checksums required on all downloads,
+  confined + member-validated extraction, install-root `.env` loading, socket
+  revocation on every grant change, central console sanitization, atomic owner
+  bootstrap, hardened schemas, memory/claim/mkdir correctness, session-only key
+  management, owner-only admin tier, runtime EULA + ready gates, honest kill,
+  expiring schedule locks, async audited backups with unlock, per-user socket
+  budgets, CSP headers, generated installer passwords with reset UI, and the
+  full negative-test battery.
 - Optional Minekube Connect tunnel per Java server: plugin install, `CONNECT_ENDPOINT`
   wiring, public-address scraping from console history into the Network tab.
 - Server detail tabs: Startup (variables), Network (allocations + tunnel), Users

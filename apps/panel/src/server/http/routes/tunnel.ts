@@ -6,7 +6,11 @@ import type { LocalProcessEngine } from "../../modules/runtime/engine.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import {

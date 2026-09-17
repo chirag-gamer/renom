@@ -336,9 +336,13 @@ async function resolveBds(
   const want = version === "" || version === "latest" ? null : version;
   const picked =
     want ??
-    ((await fetchJson(fetchImpl, `${base}/versions.json`)) as { release: { latest: string } }).release.latest;
+    ((await fetchJson(fetchImpl, `${base}/versions.json`)) as { release: { latest: string } })
+      .release.latest;
   const group = channel === "preview" ? "preview" : "release";
-  const meta = (await fetchJson(fetchImpl, `${base}/${group}/${encodeURIComponent(picked)}/metadata.json`)) as {
+  const meta = (await fetchJson(
+    fetchImpl,
+    `${base}/${group}/${encodeURIComponent(picked)}/metadata.json`,
+  )) as {
     binary: Record<string, { url: string; sha256: string }>;
   };
   const os = process.platform === "win32" ? "windows" : "linux";
@@ -355,8 +359,17 @@ async function resolveBds(
 async function resolvePocketMine(
   fetchImpl: typeof fetch,
   version?: string,
-): Promise<{ pharUrl: string; pharSha256?: string; phpUrl: string; phpSha256?: string; phpExt: string }> {
-  const want = version && version !== "" && version !== "latest" ? `/tags/${encodeURIComponent(version)}` : "/latest";
+): Promise<{
+  pharUrl: string;
+  pharSha256?: string;
+  phpUrl: string;
+  phpSha256?: string;
+  phpExt: string;
+}> {
+  const want =
+    version && version !== "" && version !== "latest"
+      ? `/tags/${encodeURIComponent(version)}`
+      : "/latest";
   const release = (await fetchJson(
     fetchImpl,
     `https://api.github.com/repos/pmmp/PocketMine-MP/releases${want}`,
@@ -395,7 +408,12 @@ function assetDigest(digest: string | undefined): string | undefined {
  * opt-in experimental); the run command uses the `endstone` entrypoint.
  * Version pins pass straight through to pip.
  */
-async function pipInstall(fetchImpl: typeof fetch, serverDir: string, pkg: string, version?: string): Promise<void> {
+async function pipInstall(
+  fetchImpl: typeof fetch,
+  serverDir: string,
+  pkg: string,
+  version?: string,
+): Promise<void> {
   void fetchImpl;
   void serverDir;
   const execFileAsync = promisify(execFileCb);
@@ -419,7 +437,13 @@ async function pipInstall(fetchImpl: typeof fetch, serverDir: string, pkg: strin
  * absolute or escaping `dest` aborts the whole op. When no tool can even list
  * members, extraction is refused rather than done blind.
  */
-async function extractArchive(src: string, serverDir: string, dest: string, strip: number, safe: boolean): Promise<void> {
+async function extractArchive(
+  src: string,
+  serverDir: string,
+  dest: string,
+  strip: number,
+  safe: boolean,
+): Promise<void> {
   if (!safe) throw new EngineError("Refusing archive extraction without safe=true");
   const outDir = confine(serverDir, dest);
   mkdirSync(outDir, { recursive: true });
@@ -537,12 +561,18 @@ export async function installModrinthProjects(
         `?loaders=${encodeURIComponent(JSON.stringify(platform.loaders))}` +
         `&game_versions=${encodeURIComponent(JSON.stringify([mcVersion]))}`,
     )) as Array<{
-      files: Array<{ url: string; filename: string; hashes: { sha256?: string; sha512?: string }; primary: boolean }>;
+      files: Array<{
+        url: string;
+        filename: string;
+        hashes: { sha256?: string; sha512?: string };
+        primary: boolean;
+      }>;
     }>;
     const newest = versions[0];
     const file = newest?.files.find((f) => f.primary) ?? newest?.files[0];
     if (!file) throw new EngineError(`No ${mcVersion} file for '${id}' on Modrinth`);
-    if (!/\.jar$/i.test(file.filename)) throw new EngineError(`Refusing non-jar addon '${file.filename}'`);
+    if (!/\.jar$/i.test(file.filename))
+      throw new EngineError(`Refusing non-jar addon '${file.filename}'`);
     // The filename comes from the network: strip separators and confine it.
     // A mismatch with the advertised name aborts rather than writing blind.
     const safeName = file.filename.replace(/[\\/]/g, "");

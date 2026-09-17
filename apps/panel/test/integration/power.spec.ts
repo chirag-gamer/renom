@@ -78,11 +78,7 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function waitForHistory(
-  id: string,
-  match: string,
-  timeoutMs = 15000,
-): Promise<boolean> {
+async function waitForHistory(id: string, match: string, timeoutMs = 15000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const res = await request(app)

@@ -100,8 +100,9 @@ export class LocalProcessEngine {
     // Panel-namespaced keys (tunnel.*) ride outside blueprint variables.
     for (const [k, v] of this.namespacedVariables(serverId)) vars[k] = v;
     const argv = (doc.run?.command ?? []).map((arg) => substitute(arg, vars));
-    let [cmd, ...args] = argv;
-    if (!cmd) throw new EngineError("Blueprint has an empty start command");
+    const [rawCmd, ...args] = argv;
+    if (!rawCmd) throw new EngineError("Blueprint has an empty start command");
+    let cmd = rawCmd;
     // Cross-OS binaries: `bedrock_server` on Linux is `bedrock_server.exe`
     // next to it on Windows. Prefer the exact name, fall back to .exe there.
     // (Checked against the server root, where installs place binaries.)

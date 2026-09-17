@@ -24,7 +24,11 @@ describe("database layer", () => {
     const rows = db.prepare("SELECT name FROM _migrations ORDER BY id").all() as Array<{
       name: string;
     }>;
-    expect(rows.map((r) => r.name)).toEqual(["schema-v1", "blueprint-maturity", "schedule-lock-expiry"]);
+    expect(rows.map((r) => r.name)).toEqual([
+      "schema-v1",
+      "blueprint-maturity",
+      "schedule-lock-expiry",
+    ]);
 
     db.close();
     const again = openAndMigrate(file);

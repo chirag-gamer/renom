@@ -129,16 +129,18 @@ export function attachConsoleGateway(
       void socket.join(`server:${serverId}`);
       socket.emit("console:history", { v: 1, lines: engine.history(serverId, 100) });
       const unsubs = socket.data.unsubs as Map<string, () => void>;
-      unsubs.set(serverId, engine.onLine(serverId, (line: ConsoleLine) => {
-        socket.volatile.emit("console:line", { v: 1, line });
-      }));
+      unsubs.set(
+        serverId,
+        engine.onLine(serverId, (line: ConsoleLine) => {
+          socket.volatile.emit("console:line", { v: 1, line });
+        }),
+      );
       live.get(socket.id)?.servers.add(serverId);
       ack?.({ ok: true });
     });
 
     socket.on("console:send", (msg: unknown, ack?: (r: { accepted: boolean }) => void) => {
-      const { serverId, command } =
-        (msg as { serverId?: unknown; command?: unknown } | null) ?? {};
+      const { serverId, command } = (msg as { serverId?: unknown; command?: unknown } | null) ?? {};
       if (typeof serverId !== "string" || typeof command !== "string" || command.length === 0) {
         ack?.({ accepted: false });
         return;
@@ -184,8 +186,7 @@ export function attachConsoleGateway(
     dropGrants(serverId?: string, userId?: string): void {
       for (const entry of live.values()) {
         if (userId !== undefined && entry.userId !== userId) continue;
-        const targets =
-          serverId !== undefined ? [serverId] : [...entry.servers];
+        const targets = serverId !== undefined ? [serverId] : [...entry.servers];
         for (const sid of targets) {
           if (!entry.servers.has(sid)) continue;
           unsubscribe(entry.socket, sid);

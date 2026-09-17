@@ -5,7 +5,11 @@ import type { Scheduler, ScheduleTask } from "../../modules/schedules/runner.js"
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation, assertSuspendedReadable } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { NotFoundError } from "../../shared/errors.js";
 

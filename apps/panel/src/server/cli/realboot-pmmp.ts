@@ -37,7 +37,12 @@ vars["allocation.ip"] = alloc.ip;
 vars["allocation.port"] = String(alloc.port);
 
 console.log("installing pocketmine...");
-await runInstallOps(doc, { serverId: created.id, dir: serverDir, vars, blueprintSlug: "pocketmine-mp" });
+await runInstallOps(doc, {
+  serverId: created.id,
+  dir: serverDir,
+  vars,
+  blueprintSlug: "pocketmine-mp",
+});
 console.log("installed. starting...");
 await ctx.engine.start(created.id);
 const deadline = Date.now() + 180_000;

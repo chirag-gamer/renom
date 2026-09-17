@@ -25,9 +25,7 @@ export const installOpSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("download"),
     url: z.string().url(),
-    sha256: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
     dest: z.string().min(1),
     maxMB: z.number().int().min(1).max(2048),
   }),
@@ -45,7 +43,11 @@ export const installOpSchema = z.discriminatedUnion("op", [
   }),
   z.object({ op: z.literal("mkdir"), path: z.string().min(1) }),
   z.object({ op: z.literal("move"), from: z.string().min(1), to: z.string().min(1) }),
-  z.object({ op: z.literal("chmod"), path: z.string().min(1), mode: z.number().int().min(0).max(0o777) }),
+  z.object({
+    op: z.literal("chmod"),
+    path: z.string().min(1),
+    mode: z.number().int().min(0).max(0o777),
+  }),
   z.object({ op: z.literal("delete"), path: z.string().min(1) }),
   z.object({ op: z.literal("fetch-vanilla"), version: z.string().min(1) }),
   z.object({
@@ -101,13 +103,19 @@ export const variableSchema = z
   .superRefine((v, ctx) => {
     // An enum without options accepts anything at runtime: fail the document.
     if (v.type === "enum" && (!v.options || v.options.length === 0)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `enum variable '${v.key}' needs options` });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `enum variable '${v.key}' needs options`,
+      });
     }
     if (v.rules?.pattern) {
       try {
         new RegExp(v.rules.pattern);
       } catch {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `variable '${v.key}' has an invalid pattern` });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `variable '${v.key}' has an invalid pattern`,
+        });
       }
     }
   });
@@ -119,135 +127,148 @@ export const portSchema = z.object({
   required: z.boolean().default(true),
 });
 
-export const blueprintDocSchema = z.object({
-  schemaVersion: z.literal(1),
-  slug: z.string().regex(slugRe),
-  name: z.string().min(1).max(64),
-  category: z.enum([
-    "minecraft-java",
-    "minecraft-bedrock",
-    "proxy",
-    "generic-runtime",
-    "generic-process",
-  ]),
-  description: z.string().max(512).default(""),
-  docsUrl: z.string().url().optional(),
-  tag: z.string().regex(semverTag).default("v1"),
-  /** Maturity shown in the panel: experimental blueprints boot but get less verification. */
-  maturity: z.enum(["stable", "experimental"]).default("stable"),
-  requirements: z.object({
-    engine: z.enum(["docker", "process"]),
-    arch: z.array(z.enum(["amd64", "arm64"])).min(1),
-    hostOs: z.array(z.enum(["linux", "windows"])).min(1),
-  }),
-  resolvers: z
-    .array(
-      z.object({
-        id: z.string().min(1).max(64),
-        kind: resolverKindSchema,
-        project: z.string().max(64).optional(),
-        /** static resolvers declare their versions inline (no network). */
-        versions: z.array(z.string()).optional(),
-      }),
-    )
-    .default([]),
-  versions: z
-    .object({
-      javaMapping: z
-        .array(
-          z.object({
-            mcRange: z.string().min(1).max(32),
-            image: z.string().min(1).max(128),
-          }),
-        )
-        .optional(),
-    })
-    .default({}),
-  image: z.string().min(1).max(160), // runtime container image for this blueprint
-  install: z.array(installOpSchema).max(64),
-  uninstall: z.array(installOpSchema).max(64).optional(),
-  run: z.object({
-    command: z.array(z.string().max(4096)).min(1), // argv template; never a shell string
-    workdir: z.string().max(256).default("/data"),
-    // The stop shape must match its kind: console stops carry a command,
-    // signal stops carry a signal. Anything else fails validation.
-    stop: z.discriminatedUnion("kind", [
-      z.object({
-        kind: z.literal("console"),
-        command: z.string().min(1).max(256),
-        timeoutSec: z.number().int().min(1).max(300).default(30),
-      }),
-      z.object({
-        kind: z.literal("signal"),
-        signal: z.enum(["SIGTERM", "SIGINT"]).default("SIGTERM"),
-        timeoutSec: z.number().int().min(1).max(300).default(30),
-      }),
+export const blueprintDocSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    slug: z.string().regex(slugRe),
+    name: z.string().min(1).max(64),
+    category: z.enum([
+      "minecraft-java",
+      "minecraft-bedrock",
+      "proxy",
+      "generic-runtime",
+      "generic-process",
     ]),
-    envCanon: z.record(z.string(), z.string().max(512)).default({}),
-  }),
-  variables: z.array(variableSchema).max(64).default([]),
-  ports: z.array(portSchema).max(16).default([]),
-  healthcheck: z
-    .object({
-      kind: z.enum(["tcp", "none"]),
-      port: z.string().max(32).optional(), // named port reference
-      timeoutSec: z.number().int().min(1).max(120).default(10),
-      startPeriodSec: z.number().int().min(0).max(600).default(90),
-    })
-    .default({ kind: "none", timeoutSec: 10, startPeriodSec: 90 }),
-  backupPolicy: z
-    .object({ consistency: z.enum(["stopped", "best-effort"]).default("best-effort") })
-    .default({ consistency: "best-effort" }),
-  update: z
-    .object({
-      strategy: z.enum(["resolver-refetch", "none"]).default("none"),
-      onStart: z.boolean().default(false),
-    })
-    .default({ strategy: "none", onStart: false }),
-  fileDenylist: z.array(z.string().max(128)).max(64).default([]),
-  features: z.array(z.enum(["eula", "query"])).default([]),
-}).superRefine((doc, ctx) => {
-  // Every {TOKEN} referenced anywhere must resolve: declared variables or
-  // the allocation context the panel injects. Unknown tokens would otherwise
-  // reach argv and files as literal text (silent misconfiguration).
-  const known = new Set([...doc.variables.map((v) => v.key), "allocation.ip", "allocation.port"]);
-  const texts: string[] = [
-    ...doc.run.command,
-    ...(typeof doc.run.workdir === "string" ? [doc.run.workdir] : []),
-  ];
-  for (const op of doc.install) {
-    const blobs: unknown[] = [];
-    if (op.op === "writefile") blobs.push(op.path, op.contentTemplate);
-    else if (op.op === "download") blobs.push(op.url, op.dest);
-    else if (op.op === "mkdir" || op.op === "delete") blobs.push(op.path);
-    else if (op.op === "move") blobs.push(op.from, op.to);
-    else if (op.op === "extract") blobs.push(op.src, op.dest);
-    else if (op.op === "chmod") blobs.push(op.path);
-    else if (op.op === "template-render") blobs.push(op.src, op.dest);
-    else if (op.op === "fetch-vanilla" || op.op === "fetch-paper" || op.op === "fetch-purpur") blobs.push(op.version);
-    else if (op.op === "fetch-fabric") blobs.push(op.mcVersion);
-    else if (op.op === "fetch-neoforge" || op.op === "fetch-forge") blobs.push(op.mcVersion);
-    else if (op.op === "fetch-velocity") blobs.push(op.version);
-    else if (op.op === "fetch-bds" || op.op === "fetch-pocketmine" || op.op === "fetch-endstone") {
-      if (op.version) blobs.push(op.version);
-    }
-    for (const blob of blobs) {
-      if (typeof blob !== "string") continue;
-      for (const m of blob.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
-        if (!known.has(m[1]!)) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown token {${m[1]}} has no variable` });
+    description: z.string().max(512).default(""),
+    docsUrl: z.string().url().optional(),
+    tag: z.string().regex(semverTag).default("v1"),
+    /** Maturity shown in the panel: experimental blueprints boot but get less verification. */
+    maturity: z.enum(["stable", "experimental"]).default("stable"),
+    requirements: z.object({
+      engine: z.enum(["docker", "process"]),
+      arch: z.array(z.enum(["amd64", "arm64"])).min(1),
+      hostOs: z.array(z.enum(["linux", "windows"])).min(1),
+    }),
+    resolvers: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(64),
+          kind: resolverKindSchema,
+          project: z.string().max(64).optional(),
+          /** static resolvers declare their versions inline (no network). */
+          versions: z.array(z.string()).optional(),
+        }),
+      )
+      .default([]),
+    versions: z
+      .object({
+        javaMapping: z
+          .array(
+            z.object({
+              mcRange: z.string().min(1).max(32),
+              image: z.string().min(1).max(128),
+            }),
+          )
+          .optional(),
+      })
+      .default({}),
+    image: z.string().min(1).max(160), // runtime container image for this blueprint
+    install: z.array(installOpSchema).max(64),
+    uninstall: z.array(installOpSchema).max(64).optional(),
+    run: z.object({
+      command: z.array(z.string().max(4096)).min(1), // argv template; never a shell string
+      workdir: z.string().max(256).default("/data"),
+      // The stop shape must match its kind: console stops carry a command,
+      // signal stops carry a signal. Anything else fails validation.
+      stop: z.discriminatedUnion("kind", [
+        z.object({
+          kind: z.literal("console"),
+          command: z.string().min(1).max(256),
+          timeoutSec: z.number().int().min(1).max(300).default(30),
+        }),
+        z.object({
+          kind: z.literal("signal"),
+          signal: z.enum(["SIGTERM", "SIGINT"]).default("SIGTERM"),
+          timeoutSec: z.number().int().min(1).max(300).default(30),
+        }),
+      ]),
+      envCanon: z.record(z.string(), z.string().max(512)).default({}),
+    }),
+    variables: z.array(variableSchema).max(64).default([]),
+    ports: z.array(portSchema).max(16).default([]),
+    healthcheck: z
+      .object({
+        kind: z.enum(["tcp", "none"]),
+        port: z.string().max(32).optional(), // named port reference
+        timeoutSec: z.number().int().min(1).max(120).default(10),
+        startPeriodSec: z.number().int().min(0).max(600).default(90),
+      })
+      .default({ kind: "none", timeoutSec: 10, startPeriodSec: 90 }),
+    backupPolicy: z
+      .object({ consistency: z.enum(["stopped", "best-effort"]).default("best-effort") })
+      .default({ consistency: "best-effort" }),
+    update: z
+      .object({
+        strategy: z.enum(["resolver-refetch", "none"]).default("none"),
+        onStart: z.boolean().default(false),
+      })
+      .default({ strategy: "none", onStart: false }),
+    fileDenylist: z.array(z.string().max(128)).max(64).default([]),
+    features: z.array(z.enum(["eula", "query"])).default([]),
+  })
+  .superRefine((doc, ctx) => {
+    // Every {TOKEN} referenced anywhere must resolve: declared variables or
+    // the allocation context the panel injects. Unknown tokens would otherwise
+    // reach argv and files as literal text (silent misconfiguration).
+    const known = new Set([...doc.variables.map((v) => v.key), "allocation.ip", "allocation.port"]);
+    const texts: string[] = [
+      ...doc.run.command,
+      ...(typeof doc.run.workdir === "string" ? [doc.run.workdir] : []),
+    ];
+    for (const op of doc.install) {
+      const blobs: unknown[] = [];
+      if (op.op === "writefile") blobs.push(op.path, op.contentTemplate);
+      else if (op.op === "download") blobs.push(op.url, op.dest);
+      else if (op.op === "mkdir" || op.op === "delete") blobs.push(op.path);
+      else if (op.op === "move") blobs.push(op.from, op.to);
+      else if (op.op === "extract") blobs.push(op.src, op.dest);
+      else if (op.op === "chmod") blobs.push(op.path);
+      else if (op.op === "template-render") blobs.push(op.src, op.dest);
+      else if (op.op === "fetch-vanilla" || op.op === "fetch-paper" || op.op === "fetch-purpur")
+        blobs.push(op.version);
+      else if (op.op === "fetch-fabric") blobs.push(op.mcVersion);
+      else if (op.op === "fetch-neoforge" || op.op === "fetch-forge") blobs.push(op.mcVersion);
+      else if (op.op === "fetch-velocity") blobs.push(op.version);
+      else if (
+        op.op === "fetch-bds" ||
+        op.op === "fetch-pocketmine" ||
+        op.op === "fetch-endstone"
+      ) {
+        if (op.version) blobs.push(op.version);
+      }
+      for (const blob of blobs) {
+        if (typeof blob !== "string") continue;
+        for (const m of blob.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+          if (!known.has(m[1]!)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Unknown token {${m[1]}} has no variable`,
+            });
+          }
         }
       }
     }
-  }
-  for (const text of texts) {
-    for (const m of text.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
-      if (!known.has(m[1]!)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown token {${m[1]}} has no variable` });
+    for (const text of texts) {
+      for (const m of text.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+        if (!known.has(m[1]!)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Unknown token {${m[1]}} has no variable`,
+          });
+        }
       }
     }
-  }
-});
+  });
 
 export type BlueprintDoc = z.infer<typeof blueprintDocSchema>;
 /** Input form (defaults not yet applied) — used for literal catalogs. */

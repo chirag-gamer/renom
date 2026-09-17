@@ -299,10 +299,16 @@ describe("EULA gate + variables + tunnel API", () => {
   });
 
   it("Minekube refuses Bedrock servers with directions", async () => {
-    const catalog = await request(app).get("/api/v3/blueprints").set("authorization", `Bearer ${ownerToken}`);
-    const bds = (catalog.body.items as Array<{ slug: string; maturity: string }>).find((b) => b.slug === "bedrock-bds");
+    const catalog = await request(app)
+      .get("/api/v3/blueprints")
+      .set("authorization", `Bearer ${ownerToken}`);
+    const bds = (catalog.body.items as Array<{ slug: string; maturity: string }>).find(
+      (b) => b.slug === "bedrock-bds",
+    );
     expect(bds?.maturity).toBe("experimental");
-    const paper = (catalog.body.items as Array<{ slug: string; maturity: string }>).find((b) => b.slug === "paper");
+    const paper = (catalog.body.items as Array<{ slug: string; maturity: string }>).find(
+      (b) => b.slug === "paper",
+    );
     expect(paper?.maturity).toBe("stable");
 
     const created = await request(app)

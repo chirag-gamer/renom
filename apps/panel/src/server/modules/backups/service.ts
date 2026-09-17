@@ -232,9 +232,8 @@ export class BackupsService {
       this.db
         .prepare("UPDATE backups SET purged_at = ?, retained_reason = 'retention' WHERE id = ?")
         .run(Date.now(), extra.id);
-      const file = this.db
-        .prepare("SELECT file_name FROM backups WHERE id = ?")
-        .get(extra.id) as { file_name: string } | undefined;
+      const file = this.db.prepare("SELECT file_name FROM backups WHERE id = ?").get(extra.id) as
+        { file_name: string } | undefined;
       if (file) rmSync(join(this.dataDir, "backups", serverId, file.file_name), { force: true });
       this.audit?.record({
         event: "backup.retention.purge",

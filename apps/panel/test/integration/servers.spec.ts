@@ -99,7 +99,13 @@ describe("servers CRUD + ownership + quotas", () => {
     const tooFat = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${dave}`)
-      .send({ name: "fat", blueprintSlug: "paper", memoryMb: 512, diskQuotaMb: 50_000, eulaAccepted: true });
+      .send({
+        name: "fat",
+        blueprintSlug: "paper",
+        memoryMb: 512,
+        diskQuotaMb: 50_000,
+        eulaAccepted: true,
+      });
     expect(tooFat.status).toBe(409);
 
     const fits = await request(app)

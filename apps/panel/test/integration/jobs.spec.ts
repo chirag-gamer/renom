@@ -173,7 +173,11 @@ describe("schedules", () => {
     const created = await request(app)
       .post(`/api/v3/servers/${serverId}/schedules`)
       .set("authorization", `Bearer ${ownerToken}`)
-      .send({ name: "once", cronExpr: "* * * * *", tasks: [{ action: "command", payload: { command: "x" } }] });
+      .send({
+        name: "once",
+        cronExpr: "* * * * *",
+        tasks: [{ action: "command", payload: { command: "x" } }],
+      });
     const id = created.body.schedule.id as string;
     // Force it due right now.
     ctx.db.prepare("UPDATE schedules SET next_run_at = ? WHERE id = ?").run(Date.now() - 1000, id);
@@ -232,10 +236,14 @@ describe.runIf(isTarAvailable())("backups", () => {
       .send({});
     const backupId = created.body.backup.id as string;
     // Tamper with the archive on disk (bit rot, angry admin, MITM).
-    const row = ctx.db
-      .prepare("SELECT file_name FROM backups WHERE id = ?")
-      .get(backupId) as { file_name: string };
-    writeFileSync(join(dir, "backups", serverId, row.file_name), "definitely-not-a-tarball", "utf8");
+    const row = ctx.db.prepare("SELECT file_name FROM backups WHERE id = ?").get(backupId) as {
+      file_name: string;
+    };
+    writeFileSync(
+      join(dir, "backups", serverId, row.file_name),
+      "definitely-not-a-tarball",
+      "utf8",
+    );
 
     const restored = await request(app)
       .post(`/api/v3/servers/${serverId}/backups/${backupId}/restore`)
@@ -265,7 +273,9 @@ describe.runIf(isTarAvailable())("backups", () => {
     const listed = await request(app)
       .get(`/api/v3/servers/${serverId}/backups`)
       .set("authorization", `Bearer ${ownerToken}`);
-    const locked = (listed.body.backups as Array<{ id: string; locked?: boolean }>).find((b) => b.locked);
+    const locked = (listed.body.backups as Array<{ id: string; locked?: boolean }>).find(
+      (b) => b.locked,
+    );
     expect(locked).toBeDefined();
     const unlock = await request(app)
       .post(`/api/v3/servers/${serverId}/backups/${locked!.id}/unlock`)
