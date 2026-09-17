@@ -21,11 +21,15 @@ import { powerRouter } from "./http/routes/power.js";
 import { apiKeysRouter } from "./http/routes/api-keys.js";
 import { subusersRouter } from "./http/routes/subusers.js";
 import { allocationsRouter } from "./http/routes/allocations.js";
+import { backupsRouter } from "./http/routes/backups.js";
+import { schedulesRouter } from "./http/routes/schedules.js";
 import { attachConsoleGateway } from "./http/console-gateway.js";
 import { FilesService } from "./modules/files/service.js";
 import { BlueprintRegistry } from "./modules/blueprints/registry.js";
 import { ServersRepo } from "./modules/servers/repo.js";
 import { LocalProcessEngine } from "./modules/runtime/engine.js";
+import { BackupsService } from "./modules/backups/service.js";
+import { Scheduler } from "./modules/schedules/runner.js";
 import { ApiKeysRepo } from "./modules/auth/api-keys.js";
 
 export interface PanelContext {
@@ -34,6 +38,8 @@ export interface PanelContext {
   users: UsersRepo;
   servers: ServersRepo;
   engine: LocalProcessEngine;
+  backups: BackupsService;
+  scheduler: Scheduler;
   apiKeys: ApiKeysRepo;
   auth: AuthService;
   audit: AuditService;
@@ -93,6 +99,8 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   blueprints.seedBuiltins();
   const servers = new ServersRepo(db);
   const engine = new LocalProcessEngine(db, servers, blueprints, dataDir);
+  const backups = new BackupsService(db, servers, blueprints, engine, dataDir);
+  const scheduler = new Scheduler(db, servers, engine, backups, audit);
 
   // Reconcile on boot: child processes do not survive a panel restart, so any
   // recorded non-offline state is stale. Reset loudly rather than lying.
@@ -117,6 +125,8 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
     powerRouter({ db, servers, engine, audit, auth }),
     subusersRouter({ db, users, audit, auth }),
     allocationsRouter({ db, audit, auth }),
+    backupsRouter({ db, backups, audit, auth }),
+    schedulesRouter({ db, scheduler, audit, auth }),
     filesRouter(db, env, files, audit, auth),
     blueprintsRouter(blueprints, auth),
   ];
@@ -158,12 +168,18 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   const server: Server = createServer(app);
   attachConsoleGateway(server, { db, auth, engine });
 
-  return { ctx: { env, db, users, servers, engine, apiKeys, auth, audit }, server, app };
+  return {
+    ctx: { env, db, users, servers, engine, backups, scheduler, apiKeys, auth, audit },
+    server,
+    app,
+  };
 }
 
 /** CLI entrypoint. */
 function main(): void {
   const { server, ctx } = buildPanel();
+  // The scheduler tick runs only in the serving process — never in tests.
+  ctx.scheduler.start();
   server.listen(ctx.env.PORT, ctx.env.HOST, () => {
     process.stdout.write(`panel_listening host=${ctx.env.HOST} port=${ctx.env.PORT}\n`);
   });

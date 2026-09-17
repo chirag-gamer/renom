@@ -32,10 +32,14 @@ beforeAll(async () => {
   });
 
   ownerToken = (
-    await request(app).post("/api/v3/auth/login").send({ username: "root", password: "root-password-1" })
+    await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "root", password: "root-password-1" })
   ).body.token as string;
   aliceToken = (
-    await request(app).post("/api/v3/auth/login").send({ username: "alice", password: "alice-password" })
+    await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "alice", password: "alice-password" })
   ).body.token as string;
 });
 
@@ -83,11 +87,15 @@ describe("servers CRUD + ownership + quotas", () => {
   });
 
   it("owner lists all servers; alice lists only hers", async () => {
-    const all = await request(app).get("/api/v3/servers").set("authorization", `Bearer ${ownerToken}`);
+    const all = await request(app)
+      .get("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`);
     expect(all.status).toBe(200);
     expect(all.body.items.length).toBeGreaterThanOrEqual(1);
 
-    const mine = await request(app).get("/api/v3/servers").set("authorization", `Bearer ${aliceToken}`);
+    const mine = await request(app)
+      .get("/api/v3/servers")
+      .set("authorization", `Bearer ${aliceToken}`);
     expect(mine.body.items.map((s: { id: string }) => s.id)).toEqual([aliceServerId]);
   });
 

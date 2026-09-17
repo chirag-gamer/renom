@@ -177,10 +177,14 @@ export class ServersRepo {
     this.db.transaction(() => {
       const now = Date.now();
       this.db
-        .prepare("UPDATE servers SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?")
+        .prepare(
+          "UPDATE servers SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?",
+        )
         .run(now, now, id);
       this.db
-        .prepare("UPDATE allocations SET server_id = NULL, released = 1, updated_at = ? WHERE server_id = ?")
+        .prepare(
+          "UPDATE allocations SET server_id = NULL, released = 1, updated_at = ? WHERE server_id = ?",
+        )
         .run(now, id);
     });
   }

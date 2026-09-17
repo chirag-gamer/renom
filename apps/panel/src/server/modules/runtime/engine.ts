@@ -59,7 +59,7 @@ export class LocalProcessEngine {
     if (this.stateOf(serverId) !== "offline") throw new EngineError("Server is already running");
 
     const doc = this.blueprints.getDoc(server.blueprint_slug, server.blueprint_version_tag);
-    if (doc.requirements.engine !== "process") {
+    if (doc.requirements?.engine !== "process") {
       throw new EngineError(
         `Blueprint '${doc.slug}' needs the Docker engine, which is not configured on this node`,
       );
@@ -67,9 +67,9 @@ export class LocalProcessEngine {
 
     const vars = this.variablesOf(
       serverId,
-      doc.variables.map((v) => v.key),
+      (doc.variables ?? []).map((v) => v.key),
     );
-    const argv = doc.run.command.map((arg) => substitute(arg, vars));
+    const argv = (doc.run?.command ?? []).map((arg) => substitute(arg, vars));
     const [cmd, ...args] = argv;
     if (!cmd) throw new EngineError("Blueprint has an empty start command");
 
@@ -149,7 +149,7 @@ export class LocalProcessEngine {
 
     live.stopping = true;
     this.servers.setRuntimeState(serverId, "stopping");
-    const stop = doc?.run.stop;
+    const stop = doc?.run?.stop;
 
     // Graceful console stop first (e.g. "stop" for Minecraft), then signal, then kill.
     if (stop?.kind === "console" && stop.command) {

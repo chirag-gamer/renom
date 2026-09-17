@@ -65,7 +65,11 @@ export class BlueprintRegistry {
   }
 
   /** Validate + import a document; creates or updates the blueprint entry. */
-  importDoc(raw: unknown, source: "import" | "registry" = "import", registryUrl?: string): { slug: string; tag: string } {
+  importDoc(
+    raw: unknown,
+    source: "import" | "registry" = "import",
+    registryUrl?: string,
+  ): { slug: string; tag: string } {
     const parsed = blueprintDocSchema.safeParse(raw);
     if (!parsed.success) {
       throw new ValidationError(
@@ -76,8 +80,7 @@ export class BlueprintRegistry {
     const doc = parsed.data;
     const now = Date.now();
     const existing = this.db.prepare("SELECT id FROM blueprints WHERE slug = ?").get(doc.slug) as
-      | { id: string }
-      | undefined;
+      { id: string } | undefined;
     let id: string;
     if (existing) {
       id = existing.id;
@@ -132,8 +135,7 @@ export class BlueprintRegistry {
 
   getDoc(slug: string, tag?: string): BlueprintDoc {
     const bp = this.db.prepare("SELECT id, latest_tag FROM blueprints WHERE slug = ?").get(slug) as
-      | { id: string; latest_tag: string }
-      | undefined;
+      { id: string; latest_tag: string } | undefined;
     if (!bp) throw new NotFoundError(`Unknown blueprint '${slug}'`);
     const row = this.db
       .prepare("SELECT doc FROM blueprint_versions WHERE blueprint_id = ? AND tag = ?")

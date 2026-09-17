@@ -34,7 +34,12 @@ export function serversRouter(deps: ServersDeps): Router {
     try {
       const q = parseQuery(pageQuerySchema, req);
       const p = req.principal!;
-      const rows = servers.list({ userId: p.userId, role: p.role, limit: q.limit, cursor: q.cursor });
+      const rows = servers.list({
+        userId: p.userId,
+        role: p.role,
+        limit: q.limit,
+        cursor: q.cursor,
+      });
       res.json({
         items: rows.map((s) => toPublicServer(s, servers.primaryAllocation(s.id))),
         nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
@@ -97,14 +102,18 @@ export function serversRouter(deps: ServersDeps): Router {
 
   const guard = (perm: string | string[]) => requireServerPermission(perm, deps.db);
 
-  router.get("/servers/:id", guard("startup.read"), (req: Request, res: Response, next: NextFunction) => {
-    const s = servers.byId(req.params.id ?? "");
-    if (!s) {
-      next(new NotFoundError("Not found"));
-      return;
-    }
-    res.json({ server: toPublicServer(s, servers.primaryAllocation(s.id)) });
-  });
+  router.get(
+    "/servers/:id",
+    guard("startup.read"),
+    (req: Request, res: Response, next: NextFunction) => {
+      const s = servers.byId(req.params.id ?? "");
+      if (!s) {
+        next(new NotFoundError("Not found"));
+        return;
+      }
+      res.json({ server: toPublicServer(s, servers.primaryAllocation(s.id)) });
+    },
+  );
 
   router.patch("/servers/:id", guard("settings.rename"), (req, res, next) => {
     try {
