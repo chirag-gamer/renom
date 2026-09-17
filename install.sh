@@ -88,15 +88,8 @@ npm run build
 say ""
 
 # 5. Admin account — only if the panel has no users yet.
-ADMIN_EXISTS="$(DATA_DIR="$DATA_DIR" node -e '
-try {
-  const { openAndMigrate } = require("./apps/panel/dist/server/infra/db/index.js");
-  const { join, resolve } = require("node:path");
-  const db = openAndMigrate(join(resolve(process.env.DATA_DIR || "./data"), "panel.db"));
-  const row = db.prepare("SELECT COUNT(*) AS n FROM users").get();
-  process.stdout.write(String(row.n > 0 ? "yes" : "no"));
-  db.close();
-} catch (e) { process.stdout.write("unknown"); }')"
+# (--check is the same code path as creation: no node -e subtleties, no drift.)
+ADMIN_EXISTS="$(DATA_DIR="$DATA_DIR" npm run --silent setup:admin --workspace @renom/panel -- --check 2>/dev/null || echo unknown)"
 if [ "$ADMIN_EXISTS" = "yes" ]; then
   say "Accounts already exist — skipping admin creation."
 elif [ "$ADMIN_EXISTS" = "unknown" ]; then
@@ -112,8 +105,11 @@ else
     say "Too short — pick at least 12 characters." >&2
   done
   ADMIN_EMAIL="$(ask "Admin email (optional, Enter to skip)" "")"
-  DATA_DIR="$DATA_DIR" npx tsx apps/panel/src/server/cli/create-owner.ts \
-    --username "$ADMIN_USER" --password "$ADMIN_PASS" ${ADMIN_EMAIL:+--email "$ADMIN_EMAIL"}
+  # shellcheck disable=SC2086 # intentional: empty $ADMIN_EMAIL_ARG vanishes
+  ADMIN_EMAIL_ARG=""
+  if [ -n "$ADMIN_EMAIL" ]; then ADMIN_EMAIL_ARG="--email $ADMIN_EMAIL"; fi
+  DATA_DIR="$DATA_DIR" npm run setup:admin --workspace @renom/panel -- \
+    --username "$ADMIN_USER" --password "$ADMIN_PASS" $ADMIN_EMAIL_ARG
 fi
 say ""
 
