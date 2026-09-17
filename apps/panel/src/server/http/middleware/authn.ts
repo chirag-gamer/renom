@@ -39,5 +39,11 @@ export function requireAdmin(req: Request, _res: Response, next: NextFunction): 
     next(new UnauthorizedError("Authentication required"));
     return;
   }
+  // A scoped API key never inherits the owner's adminhood: global admin
+  // routes (users, key minting, blueprint import) need a full key or session.
+  if (p.scopes !== undefined && !p.scopes.includes("*")) {
+    next(new UnauthorizedError("Authentication required"));
+    return;
+  }
   next();
 }

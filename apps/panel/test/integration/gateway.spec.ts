@@ -137,4 +137,21 @@ describe("console gateway", () => {
     expect(joined.reason).toBe("not found");
     socket.close();
   });
+
+  it("a stranger cannot join someone else's live server", async () => {
+    const { default: request } = await import("supertest");
+    const login = await request(`http://127.0.0.1:${port}`)
+      .post("/api/v3/auth/login")
+      .send({ username: "mallory", password: "mallory-pass" });
+    const malloryToken = login.body.token as string;
+
+    const socket = connect(malloryToken);
+    await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+    const joined = await new Promise<{ ok: boolean; reason?: string }>((resolve) =>
+      socket.emit("console:join", serverId, resolve),
+    );
+    expect(joined.ok).toBe(false);
+    expect(joined.reason).toBe("not found");
+    socket.close();
+  });
 });

@@ -10,6 +10,9 @@ export interface CronFields {
   dom: number[];
   month: number[];
   dow: number[];
+  /** Whether each day field was literally `*` (standard OR semantics need this, not value counts). */
+  domIsStar: boolean;
+  dowIsStar: boolean;
 }
 
 const RANGES: Array<[number, number]> = [
@@ -27,14 +30,22 @@ export function parseCron(expr: string): CronFields {
   const [minute, hour, dom, month, dow] = parts.map((p, i) =>
     parseField(p, RANGES[i]![0], RANGES[i]![1], i),
   );
-  return { minute: minute!, hour: hour!, dom: dom!, month: month!, dow: dow! };
+  return {
+    minute: minute!,
+    hour: hour!,
+    dom: dom!,
+    month: month!,
+    dow: dow!,
+    domIsStar: parts[2]!.trim() === "*",
+    dowIsStar: parts[4]!.trim() === "*",
+  };
 }
 
-/** Next run strictly after `fromMs` (UTC), scanning forward at most ~366 days. */
+/** Next run strictly after `fromMs` (UTC), scanning up to 5 years (covers Feb 29). */
 export function nextRun(fields: CronFields, fromMs: number): number {
   // Start at the next whole minute.
   let t = Math.floor(fromMs / 60_000) * 60_000 + 60_000;
-  const limit = fromMs + 366 * 24 * 3_600_000;
+  const limit = fromMs + 366 * 5 * 24 * 3_600_000;
   while (t <= limit) {
     const d = new Date(t);
     if (
@@ -47,13 +58,13 @@ export function nextRun(fields: CronFields, fromMs: number): number {
     }
     t += 60_000;
   }
-  throw new CronError("No run found within a year — check the expression");
+  throw new CronError("No run found within 5 years — check the expression");
 }
 
 // Cron day semantics: dom OR dow (either matching day fires), unless one side is '*'.
 function dayMatches(fields: CronFields, d: Date): boolean {
-  const domWild = fields.dom.length === 31;
-  const dowWild = fields.dow.length === 7;
+  const domWild = fields.domIsStar;
+  const dowWild = fields.dowIsStar;
   const domHit = fields.dom.includes(d.getUTCDate());
   const dowHit = fields.dow.includes(d.getUTCDay());
   if (domWild && dowWild) return true;
@@ -64,10 +75,14 @@ function dayMatches(fields: CronFields, d: Date): boolean {
 
 function parseField(raw: string, min: number, max: number, index: number): number[] {
   const out = new Set<number>();
+  if (raw === "") throw new CronError(`Field ${index + 1} is empty`);
   const chunks = raw.split(",");
-  if (chunks.length === 0 || raw === "") throw new CronError(`Field ${index + 1} is empty`);
   for (const chunk of chunks) {
-    const [rangePart, stepPart] = chunk.split("/");
+    if (chunk === "") throw new CronError(`Empty entry in field ${index + 1}`);
+    const slashes = chunk.split("/");
+    // `*/15/2` or `1-2-3`: typos must fail, not silently schedule something else.
+    if (slashes.length > 2) throw new CronError(`Too many '/' in '${chunk}' (field ${index + 1})`);
+    const [rangePart, stepPart] = slashes;
     if (stepPart !== undefined && !/^\d+$/.test(stepPart)) {
       throw new CronError(`Bad step '${stepPart}' in field ${index + 1}`);
     }
@@ -78,11 +93,14 @@ function parseField(raw: string, min: number, max: number, index: number): numbe
     if (rangePart === "*") {
       [lo, hi] = [min, max];
     } else if (rangePart !== undefined && rangePart.includes("-")) {
-      const [a, b] = rangePart.split("-").map(Number);
-      if (!Number.isInteger(a) || !Number.isInteger(b) || a === undefined || b === undefined) {
+      const dashes = rangePart.split("-");
+      if (dashes.length !== 2)
+        throw new CronError(`Bad range '${rangePart}' in field ${index + 1}`);
+      const [a, b] = dashes.map(Number);
+      if (!Number.isInteger(a) || !Number.isInteger(b)) {
         throw new CronError(`Bad range '${rangePart}' in field ${index + 1}`);
       }
-      [lo, hi] = [a, b];
+      [lo, hi] = [a as number, b as number];
     } else {
       const v = Number(rangePart);
       if (!Number.isInteger(v))

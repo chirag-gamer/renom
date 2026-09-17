@@ -6,6 +6,7 @@ import type { BlueprintRegistry } from "../../modules/blueprints/registry.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import type { Database } from "../../infra/db/database.js";
+import type { LocalProcessEngine } from "../../modules/runtime/engine.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
 import { requireServerPermission } from "../middleware/authz.js";
 import { parseBody, parseQuery } from "../../shared/validate.js";
@@ -18,6 +19,7 @@ export interface ServersDeps {
   db: Database;
   users: UsersRepo;
   servers: ServersRepo;
+  engine: LocalProcessEngine;
   blueprints: BlueprintRegistry;
   audit: AuditService;
   auth: AuthService;
@@ -26,7 +28,7 @@ export interface ServersDeps {
 }
 
 export function serversRouter(deps: ServersDeps): Router {
-  const { users, servers, blueprints, audit, auth, dataDir } = deps;
+  const { users, servers, engine, blueprints, audit, auth, dataDir } = deps;
   const router = Router();
   router.use(requireAuth(auth));
 
@@ -55,6 +57,13 @@ export function serversRouter(deps: ServersDeps): Router {
       const p = req.principal!;
       const privileged = p.role === "owner" || p.role === "admin";
 
+      // Server creation is account-level, not server-scoped: a narrowed API
+      // key has no ceiling to intersect against, so only sessions and full
+      // keys may create.
+      if (p.scopes !== undefined && !p.scopes.includes("*")) {
+        throw new ForbiddenError("This API key cannot create servers");
+      }
+
       // Owner assignment is a privilege; regular users create for themselves.
       let ownerId = p.userId;
       if (body.ownerUsername) {
@@ -65,9 +74,19 @@ export function serversRouter(deps: ServersDeps): Router {
       }
       const ownerRow = users.byId(ownerId)!;
 
-      // Quota: admins/owner are unbound; users stop at their plan.
-      if (!privileged && servers.countOwned(ownerId) >= ownerRow.quota_max_servers) {
-        throw new ConflictError("Server quota reached for this account");
+      // Quotas: count, RAM, and disk — admins/owner are unbound, users stop
+      // at their plan including what their existing servers already use.
+      if (!privileged) {
+        const usage = servers.resourceUsage(ownerId);
+        if (usage.servers >= ownerRow.quota_max_servers) {
+          throw new ConflictError("Server quota reached for this account");
+        }
+        if (usage.memoryMb + body.memoryMb > ownerRow.quota_ram_mb) {
+          throw new ConflictError("Not enough RAM quota for this server");
+        }
+        if (usage.diskMb + body.diskQuotaMb > ownerRow.quota_disk_mb) {
+          throw new ConflictError("Not enough disk quota for this server");
+        }
       }
 
       const bp = blueprints.lookup(body.blueprintSlug);
@@ -134,8 +153,11 @@ export function serversRouter(deps: ServersDeps): Router {
   });
 
   router.delete("/servers/:id", guard("settings.reinstall"), (req, res, next) => {
-    try {
+    (async () => {
       const id = req.params.id ?? "";
+      // Stop first: deleting a running server must not orphan its process
+      // (or leak its port to the next claimant).
+      await engine.kill(id);
       servers.remove(id);
       audit.record({
         event: "server.delete",
@@ -145,19 +167,21 @@ export function serversRouter(deps: ServersDeps): Router {
         serverId: id,
       });
       res.status(204).send();
-    } catch (e) {
-      next(e);
-    }
+    })().catch(next);
   });
 
-  // Suspension is an admin-only state flip (FR-023); the engine refuses power on suspended.
+  // Suspension is an admin-only state flip (FR-023). The running process is
+  // killed first: a suspended server must be inert, not merely flagged, and
+  // the power API refuses to stop suspended rows — so suspension stops them.
   router.post(
     "/servers/:id/suspend",
     requireAdmin,
     guard("settings.reinstall"),
     (req: Request, res: Response, next: NextFunction) => {
-      try {
-        servers.setStatus(req.params.id ?? "", "suspended");
+      (async () => {
+        const id = req.params.id ?? "";
+        await engine.kill(id);
+        servers.setStatus(id, "suspended");
         audit.record({
           event: "server.suspend",
           actorUserId: req.principal!.userId,
@@ -166,9 +190,7 @@ export function serversRouter(deps: ServersDeps): Router {
           serverId: req.params.id,
         });
         res.status(204).send();
-      } catch (e) {
-        next(e);
-      }
+      })().catch(next);
     },
   );
 

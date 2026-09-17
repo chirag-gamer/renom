@@ -75,6 +75,9 @@ export function powerRouter(deps: PowerDeps): Router {
       await new Promise<void>((resolve, reject) => {
         guard(req, res, (err?: unknown) => (err ? reject(err) : resolve()));
       });
+      // Suspended means inert: console input is a mutation like any other.
+      const row = servers.byId(req.params.id ?? "");
+      if (row?.status === "suspended") throw new ForbiddenError("Server is suspended");
       const accepted = engine.sendInput(req.params.id ?? "", body.command);
       res.json({ accepted });
     })().catch(next);

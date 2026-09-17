@@ -55,6 +55,7 @@ async function boot() {
   try {
     const { data } = await api("/setup/status");
     if (data && data.needsSetup) {
+      document.getElementById("setup-token-wrap").hidden = !data.tokenRequired;
       show("setup");
       return;
     }
@@ -62,8 +63,13 @@ async function boot() {
     /* setup endpoint unreachable — fall through to login */
   }
   if (store.token) {
-    const ok = await loadHome();
-    if (ok) return;
+    try {
+      if (await loadHome()) return;
+    } catch {
+      // Stored session but unreachable panel (offline? restarted with a new
+      // secret?): never leave a blank page — fall through to sign-in.
+      store.token = null;
+    }
   }
   show("login");
 }
@@ -84,6 +90,7 @@ document.getElementById("form-setup").addEventListener("submit", async (e) => {
         username: fd.get("username"),
         password: fd.get("password"),
         email: fd.get("email") || undefined,
+        setupToken: fd.get("setupToken") || undefined,
       },
     });
     if (status === 201) {
@@ -216,18 +223,25 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
 
 async function refreshUsers() {
   const list = document.getElementById("user-list");
-  const { status, data } = await api("/users?limit=100", { token: store.token });
-  if (status !== 200) return;
   list.innerHTML = "";
-  for (const u of data.items) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = u.displayName || u.username;
-    const role = document.createElement("span");
-    role.className = "role";
-    role.textContent = u.role + (u.suspended ? " (suspended)" : "");
-    li.append(name, role);
-    list.append(li);
+  // Follow every page: an admin list that silently drops accounts would be a lie.
+  let cursor = null;
+  for (;;) {
+    const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
+    const { status, data } = await api(`/users${qs}`, { token: store.token });
+    if (status !== 200) return;
+    for (const u of data.items) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = u.displayName || u.username;
+      const role = document.createElement("span");
+      role.className = "role";
+      role.textContent = u.role + (u.suspended ? " (suspended)" : "");
+      li.append(name, role);
+      list.append(li);
+    }
+    if (!data.nextCursor) return;
+    cursor = data.nextCursor;
   }
 }
 
@@ -236,16 +250,20 @@ document.getElementById("form-user").addEventListener("submit", async (e) => {
   const err = document.getElementById("user-error");
   err.hidden = true;
   const fd = new FormData(e.target);
-  const { status, data } = await api("/users", {
-    method: "POST",
-    token: store.token,
-    body: { username: fd.get("username"), password: fd.get("password"), role: fd.get("role") },
-  });
-  if (status === 201) {
-    e.target.reset();
-    await refreshUsers();
-  } else {
-    fail(err, describeProblem(status, data));
+  try {
+    const { status, data } = await api("/users", {
+      method: "POST",
+      token: store.token,
+      body: { username: fd.get("username"), password: fd.get("password"), role: fd.get("role") },
+    });
+    if (status === 201) {
+      e.target.reset();
+      await refreshUsers();
+    } else {
+      fail(err, describeProblem(status, data));
+    }
+  } catch {
+    fail(err, "Couldn't reach the panel. Check it's running and try again.");
   }
 });
 
@@ -270,6 +288,10 @@ async function openServer(id) {
   }
   currentServer = data.server;
   filesDir = "";
+  // Never carry another server's file into this one: a save after switching
+  // servers must not write stale contents to the new server.
+  document.getElementById("file-editing").textContent = "nothing open";
+  document.getElementById("file-content").value = "";
   renderServerHeader();
   setTab("console");
   show("server");

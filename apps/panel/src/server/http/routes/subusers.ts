@@ -5,9 +5,14 @@ import type { UsersRepo } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
-import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from "../../shared/errors.js";
 import { permissions } from "@renom/contracts";
 
 const grantSchema = z.object({
@@ -61,9 +66,20 @@ export function subusersRouter(deps: SubusersDeps): Router {
 
   router.post("/servers/:id/users", guard("user.create"), (req, res, next) => {
     try {
+      assertNotSuspendedForMutation(req, res);
       const body = parseBody(grantSchema, req);
       const unknown = body.permissions.filter((p) => !SCOPE_VOCABULARY.has(p));
       if (unknown.length > 0) throw new BadRequestError(`Unknown permission: ${unknown[0]}`);
+      // No escalation: every granted permission must sit inside the grantor's
+      // own effective set ('*' only from someone who already has it).
+      const ceiling = res.locals.effectivePermissions as string[];
+      const granted = [...new Set(body.permissions)];
+      const excess = ceiling.includes("*")
+        ? []
+        : granted.filter((p) => p === "*" || !ceiling.includes(p));
+      if (excess.length > 0) {
+        throw new ForbiddenError("Cannot grant permissions you do not have");
+      }
       const target = users.byUsername(body.username);
       if (!target) throw new NotFoundError("User not found");
       const serverId = req.params.id ?? "";
@@ -77,13 +93,7 @@ export function subusersRouter(deps: SubusersDeps): Router {
       if (exists) throw new ConflictError("That account already has access");
       db.prepare(
         "INSERT INTO subusers (user_id, server_id, permissions_json, granted_by, created_at) VALUES (?,?,?,?,?)",
-      ).run(
-        target.id,
-        serverId,
-        JSON.stringify([...new Set(body.permissions)]),
-        req.principal!.userId,
-        Date.now(),
-      );
+      ).run(target.id, serverId, JSON.stringify(granted), req.principal!.userId, Date.now());
       audit.record({
         event: "server.subuser.add",
         actorUserId: req.principal!.userId,
@@ -92,7 +102,7 @@ export function subusersRouter(deps: SubusersDeps): Router {
         serverId,
         target: { userId: target.id },
       });
-      res.status(201).json({ userId: target.id, permissions: [...new Set(body.permissions)] });
+      res.status(201).json({ userId: target.id, permissions: granted });
     } catch (e) {
       next(e);
     }
@@ -100,6 +110,7 @@ export function subusersRouter(deps: SubusersDeps): Router {
 
   router.delete("/servers/:id/users/:userId", guard("user.delete"), (req, res, next) => {
     try {
+      assertNotSuspendedForMutation(req, res);
       const serverId = req.params.id ?? "";
       const userId = req.params.userId ?? "";
       const result = db

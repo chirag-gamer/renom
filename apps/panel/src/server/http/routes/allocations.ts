@@ -4,7 +4,7 @@ import type { Database } from "../../infra/db/database.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import { ulid } from "../../shared/ulid.js";
@@ -43,6 +43,7 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
 
   router.post("/servers/:id/allocations", guard("allocation.update"), (req, res, next) => {
     try {
+      assertNotSuspendedForMutation(req, res);
       const body = parseBody(assignSchema, req);
       const serverId = req.params.id ?? "";
       const now = Date.now();
@@ -52,7 +53,12 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
           `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
            VALUES (?, ?, ?, ?, '', ?, ?)`,
         ).run(id, serverId, body.ip, body.port, now, now);
-      } catch {
+      } catch (err) {
+        // Only the address-in-use conflict maps to 409; anything else is a
+        // real database problem and must surface as a 500, not a lie.
+        if (!(err instanceof Error) || !err.message.includes("UNIQUE constraint failed")) {
+          throw err;
+        }
         throw new ConflictError(`Allocation ${body.ip}:${body.port} is already in use`);
       }
       audit.record({
@@ -74,6 +80,7 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
     guard("allocation.update"),
     (req, res, next) => {
       try {
+        assertNotSuspendedForMutation(req, res);
         const serverId = req.params.id ?? "";
         const allocationId = req.params.allocationId ?? "";
         const remaining = db

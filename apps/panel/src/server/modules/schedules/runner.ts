@@ -181,41 +181,69 @@ export class Scheduler {
       .all(now) as ScheduleRow[];
     let ran = 0;
     for (const s of due) {
-      // Atomic claim: only one worker wins.
+      // Atomic claim that rechecks state: an admin disabling or rescheduling
+      // between our SELECT and this UPDATE wins, and we skip the stale run.
       const claimed = this.db
         .prepare(
-          "UPDATE schedules SET is_processing = 1, updated_at = ? WHERE id = ? AND is_processing = 0",
+          `UPDATE schedules SET is_processing = 1, updated_at = ?
+           WHERE id = ? AND is_processing = 0 AND is_active = 1
+             AND next_run_at IS NOT NULL AND next_run_at <= ?`,
         )
-        .run(now, s.id);
+        .run(now, s.id, now);
       if (Number(claimed.changes) !== 1) continue;
       try {
         await this.execute(s);
         ran++;
       } finally {
-        let next: number | null = null;
-        try {
-          next = nextRun(parseCron(s.cron_expr), Date.now());
-        } catch {
-          next = null;
-        }
-        this.db
-          .prepare(
-            "UPDATE schedules SET is_processing = 0, last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
-          )
-          .run(Date.now(), next, Date.now(), s.id);
+        this.finalize(s.id);
       }
     }
     return ran;
   }
 
-  /** Run one schedule immediately (manual trigger), bypassing the clock. */
+  /** Run one schedule immediately (manual trigger): bypasses the clock, not the lock. */
   async runOnce(id: string): Promise<void> {
     const s = this.byId(id);
     if (!s) throw new BadRequestError("Schedule not found");
-    await this.execute(s);
+    const now = Date.now();
+    const claimed = this.db
+      .prepare(
+        "UPDATE schedules SET is_processing = 1, updated_at = ? WHERE id = ? AND is_processing = 0",
+      )
+      .run(now, id);
+    if (Number(claimed.changes) !== 1) {
+      throw new BadRequestError("Schedule is already running");
+    }
+    try {
+      await this.execute(s);
+    } finally {
+      // Manual runs don't advance the clock, but they must always release.
+      this.db
+        .prepare(
+          "UPDATE schedules SET is_processing = 0, last_run_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(Date.now(), Date.now(), id);
+    }
+  }
+
+  /**
+   * Release the lock and schedule the next run from the CURRENT row — never
+   * the stale copy we started with, so edits made mid-run survive.
+   */
+  private finalize(id: string): void {
+    const current = this.byId(id);
+    if (!current) return;
+    let next: number | null = null;
+    try {
+      next = nextRun(parseCron(current.cron_expr), Date.now());
+    } catch {
+      next = null;
+    }
     this.db
-      .prepare("UPDATE schedules SET last_run_at = ?, updated_at = ? WHERE id = ?")
-      .run(Date.now(), Date.now(), id);
+      .prepare(
+        "UPDATE schedules SET is_processing = 0, last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(Date.now(), next, Date.now(), id);
   }
 
   private async execute(s: ScheduleRow): Promise<void> {
@@ -223,11 +251,25 @@ export class Scheduler {
     if (!server || server.status === "suspended") return;
     if (s.only_when_online === 1 && this.engine.stateOf(s.server_id) === "offline") return;
     const tasks = this.tasksOf(s.id);
+    let failed = 0;
     for (const task of tasks) {
       try {
         await this.runTask(s.server_id, task);
-      } catch {
-        // Task failure stops this run's remaining tasks unless flagged to continue.
+      } catch (err) {
+        // Task failure stops this run's remaining tasks unless flagged to continue —
+        // and it is recorded, never silently swallowed.
+        failed++;
+        this.audit.record({
+          event: "schedule.run.failed",
+          actorIp: "system",
+          serverId: s.server_id,
+          target: {
+            scheduleId: s.id,
+            seq: task.seq,
+            action: task.action,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
         const cont = (task.payload.continueOnFailure as boolean | undefined) ?? false;
         if (!cont) break;
       }
@@ -236,7 +278,7 @@ export class Scheduler {
       event: "schedule.run",
       actorIp: "system",
       serverId: s.server_id,
-      target: { scheduleId: s.id },
+      target: { scheduleId: s.id, failedTasks: failed },
     });
   }
 
@@ -256,7 +298,7 @@ export class Scheduler {
         throw new Error("command task needs a command");
       this.engine.sendInput(serverId, command);
     } else {
-      this.backups.create(serverId, null, { locked: false });
+      await this.backups.create(serverId, null, { locked: false });
     }
   }
 

@@ -1,11 +1,15 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Database } from "../../infra/db/database.js";
 import type { BackupsService } from "../../modules/backups/service.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { createReadStream, statSync } from "node:fs";
 
@@ -43,6 +47,7 @@ export function backupsRouter(deps: BackupsDeps): Router {
     });
 
   router.get("/servers/:id/backups", guard("backup.read"), (req, res) => {
+    assertSuspendedReadable(req, res);
     const items = backups.list(req.params.id ?? "").map((b) => ({
       id: b.id,
       fileName: b.file_name,
@@ -56,17 +61,16 @@ export function backupsRouter(deps: BackupsDeps): Router {
   });
 
   router.post("/servers/:id/backups", guard("backup.create"), (req, res, next) => {
-    try {
+    (async () => {
+      assertNotSuspendedForMutation(req, res);
       const body = parseBody(createBackupSchema, req);
       const serverId = req.params.id ?? "";
-      const record = backups.create(serverId, req.principal!.userId, { locked: body.locked });
+      const record = await backups.create(serverId, req.principal!.userId, { locked: body.locked });
       auditIt(req, "backup.create", serverId, { backupId: record.id });
       res.status(201).json({
         backup: { id: record.id, bytes: record.bytes, consistency: record.consistency },
       });
-    } catch (e) {
-      next(e);
-    }
+    })().catch(next);
   });
 
   router.get(
@@ -74,6 +78,7 @@ export function backupsRouter(deps: BackupsDeps): Router {
     guard("backup.download"),
     (req, res, next) => {
       try {
+        assertSuspendedReadable(req, res);
         const record = backups.byId(req.params.backupId ?? "");
         if (!record || record.server_id !== (req.params.id ?? "")) {
           res.status(404).json({ error: { code: "not_found", message: "Not found" } });
@@ -95,24 +100,24 @@ export function backupsRouter(deps: BackupsDeps): Router {
     "/servers/:id/backups/:backupId/restore",
     guard("backup.restore"),
     (req, res, next) => {
-      try {
+      (async () => {
+        assertNotSuspendedForMutation(req, res);
         const serverId = req.params.id ?? "";
         const record = backups.byId(req.params.backupId ?? "");
         if (!record || record.server_id !== serverId) {
           res.status(404).json({ error: { code: "not_found", message: "Not found" } });
           return;
         }
-        backups.restore(record.id);
+        await backups.restore(record.id);
         auditIt(req, "backup.restore", serverId, { backupId: record.id });
         res.json({ restored: true });
-      } catch (e) {
-        next(e);
-      }
+      })().catch(next);
     },
   );
 
   router.delete("/servers/:id/backups/:backupId", guard("backup.delete"), (req, res, next) => {
     try {
+      assertNotSuspendedForMutation(req, res);
       const serverId = req.params.id ?? "";
       const record = backups.byId(req.params.backupId ?? "");
       if (!record || record.server_id !== serverId) {

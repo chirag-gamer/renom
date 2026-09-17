@@ -94,6 +94,40 @@ describe("api keys", () => {
     expect(start.status).toBe(403);
   });
 
+  it("a scoped key cannot mint a wider key (no privilege bootstrap)", async () => {
+    const res = await request(app)
+      .post("/api/v3/api-keys")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ scopes: ["file.read"] });
+    const narrow = res.body.token as string;
+
+    const mint = await request(app)
+      .post("/api/v3/api-keys")
+      .set("authorization", `Bearer ${narrow}`)
+      .send({ scopes: ["*"] });
+    expect(mint.status).toBe(403);
+
+    const same = await request(app)
+      .post("/api/v3/api-keys")
+      .set("authorization", `Bearer ${narrow}`)
+      .send({ scopes: ["file.read"] });
+    expect(same.status).toBe(201);
+  });
+
+  it("a scoped key cannot create servers at all", async () => {
+    const res = await request(app)
+      .post("/api/v3/api-keys")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ scopes: ["file.read", "backup.read"] });
+    const narrow = res.body.token as string;
+
+    const created = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${narrow}`)
+      .send({ name: "key-made", blueprintSlug: "paper" });
+    expect(created.status).toBe(403);
+  });
+
   it("revoked keys stop working immediately", async () => {
     const del = await request(app)
       .delete(`/api/v3/api-keys/${keyId}`)
@@ -110,7 +144,10 @@ describe("subusers", () => {
     const grant = await request(app)
       .post(`/api/v3/servers/${serverId}/users`)
       .set("authorization", `Bearer ${ownerToken}`)
-      .send({ username: "alice", permissions: ["websocket.connect", "control.console"] });
+      .send({
+        username: "alice",
+        permissions: ["websocket.connect", "control.console", "user.create"],
+      });
     expect(grant.status).toBe(201);
 
     const start = await request(app)
@@ -123,6 +160,16 @@ describe("subusers", () => {
       .get(`/api/v3/servers/${serverId}/console/history`)
       .set("authorization", `Bearer ${aliceToken}`);
     expect(history.status).toBe(200);
+  });
+
+  it("a collaborator cannot escalate anyone to wildcard", async () => {
+    // alice holds console + user.create: the guard passes, but "*" exceeds her ceiling.
+    ctx.users.create({ username: "charlie", password: "charlie-pass-1", role: "user" });
+    const grant = await request(app)
+      .post(`/api/v3/servers/${serverId}/users`)
+      .set("authorization", `Bearer ${aliceToken}`)
+      .send({ username: "charlie", permissions: ["*"] });
+    expect(grant.status).toBe(403);
   });
 
   it("rejects unknown permissions and duplicate grants", async () => {

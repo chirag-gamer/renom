@@ -5,7 +5,7 @@ import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
 import { parseBody } from "../../shared/validate.js";
-import { BadRequestError, NotFoundError } from "../../shared/errors.js";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
 import { permissions } from "@renom/contracts";
 
 const createKeySchema = z.object({
@@ -30,6 +30,15 @@ export function apiKeysRouter(keys: ApiKeysRepo, audit: AuditService, auth: Auth
       const unknown = body.scopes.filter((s) => !SCOPE_VOCABULARY.has(s));
       if (unknown.length > 0) {
         throw new BadRequestError(`Unknown scope: ${unknown[0]}`);
+      }
+      // A key can only mint within its own ceiling: requested scopes must be
+      // a subset of the caller's, or a scoped key could bootstrap itself to '*'.
+      const callerScopes = req.principal!.scopes;
+      if (callerScopes !== undefined && !callerScopes.includes("*")) {
+        const excess = body.scopes.filter((s) => !callerScopes.includes(s));
+        if (excess.length > 0) {
+          throw new ForbiddenError("Cannot grant scopes this key does not have");
+        }
       }
       const { row, token } = keys.create(req.principal!.userId, {
         memo: body.memo,

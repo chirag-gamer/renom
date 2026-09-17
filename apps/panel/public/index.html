@@ -46,6 +46,11 @@
             >Email <span class="hint">optional</span>
             <input name="email" type="email" autocomplete="email" placeholder="you@example.com" />
           </label>
+          <label id="setup-token-wrap" hidden
+            >Setup token
+            <span class="hint">the installer printed this — it proves you're the one installing</span>
+            <input name="setupToken" autocomplete="off" placeholder="Paste the setup token" />
+          </label>
           <p class="error" id="setup-error" role="alert" hidden></p>
           <button type="submit">Create admin account</button>
         </form>

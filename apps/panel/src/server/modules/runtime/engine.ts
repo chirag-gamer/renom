@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Database } from "../../infra/db/database.js";
 import type { ServersRepo } from "../servers/repo.js";
 import type { BlueprintRegistry } from "../blueprints/registry.js";
+import type { BlueprintVariable } from "../blueprints/schema.js";
 import { EngineError } from "../../shared/errors.js";
 
 export type PowerAction = "start" | "stop" | "restart" | "kill";
@@ -30,8 +31,8 @@ interface LiveProcess {
 /**
  * Local process engine (ADR-0004): runs the blueprint's argv template as a
  * child process in the server directory — no shell, no string interpolation
- * into a command line. `{{VAR}}` substitution happens per-argument against
- * validated server variables only.
+ * into a command line. `{VAR}` substitution happens per-argument against
+ * blueprint defaults merged with stored server variables.
  *
  * Docker-backed blueprints refuse honestly until a Docker engine is configured.
  */
@@ -65,16 +66,17 @@ export class LocalProcessEngine {
       );
     }
 
-    const vars = this.variablesOf(
-      serverId,
-      (doc.variables ?? []).map((v) => v.key),
-    );
+    const vars = this.variablesOf(serverId, (doc.variables ?? []) as BlueprintVariable[]);
     const argv = (doc.run?.command ?? []).map((arg) => substitute(arg, vars));
     const [cmd, ...args] = argv;
     if (!cmd) throw new EngineError("Blueprint has an empty start command");
 
+    // Blueprint workdir maps INSIDE the server directory (default: its root).
+    // Anything escaping it is refused rather than launched elsewhere.
     const dir = join(this.dataDir, "servers", serverId);
     mkdirSync(dir, { recursive: true });
+    const cwd = confineWorkdir(dir, doc.run?.workdir ?? "/data");
+    mkdirSync(cwd, { recursive: true });
 
     this.servers.setRuntimeState(serverId, "starting");
     // Reuse a lazy slot (history + listeners survive restarts) or create one.
@@ -102,7 +104,7 @@ export class LocalProcessEngine {
     let proc: ChildProcess;
     try {
       proc = spawn(cmd, args, {
-        cwd: dir,
+        cwd,
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         windowsHide: true,
@@ -117,27 +119,57 @@ export class LocalProcessEngine {
     this.live.set(serverId, slot);
     emit("system", `process started (pid ${proc.pid ?? "?"})`);
 
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      for (const text of String(chunk).split(/\r?\n/)) {
-        if (text.length > 0) emit("stdout", text);
+    // Per-stream line buffers: chunks split mid-line must not become
+    // separate history entries. Remainders flush on process exit.
+    const buffers: Record<"stdout" | "stderr", string> = { stdout: "", stderr: "" };
+    const feed = (stream: "stdout" | "stderr", chunk: Buffer) => {
+      buffers[stream] += String(chunk);
+      const parts = buffers[stream].split(/\r?\n/);
+      buffers[stream] = parts.pop() ?? "";
+      for (const text of parts) {
+        if (text.length > 0) emit(stream, text);
       }
-    });
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      for (const text of String(chunk).split(/\r?\n/)) {
-        if (text.length > 0) emit("stderr", text);
-      }
-    });
+    };
+    const flush = (stream: "stdout" | "stderr") => {
+      if (buffers[stream].length > 0) emit(stream, buffers[stream]);
+      buffers[stream] = "";
+    };
+
+    proc.stdout?.on("data", (chunk: Buffer) => feed("stdout", chunk));
+    proc.stderr?.on("data", (chunk: Buffer) => feed("stderr", chunk));
+    let startupFailed: Error | null = null;
     proc.on("error", (err) => {
       emit("system", `process error: ${err.message}`);
+      startupFailed = err;
       this.finish(serverId, "offline");
     });
     proc.on("exit", (code, signal) => {
+      flush("stdout");
+      flush("stderr");
+      if (!slot.stopping) {
+        // Exited on its own (not via stop/kill): record fast failures so a
+        // missing executable doesn't read as a healthy start.
+        startupFailed = new Error(
+          signal ? `process killed (${signal})` : `process exited (code ${code ?? "?"})`,
+        );
+      }
       emit(
         "system",
         signal ? `process killed (${signal})` : `process exited (code ${code ?? "?"})`,
       );
       this.finish(serverId, "offline");
     });
+
+    // Startup grace: a missing executable (or instant crash) surfaces as an
+    // async error/exit. Wait briefly so start() reports failure honestly
+    // instead of claiming "running" for a dead process.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const failure = startupFailed as Error | null;
+    if (failure || this.stateOf(serverId) === "offline") {
+      const reason = failure?.message ?? "process exited during startup";
+      // Keep the history (post-mortem reads) but report the failure.
+      throw new EngineError(`Server failed to start: ${reason}`);
+    }
     this.servers.setRuntimeState(serverId, "running");
   }
 
@@ -182,6 +214,22 @@ export class LocalProcessEngine {
     await this.start(serverId);
   }
 
+  /**
+   * Panel shutdown: terminate every tracked child so a restart never leaves
+   * orphaned processes holding ports while the DB says offline. Best-effort
+   * and bounded — shutdown must not hang forever on a stuck child.
+   */
+  async shutdown(): Promise<void> {
+    const ids = [...this.live.keys()];
+    for (const id of ids) {
+      try {
+        await this.kill(id);
+      } catch {
+        // keep sweeping the rest
+      }
+    }
+  }
+
   /** Write a line to the process stdin. Returns false when nothing is running. */
   sendInput(serverId: string, line: string): boolean {
     const live = this.live.get(serverId);
@@ -211,8 +259,15 @@ export class LocalProcessEngine {
     };
   }
 
-  private variablesOf(serverId: string, keys: string[]): Record<string, string> {
+  /**
+   * Blueprint defaults first, stored overrides win. A fresh server with no
+   * `server_variables` rows still launches with sane values instead of
+   * leaking `{placeholders}` into the child argv.
+   */
+  private variablesOf(serverId: string, declared: BlueprintVariable[]): Record<string, string> {
     const out: Record<string, string> = {};
+    for (const v of declared) out[v.key] = String(v.default);
+    const keys = declared.map((v) => v.key);
     if (keys.length === 0) return out;
     const rows = this.db
       .prepare(
@@ -273,4 +328,18 @@ export function substitute(template: string, vars: Record<string, string>): stri
     const value = vars[key];
     return value === undefined ? match : value;
   });
+}
+
+/**
+ * Resolve a blueprint workdir inside the server directory. Absolute paths
+ * (`/data`, `/`) anchor at the server root; anything escaping it is refused.
+ */
+export function confineWorkdir(serverDir: string, workdir: string): string {
+  const trimmed = workdir.trim() === "" ? "/data" : workdir.trim();
+  const relative = trimmed.replace(/^[/\\]+/, "");
+  const resolved = resolve(serverDir, relative);
+  if (resolved !== serverDir && !resolved.startsWith(serverDir + sep)) {
+    throw new EngineError(`Blueprint workdir escapes the server directory: ${workdir}`);
+  }
+  return resolved;
 }

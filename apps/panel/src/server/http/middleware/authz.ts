@@ -97,3 +97,19 @@ export function assertNotSuspendedForMutation(req: Request, res: Response): void
     throw new ForbiddenError("Server is suspended");
   }
 }
+
+/**
+ * FR-023 reads on suspended servers: the panel owner, admins, and the
+ * server's own owner may look; collaborators see a plain 404 (they are
+ * effectively detached until unsuspension).
+ */
+export function assertSuspendedReadable(req: Request, res: Response): void {
+  const server = res.locals.server as LoadedServer | undefined;
+  const p = req.principal;
+  if (!server || !p) throw new ForbiddenError();
+  if (server.status !== "suspended") return;
+  const privileged = p.role === "owner" || p.role === "admin";
+  if (!privileged && server.owner_id !== p.userId) {
+    throw new NotFoundError("Not found");
+  }
+}

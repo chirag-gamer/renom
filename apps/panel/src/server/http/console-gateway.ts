@@ -4,6 +4,7 @@ import type { Database } from "../infra/db/database.js";
 import type { AuthService, Principal } from "../modules/auth/service.js";
 import type { LocalProcessEngine } from "../modules/runtime/engine.js";
 import { resolveEffectivePermissions } from "../modules/servers/permissions.js";
+import { intersectScopes } from "./middleware/authz.js";
 import { hasPermission } from "@renom/contracts";
 
 export interface ConsoleGatewayDeps {
@@ -57,11 +58,14 @@ export function attachConsoleGateway(
         return;
       }
       const p = socket.data.principal as Principal;
-      const effective = resolveEffectivePermissions(db, {
-        userId: p.userId,
-        role: p.role,
-        serverId,
-      });
+      const effective = intersectScopes(
+        resolveEffectivePermissions(db, {
+          userId: p.userId,
+          role: p.role,
+          serverId,
+        }),
+        p.scopes,
+      );
       const row = db
         .prepare("SELECT owner_id, status FROM servers WHERE id = ? AND deleted_at IS NULL")
         .get(serverId) as { owner_id: string; status: string } | undefined;
@@ -102,11 +106,14 @@ export function attachConsoleGateway(
       times.push(now);
 
       const p = socket.data.principal as Principal;
-      const effective = resolveEffectivePermissions(db, {
-        userId: p.userId,
-        role: p.role,
-        serverId,
-      });
+      const effective = intersectScopes(
+        resolveEffectivePermissions(db, {
+          userId: p.userId,
+          role: p.role,
+          serverId,
+        }),
+        p.scopes,
+      );
       if (!hasPermission(effective, "control.console")) {
         ack?.({ accepted: false });
         return;

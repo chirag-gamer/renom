@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server/index.js",
     "setup:admin": "tsx src/server/cli/create-owner.ts",
+    "pretest": "npm --prefix ../../packages/contracts run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },

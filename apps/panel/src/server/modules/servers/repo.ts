@@ -66,6 +66,17 @@ export class ServersRepo {
     return Number(row.n);
   }
 
+  /** Live quota usage for an owner (excludes deleted servers). */
+  resourceUsage(userId: string): { servers: number; memoryMb: number; diskMb: number } {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(memory_mb), 0) AS ram, COALESCE(SUM(disk_quota_mb), 0) AS disk
+         FROM servers WHERE owner_id = ? AND deleted_at IS NULL`,
+      )
+      .get(userId) as { n: number; ram: number; disk: number };
+    return { servers: Number(row.n), memoryMb: Number(row.ram), diskMb: Number(row.disk) };
+  }
+
   create(input: {
     name: string;
     description: string;

@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { loadEnv, generateEphemeralSecret, ConfigError } from "./config/env.js";
+import { loadEnv, loadEnvFile, generateEphemeralSecret, ConfigError } from "./config/env.js";
 import { createLogger } from "./shared/logger.js";
 import { createApp } from "./http/app.js";
 import { openAndMigrate, type Database } from "./infra/db/index.js";
@@ -54,6 +54,8 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   server: Server;
   app: Express;
 } {
+  // The installer's .env takes effect without wrappers: file fills gaps, real env wins.
+  if (sourceEnv === process.env) loadEnvFile();
   let env;
   try {
     env = loadEnv(sourceEnv);
@@ -117,11 +119,11 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   }
 
   const apiRouters = [
-    setupRouter(users, audit),
+    setupRouter(users, audit, { setupToken: env.SETUP_TOKEN }),
     authRouter(auth, users),
     usersRouter(users, audit, auth),
     apiKeysRouter(apiKeys, audit, auth),
-    serversRouter({ db, users, servers, blueprints, audit, auth, dataDir }),
+    serversRouter({ db, users, servers, engine, blueprints, audit, auth, dataDir }),
     powerRouter({ db, servers, engine, audit, auth }),
     subusersRouter({ db, users, audit, auth }),
     allocationsRouter({ db, audit, auth }),
@@ -186,8 +188,14 @@ function main(): void {
 
   const shutdown = (signal: string) => {
     process.stdout.write(`shutting_down signal=${signal}\n`);
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(1), 10_000).unref();
+    // Stop game processes first so nothing is orphaned holding ports.
+    void ctx.engine
+      .shutdown()
+      .catch(() => undefined)
+      .finally(() => {
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(1), 10_000).unref();
+      });
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));

@@ -78,6 +78,31 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(res.status).toBe(409);
   });
 
+  it("RAM and disk quotas count what you already run (409)", async () => {
+    ctx.users.create({
+      username: "dave",
+      password: "dave-password-1",
+      role: "user",
+      quotas: { quota_max_servers: 5, quota_ram_mb: 1024, quota_disk_mb: 40_960 },
+    });
+    const login = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "dave", password: "dave-password-1" });
+    const dave = login.body.token as string;
+
+    const tooBig = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${dave}`)
+      .send({ name: "big", blueprintSlug: "paper", memoryMb: 2048 });
+    expect(tooBig.status).toBe(409);
+
+    const fits = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${dave}`)
+      .send({ name: "small", blueprintSlug: "paper", memoryMb: 512 });
+    expect(fits.status).toBe(201);
+  });
+
   it("alice cannot assign servers to other people (403)", async () => {
     const res = await request(app)
       .post("/api/v3/servers")

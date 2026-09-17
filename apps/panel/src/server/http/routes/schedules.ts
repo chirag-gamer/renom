@@ -1,11 +1,11 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Database } from "../../infra/db/database.js";
 import type { Scheduler, ScheduleTask } from "../../modules/schedules/runner.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { NotFoundError } from "../../shared/errors.js";
 
@@ -81,6 +81,7 @@ export function schedulesRouter(deps: SchedulesDeps): Router {
 
   router.post("/servers/:id/schedules", guard("schedule.create"), (req, res, next) => {
     try {
+      assertNotSuspendedForMutation(req, res);
       const body = parseBody(createScheduleSchema, req);
       const serverId = req.params.id ?? "";
       const created = scheduler.createSchedule(serverId, {
@@ -98,9 +99,13 @@ export function schedulesRouter(deps: SchedulesDeps): Router {
 
   router.patch("/servers/:id/schedules/:scheduleId", guard("schedule.update"), (req, res, next) => {
     try {
+      assertNotSuspendedForMutation(req, res);
       const body = parseBody(patchScheduleSchema, req);
       const serverId = req.params.id ?? "";
-      const updated = scheduler.updateSchedule(req.params.scheduleId ?? "", {
+      // Ownership first: never touch a schedule through the wrong server URL.
+      const current = scheduler.byId(req.params.scheduleId ?? "");
+      if (!current || current.server_id !== serverId) throw new NotFoundError("Schedule not found");
+      const updated = scheduler.updateSchedule(current.id, {
         name: body.name,
         cronExpr: body.cronExpr,
         isActive: body.isActive,
@@ -120,6 +125,7 @@ export function schedulesRouter(deps: SchedulesDeps): Router {
     guard("schedule.delete"),
     (req, res, next) => {
       try {
+        assertNotSuspendedForMutation(req, res);
         const serverId = req.params.id ?? "";
         const current = scheduler.byId(req.params.scheduleId ?? "");
         if (!current || current.server_id !== serverId)
@@ -138,6 +144,7 @@ export function schedulesRouter(deps: SchedulesDeps): Router {
     guard("schedule.update"),
     (req, res, next) => {
       (async () => {
+        assertNotSuspendedForMutation(req, res);
         const serverId = req.params.id ?? "";
         const current = scheduler.byId(req.params.scheduleId ?? "");
         if (!current || current.server_id !== serverId)
