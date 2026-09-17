@@ -63,7 +63,7 @@ describe("servers CRUD + ownership + quotas", () => {
     const res = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${aliceToken}`)
-      .send({ name: "survival", blueprintSlug: "paper" });
+      .send({ name: "survival", blueprintSlug: "paper", eulaAccepted: true });
     expect(res.status).toBe(201);
     expect(res.body.server.status).toBe("ready");
     expect(res.body.server.primaryAllocation.port).toBeGreaterThanOrEqual(25565);
@@ -74,7 +74,7 @@ describe("servers CRUD + ownership + quotas", () => {
     const res = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${aliceToken}`)
-      .send({ name: "second", blueprintSlug: "paper" });
+      .send({ name: "second", blueprintSlug: "paper", eulaAccepted: true });
     expect(res.status).toBe(409);
   });
 
@@ -93,13 +93,13 @@ describe("servers CRUD + ownership + quotas", () => {
     const tooBig = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${dave}`)
-      .send({ name: "big", blueprintSlug: "paper", memoryMb: 2048 });
+      .send({ name: "big", blueprintSlug: "paper", memoryMb: 2048, eulaAccepted: true });
     expect(tooBig.status).toBe(409);
 
     const fits = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${dave}`)
-      .send({ name: "small", blueprintSlug: "paper", memoryMb: 512 });
+      .send({ name: "small", blueprintSlug: "paper", memoryMb: 512, eulaAccepted: true });
     expect(fits.status).toBe(201);
   });
 
@@ -107,7 +107,7 @@ describe("servers CRUD + ownership + quotas", () => {
     const res = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${aliceToken}`)
-      .send({ name: "sneaky", blueprintSlug: "paper", ownerUsername: "root" });
+      .send({ name: "sneaky", blueprintSlug: "paper", ownerUsername: "root", eulaAccepted: true });
     expect(res.status).toBe(403);
   });
 

@@ -177,6 +177,13 @@ export class ServersRepo {
       .run(status, Date.now(), id);
   }
 
+  /** Record an explicit human EULA acceptance (never implied, always audited at the route). */
+  recordEula(id: string, ip: string | null): void {
+    this.db
+      .prepare("UPDATE servers SET eula_accepted_at = ?, eula_ip = ?, updated_at = ? WHERE id = ?")
+      .run(Date.now(), ip, Date.now(), id);
+  }
+
   setRuntimeState(id: string, state: string | null): void {
     this.db
       .prepare("UPDATE servers SET runtime_state = ?, updated_at = ? WHERE id = ?")

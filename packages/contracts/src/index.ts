@@ -113,6 +113,8 @@ export const createServerSchema = z.object({
   diskQuotaMb: z.number().int().min(256).max(10_485_760).default(5120),
   /** Owner username; admins/owner only. Defaults to the caller. */
   ownerUsername: z.string().min(1).max(32).optional(),
+  /** Required when the blueprint ships the `eula` feature (Mojang EULA). */
+  eulaAccepted: z.boolean().optional(),
 });
 export type CreateServer = z.infer<typeof createServerSchema>;
 

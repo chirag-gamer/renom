@@ -67,6 +67,8 @@ export class LocalProcessEngine {
     }
 
     const vars = this.variablesOf(serverId, (doc.variables ?? []) as BlueprintVariable[]);
+    // Panel-namespaced keys (tunnel.*) ride outside blueprint variables.
+    for (const [k, v] of this.namespacedVariables(serverId)) vars[k] = v;
     const argv = (doc.run?.command ?? []).map((arg) => substitute(arg, vars));
     const [cmd, ...args] = argv;
     if (!cmd) throw new EngineError("Blueprint has an empty start command");
@@ -102,9 +104,15 @@ export class LocalProcessEngine {
     };
 
     let proc: ChildProcess;
+    // Tunnel opt-in: the Minekube endpoint travels by environment (documented
+    // precedence over the plugin's config file), never baked into argv.
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    const tunnelEndpoint = vars["tunnel.endpoint"];
+    if (tunnelEndpoint) childEnv.CONNECT_ENDPOINT = tunnelEndpoint;
     try {
       proc = spawn(cmd, args, {
         cwd,
+        env: childEnv,
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         windowsHide: true,
@@ -278,6 +286,16 @@ export class LocalProcessEngine {
     return out;
   }
 
+  /** Panel-namespaced overrides (currently `tunnel.*`) kept out of blueprint argv. */
+  private namespacedVariables(serverId: string): Array<[string, string]> {
+    const rows = this.db
+      .prepare(
+        "SELECT key, value FROM server_variables WHERE server_id = ? AND key LIKE 'tunnel.%'",
+      )
+      .all(serverId) as Array<{ key: string; value: string }>;
+    return rows.map((r) => [r.key, r.value]);
+  }
+
   private tryDoc(slug: string, tag: string) {
     try {
       return this.blueprints.getDoc(slug, tag);
@@ -333,11 +351,25 @@ export function substitute(template: string, vars: Record<string, string>): stri
 /**
  * Resolve a blueprint workdir inside the server directory. Absolute paths
  * (`/data`, `/`) anchor at the server root; anything escaping it is refused.
+ *
+ * The process engine treats `/data` as the server root itself (in Docker it
+ * is the mounted volume; locally there is no extra level). Deeper paths like
+ * `/data/app` map to `<serverDir>/app`.
  */
 export function confineWorkdir(serverDir: string, workdir: string): string {
-  const trimmed = workdir.trim() === "" ? "/data" : workdir.trim();
-  const relative = trimmed.replace(/^[/\\]+/, "");
-  const resolved = resolve(serverDir, relative);
+  const trimmed = workdir.trim();
+  if (
+    trimmed === "" ||
+    trimmed === "/" ||
+    trimmed === "." ||
+    trimmed === "./" ||
+    trimmed === "/data" ||
+    trimmed === "data"
+  ) {
+    return serverDir;
+  }
+  const noRoot = trimmed.replace(/^[/\\]+/, "").replace(/^data[/\\]+/, "");
+  const resolved = resolve(serverDir, noRoot === "" ? "." : noRoot);
   if (resolved !== serverDir && !resolved.startsWith(serverDir + sep)) {
     throw new EngineError(`Blueprint workdir escapes the server directory: ${workdir}`);
   }

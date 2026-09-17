@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { z } from "zod";
 import type { UsersRepo } from "../../modules/users/repo.js";
 import type { ServersRepo } from "../../modules/servers/repo.js";
 import { toPublicServer } from "../../modules/servers/repo.js";
@@ -8,9 +9,15 @@ import type { AuthService } from "../../modules/auth/service.js";
 import type { Database } from "../../infra/db/database.js";
 import type { LocalProcessEngine } from "../../modules/runtime/engine.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
-import { requireServerPermission } from "../middleware/authz.js";
+import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
 import { parseBody, parseQuery } from "../../shared/validate.js";
-import { ConflictError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from "../../shared/errors.js";
+import { runInstallOps } from "../../modules/runtime/install.js";
 import { createServerSchema, patchServerSchema, pageQuerySchema } from "@renom/contracts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -92,6 +99,11 @@ export function serversRouter(deps: ServersDeps): Router {
       const bp = blueprints.lookup(body.blueprintSlug);
       const doc = blueprints.getDoc(body.blueprintSlug);
 
+      // Mojang's EULA must be accepted by a human, in the open — never implied.
+      if (doc.features?.includes("eula") && body.eulaAccepted !== true) {
+        throw new BadRequestError("This server needs the Minecraft EULA accepted first");
+      }
+
       const created = servers.create({
         name: body.name,
         description: body.description,
@@ -102,7 +114,12 @@ export function serversRouter(deps: ServersDeps): Router {
         memoryMb: body.memoryMb,
         diskQuotaMb: body.diskQuotaMb,
       });
-      mkdirSync(join(dataDir, "servers", created.id), { recursive: true });
+      const serverDir = join(dataDir, "servers", created.id);
+      mkdirSync(serverDir, { recursive: true });
+      if (doc.features?.includes("eula")) {
+        servers.recordEula(created.id, req.ip ?? null);
+      }
+      const alloc = servers.primaryAllocation(created.id);
       servers.setStatus(created.id, "ready");
       audit.record({
         event: "server.create",
@@ -112,6 +129,32 @@ export function serversRouter(deps: ServersDeps): Router {
         serverId: created.id,
         target: { blueprint: body.blueprintSlug },
       });
+
+      // Install runs in the background: creation stays fast while downloads
+      // land, and status tells the truth (installing → ready / install_failed).
+      // Skipped under test: runInstallOps has its own suite with stubbed fetch.
+      if (doc.install.length > 0 && process.env.NODE_ENV !== "test") {
+        const installVars: Record<string, string> = {};
+        for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
+        if (alloc) {
+          installVars["allocation.ip"] = alloc.ip;
+          installVars["allocation.port"] = String(alloc.port);
+        }
+        servers.setStatus(created.id, "installing");
+        void runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars })
+          .then(() => {
+            servers.setStatus(created.id, "ready");
+            audit.record({ event: "server.install.done", serverId: created.id });
+          })
+          .catch((err: unknown) => {
+            servers.setStatus(created.id, "install_failed");
+            audit.record({
+              event: "server.install.failed",
+              serverId: created.id,
+              target: { error: err instanceof Error ? err.message : String(err) },
+            });
+          });
+      }
       const fresh = servers.byId(created.id)!;
       res.status(201).json({ server: toPublicServer(fresh, servers.primaryAllocation(fresh.id)) });
     } catch (e) {
@@ -147,6 +190,109 @@ export function serversRouter(deps: ServersDeps): Router {
         serverId: updated.id,
       });
       res.json({ server: toPublicServer(updated, servers.primaryAllocation(updated.id)) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Re-run the blueprint install ops (download jars again, rewrite configs).
+  // Offline-only: installing under a live process would mix old and new files.
+  router.post("/servers/:id/install", guard("settings.reinstall"), (req, res, next) => {
+    (async () => {
+      const id = req.params.id ?? "";
+      const s = servers.byId(id);
+      if (!s) throw new NotFoundError("Not found");
+      if (engine.stateOf(id) !== "offline") {
+        throw new ConflictError("Stop the server before reinstalling it");
+      }
+      const doc = blueprints.getDoc(s.blueprint_slug, s.blueprint_version_tag);
+      const vars = storedVariables(deps.db, id, doc.variables ?? []);
+      const alloc = servers.primaryAllocation(id);
+      if (alloc) {
+        vars["allocation.ip"] = alloc.ip;
+        vars["allocation.port"] = String(alloc.port);
+      }
+      servers.setStatus(id, "installing");
+      audit.record({
+        event: "server.install.start",
+        actorUserId: req.principal!.userId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        serverId: id,
+      });
+      try {
+        await runInstallOps(doc, { serverId: id, dir: join(dataDir, "servers", id), vars });
+        servers.setStatus(id, "ready");
+        audit.record({ event: "server.install.done", serverId: id });
+      } catch (err) {
+        servers.setStatus(id, "install_failed");
+        audit.record({
+          event: "server.install.failed",
+          serverId: id,
+          target: { error: err instanceof Error ? err.message : String(err) },
+        });
+        throw err;
+      }
+      res.json({ status: "ready" });
+    })().catch(next);
+  });
+
+  // Startup variables: blueprint declares, panel stores overrides.
+  router.get("/servers/:id/variables", guard("startup.read"), (req, res, next) => {
+    try {
+      const s = servers.byId(req.params.id ?? "");
+      if (!s) throw new NotFoundError("Not found");
+      const doc = blueprints.getDoc(s.blueprint_slug, s.blueprint_version_tag);
+      const values = storedVariables(deps.db, s.id, doc.variables ?? []);
+      res.json({
+        variables: (doc.variables ?? []).map((v) => ({
+          key: v.key,
+          label: v.label,
+          type: v.type,
+          default: String(v.default),
+          value: values[v.key] ?? String(v.default),
+          editable: v.userEditable && !v.internal,
+          options: v.options ?? null,
+        })),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.put("/servers/:id/variables", guard("startup.update"), (req, res, next) => {
+    try {
+      assertNotSuspendedForMutation(req, res);
+      const schema = z.object({
+        values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+      });
+      const body = parseBody(schema, req);
+      const s = servers.byId(req.params.id ?? "");
+      if (!s) throw new NotFoundError("Not found");
+      const doc = blueprints.getDoc(s.blueprint_slug, s.blueprint_version_tag);
+      const defs = new Map((doc.variables ?? []).map((v) => [v.key, v]));
+      for (const [key, raw] of Object.entries(body.values)) {
+        const def = defs.get(key);
+        if (!def) throw new BadRequestError(`Unknown variable '${key}'`);
+        if (def.internal || !def.userEditable) {
+          throw new ForbiddenError(`Variable '${key}' is managed by the panel`);
+        }
+        const value = validateVariable(def, raw);
+        deps.db
+          .prepare(
+            `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+             ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+          )
+          .run(s.id, key, value);
+      }
+      audit.record({
+        event: "server.variables.update",
+        actorUserId: req.principal!.userId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        serverId: s.id,
+      });
+      res.json({ updated: true });
     } catch (e) {
       next(e);
     }
@@ -216,4 +362,63 @@ export function serversRouter(deps: ServersDeps): Router {
   );
 
   return router;
+}
+
+/** Stored overrides merged over blueprint defaults (allocation context added by callers). */
+export function storedVariables(
+  db: Database,
+  serverId: string,
+  declared: Array<{ key: string; default: string | number | boolean }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const v of declared) out[v.key] = String(v.default);
+  if (declared.length === 0) return out;
+  const rows = db
+    .prepare("SELECT key, value FROM server_variables WHERE server_id = ?")
+    .all(serverId) as Array<{ key: string; value: string }>;
+  for (const r of rows) {
+    if (r.key in out) out[r.key] = r.value;
+  }
+  return out;
+}
+
+/** Coerce + bound a variable value against its blueprint definition. */
+export function validateVariable(
+  def: {
+    key: string;
+    type: string;
+    options?: string[];
+    rules?: { min?: number; max?: number; maxLength?: number; pattern?: string };
+  },
+  raw: string | number | boolean,
+): string {
+  const str = String(raw);
+  if (str.length > 512) throw new BadRequestError(`Variable '${def.key}' is too long`);
+  if (def.type === "integer") {
+    const n = Number(str);
+    if (!Number.isInteger(n)) throw new BadRequestError(`Variable '${def.key}' must be an integer`);
+    if (def.rules?.min !== undefined && n < def.rules.min) {
+      throw new BadRequestError(`Variable '${def.key}' is below minimum ${def.rules.min}`);
+    }
+    if (def.rules?.max !== undefined && n > def.rules.max) {
+      throw new BadRequestError(`Variable '${def.key}' is above maximum ${def.rules.max}`);
+    }
+    return String(n);
+  }
+  if (def.type === "boolean") {
+    if (str !== "true" && str !== "false") {
+      throw new BadRequestError(`Variable '${def.key}' must be true or false`);
+    }
+    return str;
+  }
+  if (def.type === "enum" && def.options && !def.options.includes(str)) {
+    throw new BadRequestError(`Variable '${def.key}' must be one of: ${def.options.join(", ")}`);
+  }
+  if (def.rules?.maxLength !== undefined && str.length > def.rules.maxLength) {
+    throw new BadRequestError(`Variable '${def.key}' exceeds ${def.rules.maxLength} characters`);
+  }
+  if (def.rules?.pattern && !new RegExp(def.rules.pattern).test(str)) {
+    throw new BadRequestError(`Variable '${def.key}' has an invalid format`);
+  }
+  return str;
 }

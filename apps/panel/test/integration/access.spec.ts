@@ -39,7 +39,7 @@ beforeAll(async () => {
   const created = await request(app)
     .post("/api/v3/servers")
     .set("authorization", `Bearer ${ownerToken}`)
-    .send({ name: "shared", blueprintSlug: "paper" });
+    .send({ name: "shared", blueprintSlug: "paper", eulaAccepted: true });
   serverId = created.body.server.id as string;
 });
 
