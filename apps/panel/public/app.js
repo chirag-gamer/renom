@@ -210,7 +210,11 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   const { status, data } = await api("/servers", {
     method: "POST",
     token: store.token,
-    body: { name: fd.get("name"), blueprintSlug: fd.get("blueprint") },
+    body: {
+      name: fd.get("name"),
+      blueprintSlug: fd.get("blueprint"),
+      eulaAccepted: document.getElementById("eula-check").checked || undefined,
+    },
   });
   if (status === 201) {
     e.target.reset();
@@ -300,6 +304,10 @@ async function openServer(id) {
     refreshFiles(),
     refreshBackups(),
     refreshSchedules(),
+    refreshVariables(),
+    refreshNetwork(),
+    refreshSubusers(),
+    fillSettings(),
   ]);
   joinConsoleSocket();
 }
@@ -353,7 +361,16 @@ function setTab(name) {
   document
     .querySelectorAll(".tabs button")
     .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-  for (const t of ["console", "files", "backups", "schedules"]) {
+  for (const t of [
+    "console",
+    "files",
+    "backups",
+    "schedules",
+    "startup",
+    "network",
+    "users",
+    "settings",
+  ]) {
     document.getElementById(`tab-${t}`).hidden = t !== name;
   }
 }
@@ -654,5 +671,224 @@ function describeProblem(status, data) {
   if (status === 409) return detail || "That conflicts with something that already exists.";
   return detail || "Something went wrong on our side. Try again.";
 }
+
+/* ----- startup variables ----- */
+
+async function refreshVariables() {
+  const wrap = document.getElementById("variable-fields");
+  const err = document.getElementById("startup-error");
+  err.hidden = true;
+  wrap.innerHTML = "";
+  const { status, data } = await api(`/servers/${currentServer.id}/variables`, {
+    token: store.token,
+  });
+  if (status !== 200) {
+    fail(err, "You don't have permission to see startup settings.");
+    return;
+  }
+  for (const v of data.variables) {
+    const label = document.createElement("label");
+    label.textContent = v.label;
+    const input = document.createElement("input");
+    input.name = v.key;
+    input.value = v.value;
+    input.disabled = !v.editable;
+    if (!v.editable) {
+      const hint = document.createElement("span");
+      hint.className = "hint";
+      hint.textContent = "managed by the panel";
+      label.append(hint);
+    }
+    label.append(input);
+    wrap.append(label);
+  }
+}
+
+document.getElementById("form-variables").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("startup-error");
+  err.hidden = true;
+  const values = {};
+  for (const input of e.target.querySelectorAll("input[name]")) {
+    if (!input.disabled) values[input.name] = input.value;
+  }
+  const { status, data } = await api(`/servers/${currentServer.id}/variables`, {
+    method: "PUT",
+    token: store.token,
+    body: { values },
+  });
+  if (status !== 200) fail(err, describeProblem(status, data));
+  else refreshVariables();
+});
+
+/* ----- network: allocations + tunnel ----- */
+
+async function refreshNetwork() {
+  const list = document.getElementById("alloc-list");
+  const err = document.getElementById("network-error");
+  err.hidden = true;
+  list.innerHTML = "";
+  const { status, data } = await api(`/servers/${currentServer.id}/allocations`, {
+    token: store.token,
+  });
+  if (status !== 200) {
+    fail(err, "You don't have permission to see network settings.");
+    return;
+  }
+  for (const a of data.allocations) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${a.ip}:${a.port}`;
+    li.append(name);
+    list.append(li);
+  }
+  const t = await api(`/servers/${currentServer.id}/tunnel`, { token: store.token });
+  const info = document.getElementById("tunnel-info");
+  if (t.status === 200 && t.data.endpoint) {
+    info.textContent = t.data.address
+      ? `Players join at ${t.data.address} (Minekube tunnel “${t.data.endpoint}”).`
+      : `Tunnel “${t.data.endpoint}” is installed — start the server and the public address appears here.`;
+  } else {
+    info.textContent = "No tunnel. Players join you by your IP and port.";
+  }
+}
+
+document.getElementById("form-tunnel").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("network-error");
+  err.hidden = true;
+  const endpoint = new FormData(e.target).get("endpoint");
+  const { status, data } = await api(`/servers/${currentServer.id}/tunnel`, {
+    method: "POST",
+    token: store.token,
+    body: { endpoint },
+  });
+  if (status !== 201) fail(err, describeProblem(status, data));
+  else {
+    e.target.reset();
+    refreshNetwork();
+  }
+});
+
+/* ----- users: collaborators ----- */
+
+async function refreshSubusers() {
+  const list = document.getElementById("subuser-list");
+  const err = document.getElementById("subusers-error");
+  err.hidden = true;
+  list.innerHTML = "";
+  const { status, data } = await api(`/servers/${currentServer.id}/users`, { token: store.token });
+  if (status !== 200) {
+    fail(err, "You don't have permission to see collaborators.");
+    return;
+  }
+  if (data.users.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "Only you. Invite someone below to share access.";
+    list.append(li);
+  }
+  for (const u of data.users) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${u.username} — ${(u.permissions || []).join(", ") || "nothing"}`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "linklike danger-text";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", async () => {
+      const res = await api(`/servers/${currentServer.id}/users/${u.userId}`, {
+        method: "DELETE",
+        token: store.token,
+      });
+      if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
+      else refreshSubusers();
+    });
+    li.append(name, remove);
+    list.append(li);
+  }
+}
+
+document.getElementById("form-subuser").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("subusers-error");
+  err.hidden = true;
+  const fd = new FormData(e.target);
+  const permissions = String(fd.get("permissions") || "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const { status, data } = await api(`/servers/${currentServer.id}/users`, {
+    method: "POST",
+    token: store.token,
+    body: { username: fd.get("username"), permissions },
+  });
+  if (status !== 201) fail(err, describeProblem(status, data));
+  else {
+    e.target.reset();
+    refreshSubusers();
+  }
+});
+
+/* ----- settings ----- */
+
+function fillSettings() {
+  document.getElementById("settings-name").value = currentServer.name;
+  document.getElementById("settings-desc").value = currentServer.description || "";
+}
+
+document.getElementById("form-settings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("settings-error");
+  err.hidden = true;
+  const { status, data } = await api(`/servers/${currentServer.id}`, {
+    method: "PATCH",
+    token: store.token,
+    body: {
+      name: document.getElementById("settings-name").value,
+      description: document.getElementById("settings-desc").value,
+    },
+  });
+  if (status !== 200) fail(err, describeProblem(status, data));
+  else {
+    currentServer = data.server;
+    renderServerHeader();
+  }
+});
+
+document.getElementById("btn-reinstall").addEventListener("click", async () => {
+  const err = document.getElementById("settings-error");
+  err.hidden = true;
+  if (
+    !window.confirm(
+      "Reinstall? Server files are downloaded fresh. Your worlds stay, configs reset.",
+    )
+  )
+    return;
+  const { status, data } = await api(`/servers/${currentServer.id}/install`, {
+    method: "POST",
+    token: store.token,
+  });
+  if (status !== 200) fail(err, describeProblem(status, data));
+});
+
+document.getElementById("btn-delete-server").addEventListener("click", async () => {
+  const err = document.getElementById("settings-error");
+  err.hidden = true;
+  const typed = window.prompt(`Type the server name (“${currentServer.name}”) to delete it.`);
+  if (typed !== currentServer.name) return;
+  const { status, data } = await api(`/servers/${currentServer.id}`, {
+    method: "DELETE",
+    token: store.token,
+  });
+  if (status !== 204) fail(err, describeProblem(status, data));
+  else {
+    leaveServer();
+    loadHome();
+  }
+});
+
+document.getElementById("btn-open-props").addEventListener("click", () => {
+  openFile("server.properties");
+});
 
 boot();

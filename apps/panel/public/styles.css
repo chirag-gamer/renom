@@ -105,6 +105,19 @@ form select:focus {
   text-transform: none;
   letter-spacing: normal;
 }
+.check {
+  display: flex !important;
+  align-items: baseline;
+  gap: 8px;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  color: var(--text) !important;
+}
+.check input {
+  width: auto !important;
+}
 button {
   margin-top: 10px;
   padding: 10px 20px;

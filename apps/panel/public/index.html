@@ -48,7 +48,9 @@
           </label>
           <label id="setup-token-wrap" hidden
             >Setup token
-            <span class="hint">the installer printed this — it proves you're the one installing</span>
+            <span class="hint"
+              >the installer printed this — it proves you're the one installing</span
+            >
             <input name="setupToken" autocomplete="off" placeholder="Paste the setup token" />
           </label>
           <p class="error" id="setup-error" role="alert" hidden></p>
@@ -102,6 +104,10 @@
             <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
             <button type="submit">Create</button>
           </form>
+          <label class="check"
+            ><input type="checkbox" id="eula-check" /> I accept the Minecraft EULA
+            <span class="hint">(minecraft.net/eula — tick this for Minecraft servers)</span></label
+          >
           <p class="error" id="server-error" role="alert" hidden></p>
         </div>
 
@@ -147,6 +153,10 @@
           <button type="button" data-tab="files">Files</button>
           <button type="button" data-tab="backups">Backups</button>
           <button type="button" data-tab="schedules">Schedules</button>
+          <button type="button" data-tab="startup">Startup</button>
+          <button type="button" data-tab="network">Network</button>
+          <button type="button" data-tab="users">Users</button>
+          <button type="button" data-tab="settings">Settings</button>
         </nav>
 
         <div id="tab-console">
@@ -165,6 +175,11 @@
 
         <div id="tab-files" hidden>
           <p class="note" id="files-path">/</p>
+          <p>
+            <button type="button" id="btn-open-props" class="secondary">
+              Open server.properties
+            </button>
+          </p>
           <ul id="file-list" class="file-list"></ul>
           <form id="form-file-read" class="inline-form">
             <input name="path" placeholder="File to open, e.g. server.properties" />
@@ -202,6 +217,70 @@
             <button type="submit">Add schedule</button>
           </form>
           <p class="error" id="schedules-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-startup" hidden>
+          <p>
+            These are the knobs your server's blueprint defines. Changes apply on the next start.
+          </p>
+          <form id="form-variables">
+            <div id="variable-fields"></div>
+            <p><button type="submit">Save startup settings</button></p>
+          </form>
+          <p class="error" id="startup-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-network" hidden>
+          <h3>Addresses</h3>
+          <ul id="alloc-list" class="user-list"></ul>
+          <h3>Public tunnel <span class="chip">optional</span></h3>
+          <p id="tunnel-info" class="note">No tunnel. Players join you by your IP and port.</p>
+          <form id="form-tunnel" class="inline-form">
+            <input name="endpoint" placeholder="Endpoint name, e.g. my-server-1" />
+            <button type="submit">Enable Minekube tunnel</button>
+          </form>
+          <p class="note">
+            Installs the Minekube Connect plugin and shows the public address here after boot.
+          </p>
+          <p class="error" id="network-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-users" hidden>
+          <p>People who can touch this server — and exactly what they're allowed to do.</p>
+          <ul id="subuser-list" class="user-list"></ul>
+          <form id="form-subuser" class="inline-form">
+            <input name="username" required placeholder="Username" />
+            <input
+              name="permissions"
+              required
+              placeholder="Permissions, e.g. control.console,file.read"
+            />
+            <button type="submit">Invite</button>
+          </form>
+          <p class="error" id="subusers-error" role="alert" hidden></p>
+        </div>
+
+        <div id="tab-settings" hidden>
+          <form id="form-settings">
+            <label
+              >Name
+              <input name="name" id="settings-name" required maxlength="64" />
+            </label>
+            <label
+              >Description
+              <input name="description" id="settings-desc" maxlength="500" />
+            </label>
+            <p><button type="submit">Save settings</button></p>
+          </form>
+          <p>
+            <button type="button" id="btn-reinstall" class="secondary">
+              Reinstall server files
+            </button>
+          </p>
+          <p>
+            <button type="button" id="btn-delete-server" class="danger">Delete this server</button>
+          </p>
+          <p class="error" id="settings-error" role="alert" hidden></p>
         </div>
       </section>
     </main>

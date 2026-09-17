@@ -1,43 +1,58 @@
 # Renom
 
 **Run your own game servers from a panel on your own machine.** Renom is a self-hosted
-game-server panel: install it, open it in a browser, create your admin account, and manage
-servers — no accounts elsewhere, no third-party logins, no services you don't control.
+game-server panel: install it, open it in a browser, create your admin account, spin up a
+Minecraft server, and manage it — no accounts elsewhere, no third-party logins, no services
+you don't control. No public IP? Enable the built-in Minekube tunnel and players join you
+by name instead.
 
 Renom grew out of [JTG Panel](https://github.com/JishnuTheGamer/Jtg). It keeps the idea —
 one machine, direct `IP:port` networking — and rebuilds the foundations: typed code
 throughout, SQLite instead of loose JSON files, passwords that fail closed, and permissions
 that default to "no" on every endpoint.
 
-> Status: early alpha on the `dev` branch. The panel installs, you can sign in, and admins
-> can manage accounts. Server lifecycle (start/stop/console/files) lands in the next slices —
-> follow `CHANGELOG.md`.
+> Status: alpha on the `dev` branch. Install, sign-in, servers, live console, files,
+> backups, schedules, tunnels, and admin management all work — follow `CHANGELOG.md`.
 
 ## Install it
 
-You need one thing: **Node.js 24 or newer**. Then:
+One command, three choices (install / update / delete):
 
 ```bash
-git clone https://github.com/chirag-gamer/renom.git
-cd renom
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/chirag-gamer/renom/dev/renom.sh | bash
 ```
 
-The installer asks three small questions — where the panel should listen, which port, where
-to keep its data — then asks you to create the admin account. When it finishes, it tells
-you the exact address to open. That first screen you see is a one-time setup: once the
-admin exists, it never appears again, and every further account is created from inside
-the panel by an admin.
+(Prefer to read first? It's short: [`renom.sh`](renom.sh). Or clone and run `./renom.sh`.)
 
-To start the panel afterwards:
+The installer works on a bare machine — it fetches missing basics and Node.js 24+ where
+your package manager allows — then asks for a port and your admin account. It listens on
+`127.0.0.1` unless you pick your network address, prints the exact URL to open (detecting
+your LAN IP when it can), and generates both the session secret and a one-time setup
+token. Re-running keeps your data, your secret, and your settings: existing `.env` values
+become the prompt defaults.
+
+To start the panel afterwards (your `.env` is picked up automatically):
 
 ```bash
 npm start --workspace @renom/panel
 ```
 
-To update later: `git pull`, re-run `./install.sh` (it keeps your data and your secret),
-restart. Back up the `panel.db` file inside your data directory and you can rebuild
-everything else from this folder.
+The installer creates the admin, so the first screen you see is the sign-in page. If admin
+creation was skipped or failed, the one-time setup screen appears instead — it asks for the
+setup token the installer printed.
+
+To update later: choose Update in `./renom.sh` (pulls, rebuilds, restarts). Back up the
+`panel.db` file inside your data directory and you can rebuild everything else from
+this folder.
+
+## Your first Minecraft server
+
+1. Sign in, create a server, pick **Paper**, tick the Minecraft EULA box.
+2. The panel downloads the jar, writes the configs, and marks it ready — watch it happen
+   on the Console tab after pressing Start.
+3. No public IP? On the Network tab, enable the Minekube tunnel with a name like
+   `my-server-1`. After boot, the public address (`my-server-1.play.minekube.net`)
+   appears there — share that instead of an IP.
 
 ## How sign-in works
 
@@ -49,7 +64,8 @@ your panel shouldn't depend on anyone else's login system to let you into your o
 ## What's inside
 
 ```text
-install.sh              # the installer above
+renom.sh                # console dashboard: install / update / delete
+install.sh              # the installer it calls
 apps/panel              # the panel: API server + the web pages it serves
 apps/panel/public       # those web pages (plain HTML/CSS/JS, no build step)
 packages/contracts      # shared request/response shapes used by server and client
@@ -69,13 +85,31 @@ Health endpoints: `GET /healthz` (is it alive), `GET /readyz` (is the database r
 
 - Production refuses to start without a long `JWT_SECRET` — the installer generates one.
   No default passwords, no default secrets, anywhere.
-- Every server-scoped endpoint checks permissions first and assumes "no".
+- Every server-scoped endpoint checks permissions first and assumes "no". Scoped API keys
+  can only narrow access, never widen it.
 - All file access goes through one path-confinement check, so a server can't read outside
   its own directory.
-- Every login, account change and suspension lands in an append-only audit log.
+- Login attempts, account creation and deletion, suspensions, server lifecycle, backups,
+  and schedule runs land in an append-only audit log.
 - See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 
 [Apache-2.0](LICENSE). Where Renom came from and what it learned from others:
 [NOTICE](NOTICE) and [docs/PROVENANCE.md](docs/PROVENANCE.md).
+
+## Thanks
+
+Renom stands on other people's work. Thank you to:
+
+- **[JTG Panel](https://github.com/JishnuTheGamer/Jtg)** — where this started: the
+  one-machine panel idea, the installer spirit, and lessons in what to rebuild.
+- **[Pterodactyl](https://pterodactyl.io)** (panel, wings, yolks) — the permission-string
+  vocabulary, allocations, egg/blueprint concepts, and the server-detail layout
+  (console, files, backups, schedules, startup, network, users, settings).
+- **[PufferPanel](https://www.pufferpanel.com)** — declarative template ideas.
+- **[LinuxGSM](https://linuxgsm.com)** — stop-signal ladder patterns.
+- **[Minekube Connect](https://connect.minekube.com)** — the free ingress tunnel that
+  lets servers without a public IP welcome players by name.
+- **[PaperMC](https://papermc.io)**, **[Purpur](https://purpurmc.org)**, and
+  **[Mojang](https://www.minecraft.net)** — the server software this panel boots.

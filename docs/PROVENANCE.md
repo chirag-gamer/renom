@@ -7,14 +7,14 @@ granted consent for derivative use: recorded by the project owner 2026-08-25 and
 
 ## Relationship to upstream
 
-| Aspect | Status |
-|---|---|
-| Stack continuity | Kept: TypeScript end-to-end, Node.js, Express, Socket.IO, React/Vite, Docker isolation |
-| Persistence | Replaced: JSON files -> SQLite (built-in `node:sqlite`) behind a repository interface |
-| Auth model | Replaced: fail-closed secrets, local username/password only (no third-party login), no runtime account creation |
-| Authorization | Replaced: deny-by-default permission strings enforced at every endpoint/room |
-| Filesystem | Replaced: single confinement utility for all operations |
-| Data continuity | `scripts/import-jtg` migrates existing JTG `.data` installs (users/servers/ports/backups) |
+| Aspect           | Status                                                                                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stack continuity | Kept: TypeScript end-to-end, Node.js, Express, Socket.IO, React/Vite, Docker isolation                                                               |
+| Persistence      | Replaced: JSON files -> SQLite (built-in `node:sqlite`) behind a repository interface                                                                |
+| Auth model       | Replaced: fail-closed secrets, local username/password only (no third-party login); first-run owner setup only, subsequent accounts require an admin |
+| Authorization    | Replaced: deny-by-default permission strings enforced at every endpoint/room                                                                         |
+| Filesystem       | Replaced: single confinement utility for all operations                                                                                              |
+| Data continuity  | `scripts/import-jtg` migrates existing JTG `.data` installs (users/servers/ports/backups)                                                            |
 
 Known upstream vulnerabilities (auth bypass via port check, unauthenticated Google identity trust,
 missing authorization on 20+ endpoints, arbitrary write/SSRF, defective path containment, shell
