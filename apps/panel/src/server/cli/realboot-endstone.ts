@@ -45,7 +45,9 @@ const deadline = Date.now() + 240_000;
 let booted = false;
 while (Date.now() < deadline) {
   const lines = ctx.engine.history(created.id, 200);
-  const ready = lines.find((l) => /Server started|Done \(|Loading level|Starting server/i.test(l.text));
+  const ready = lines.find((l) =>
+    /Server started|Done \(|Loading level|Starting server/i.test(l.text),
+  );
   if (ready) {
     booted = true;
     console.log("BOOTED:", ready.text);
