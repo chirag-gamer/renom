@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { Database } from "../../infra/db/database.js";
@@ -145,6 +145,11 @@ export class LocalProcessEngine {
       for (const cb of slot.listeners) cb(line);
     };
 
+    // Bare hosts disagree on the Python name: prefer `python`, take `python3`.
+    if (cmd === "python") {
+      const probe = spawnSync("python", ["--version"], { stdio: "ignore", windowsHide: true });
+      if (probe.status !== 0) cmd = "python3";
+    }
     let proc: ChildProcess;
     // Tunnel opt-in: the Minekube endpoint travels by environment (documented
     // precedence over the plugin's config file), never baked into argv.

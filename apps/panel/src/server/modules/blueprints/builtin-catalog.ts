@@ -495,7 +495,7 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     image: "ghcr.io/renom/endstone:latest",
     install: [{ op: "fetch-endstone" }],
     run: {
-      command: ["endstone"],
+      command: ["python", "-m", "endstone", "-y"],
       workdir: "/data",
       stop: { kind: "console", command: "stop", timeoutSec: 30 },
       envCanon: {},

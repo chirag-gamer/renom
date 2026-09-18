@@ -403,10 +403,10 @@ function assetDigest(digest: string | undefined): string | undefined {
 }
 
 /**
- * Endstone (`pip install endstone`, then `endstone`): needs Python 3.10+ on
- * the host. Installed globally by explicit admin choice (the blueprint is
- * opt-in experimental); the run command uses the `endstone` entrypoint.
- * Version pins pass straight through to pip.
+ * Endstone (`pip install endstone`, then `python -m endstone`, verified
+ * against endstone 0.11.11: the module entrypoint starts the server and
+ * manages its own Bedrock binaries). Tries `python` then `python3`, since
+ * bare hosts disagree on the name. Needs Python 3.10+.
  */
 async function pipInstall(
   fetchImpl: typeof fetch,
@@ -418,16 +418,21 @@ async function pipInstall(
   void serverDir;
   const execFileAsync = promisify(execFileCb);
   const spec = version && version !== "" && version !== "latest" ? `${pkg}==${version}` : pkg;
-  try {
-    await execFileAsync("python", ["-m", "pip", "install", spec], {
-      timeout: 10 * 60_000,
-      windowsHide: true,
-    });
-  } catch (err) {
-    throw new EngineError(
-      `pip install ${spec} failed (needs Python 3.10+ on PATH): ${err instanceof Error ? err.message : String(err)}`,
-    );
+  let lastErr: unknown = new Error("no python found");
+  for (const python of ["python", "python3"]) {
+    try {
+      await execFileAsync(python, ["-m", "pip", "install", spec], {
+        timeout: 10 * 60_000,
+        windowsHide: true,
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
   }
+  throw new EngineError(
+    `pip install ${spec} failed (needs Python 3.10+ as python/python3): ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+  );
 }
 
 /**
