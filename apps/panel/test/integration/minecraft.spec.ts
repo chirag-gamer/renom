@@ -214,7 +214,11 @@ describe("minekube address scraping", () => {
       "https://api.github.com/repos/minekube/connect-java/releases/latest": {
         json: {
           assets: [
-            { name: "connect-spigot.jar", browser_download_url: "https://github.com/mk/connect-spigot.jar", digest: `sha256:${jarSha256}` },
+            {
+              name: "connect-spigot.jar",
+              browser_download_url: "https://github.com/mk/connect-spigot.jar",
+              digest: `sha256:${jarSha256}`,
+            },
           ],
         },
       },
