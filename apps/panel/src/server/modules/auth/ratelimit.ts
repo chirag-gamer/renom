@@ -24,7 +24,12 @@ export class RateLimiter {
     this.sweep(now);
     const existing = this.buckets.get(key);
     if (!existing || now >= existing.resetAt) {
-      if (this.buckets.size >= this.maxKeys) this.buckets.clear();
+      if (this.buckets.size >= this.maxKeys) {
+        // Evict the oldest bucket, never wipe the table: a flood of fresh
+        // keys must not reset the counters it is trying to dodge.
+        const oldest = this.buckets.keys().next();
+        if (!oldest.done) this.buckets.delete(oldest.value);
+      }
       this.buckets.set(key, { count: 1, resetAt: now + this.windowMs });
       return { limited: false, retryAfterSec: 0 };
     }

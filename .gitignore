@@ -33,3 +33,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Product code lives under src/ - a module literally named backups is code, not runtime data.
+!apps/panel/src/server/modules/backups/

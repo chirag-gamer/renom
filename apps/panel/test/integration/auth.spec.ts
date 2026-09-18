@@ -91,6 +91,30 @@ describe("auth + users + authorization", () => {
     expect(res.body.user.quotas.maxServers).toBeGreaterThan(0);
   });
 
+  it("admins manage users but cannot mint or touch other admins (owner-only)", async () => {
+    const mkAdmin = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "carol", password: "carol-password-1", role: "admin" });
+    expect(mkAdmin.status).toBe(201);
+    const carolLogin = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "carol", password: "carol-password-1" });
+    const carol = carolLogin.body.token as string;
+
+    const mkAdmin2 = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${carol}`)
+      .send({ username: "dave-admin", password: "dave-password-1", role: "admin" });
+    expect(mkAdmin2.status).toBe(403);
+
+    const mkUser = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${carol}`)
+      .send({ username: "erin", password: "erin-password-1", role: "user" });
+    expect(mkUser.status).toBe(201);
+  });
+
   it("non-admin cannot create users or list them (PERMISSIONS matrix)", async () => {
     const login = await request(app)
       .post("/api/v3/auth/login")
@@ -101,12 +125,12 @@ describe("auth + users + authorization", () => {
       .post("/api/v3/users")
       .set("authorization", `Bearer ${aliceToken}`)
       .send({ username: "mallory", password: "mallory-pass", role: "admin" });
-    expect(create.status).toBe(401);
+    expect(create.status).toBe(403);
 
     const list = await request(app)
       .get("/api/v3/users")
       .set("authorization", `Bearer ${aliceToken}`);
-    expect(list.status).toBe(401);
+    expect(list.status).toBe(403);
   });
 
   it("password change bumps version and invalidates old JWTs (FR-009/SEC-014)", async () => {
@@ -148,6 +172,48 @@ describe("auth + users + authorization", () => {
     expect(res.status).toBe(401);
 
     ctx.users.setSuspended(aliceId, false);
+  });
+
+  it("admin password resets rotate credentials immediately", async () => {
+    const mk = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "ivan", password: "ivan-password-1" });
+    expect(mk.status).toBe(201);
+    const ivanId = mk.body.user.id as string;
+
+    const reset = await request(app)
+      .patch(`/api/v3/users/${ivanId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ password: "rotated-password-9" });
+    expect(reset.status).toBe(200);
+
+    const oldLogin = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "ivan", password: "ivan-password-1" });
+    expect(oldLogin.status).toBe(401);
+
+    const fresh = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "ivan", password: "rotated-password-9" });
+    expect(fresh.status).toBe(200);
+
+    const events = ctx.audit.query({ limit: 100 }).map((e) => e.event);
+    expect(events).toContain("user.password.change");
+  });
+
+  it("the owner account cannot be suspended (no lockout without recovery)", async () => {
+    const rootId = ctx.users.byUsername("root")!.id;
+    const res = await request(app)
+      .patch(`/api/v3/users/${rootId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ suspended: true });
+    expect(res.status).toBe(409);
+
+    const stillIn = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "root", password: "root-password-1" });
+    expect(stillIn.status).toBe(200);
   });
 
   it("audit trail records login success/fail (SEC-012)", () => {

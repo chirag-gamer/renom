@@ -1,9 +1,37 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+/**
+ * Minimal .env loader (no dependency): KEY=VALUE lines, `#` comments,
+ * optional single/double quotes. Real environment always wins — the file
+ * only fills gaps. This is what makes the installer's generated `.env`
+ * actually take effect under plain `npm start` / `node dist/...`.
+ */
+export function loadEnvFile(dir: string = process.cwd()): void {
+  const file = resolve(dir, ".env");
+  if (!existsSync(file)) return;
+  for (const rawLine of readFileSync(file, "utf8").split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
 
 /**
  * Environment configuration — parsed once at boot, fail-closed in production.
- * Precedence (FR-157): env > .env > sqlite settings > defaults. Secrets NEVER live in DB.
+ * Precedence: env > .env > defaults. Secrets NEVER live in DB.
  *
  * SEC-001: no default production secret exists. When NODE_ENV=production the process refuses
  * to start unless JWT_SECRET is provided and >= 32 characters.
@@ -26,6 +54,10 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   DATA_DIR: z.string().min(1).default("./data"),
   BCRYPT_COST: z.coerce.number().int().min(10).max(15).default(12),
+  /** One-time bootstrap token for POST /setup/admin (empty = local-trust mode, dev only). */
+  SETUP_TOKEN: z.string().default(""),
+  /** Behind a TLS terminator (reverse proxy)? "1" trusts X-Forwarded-For for IPs. */
+  TRUST_PROXY: z.enum(["0", "1"]).default("0"),
 });
 
 export interface Env extends z.infer<typeof envSchema> {
@@ -52,6 +84,14 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       throw new ConfigError(
         "JWT_SECRET must be set to at least 32 characters in production. " +
           "Generate one with: node -e \"console.log(require('node:crypto').randomBytes(48).toString('base64url'))\"",
+      );
+    }
+    // Without a setup token the first owner is claimable by whoever knocks
+    // first. The installer always writes one; a hand-rolled .env must too.
+    if (!env.SETUP_TOKEN || env.SETUP_TOKEN.length < 16) {
+      throw new ConfigError(
+        "SETUP_TOKEN must be set to at least 16 characters in production. " +
+          "Generate one with: node -e \"console.log(require('node:crypto').randomBytes(24).toString('base64url'))\"",
       );
     }
   }

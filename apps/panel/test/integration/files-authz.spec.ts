@@ -29,9 +29,10 @@ beforeAll(() => {
   serverId = "srv-test-0001";
 
   const now = Date.now();
+  // buildPanel seeds the 'local' node on every boot; top up paths idempotently.
   ctx.db
     .prepare(
-      "INSERT INTO nodes (id,name,is_local,engine,data_root,backup_root,created_at) VALUES ('local','local',1,'docker',?, ?, ?)",
+      "INSERT INTO nodes (id,name,is_local,engine,data_root,backup_root,created_at) VALUES ('local','local',1,'docker',?, ?, ?) ON CONFLICT(id) DO UPDATE SET data_root=excluded.data_root, backup_root=excluded.backup_root",
     )
     .run(join(dir, "servers"), join(dir, "backups"), now);
   ctx.db
@@ -147,11 +148,13 @@ describe("files API authorization + confinement", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect([400, 404]).toContain(read.status); // mapped PathEscape/ENOENT, never contents
 
+    // A real NUL byte in the path (not the literal text "%00").
     const nul = await request(app)
       .get(`/api/v3/servers/${serverId}/files/content`)
-      .query({ path: "server.properties%00.png" })
+      .query({ path: "server.properties\0.png" })
       .set("authorization", `Bearer ${ownerToken}`);
     expect(nul.status).toBeLessThan(500);
+    expect([400, 404]).toContain(nul.status);
   });
 
   it("suspension blocks file mutations even for the owner (FR-023)", async () => {
@@ -168,5 +171,13 @@ describe("files API authorization + confinement", () => {
     expect(read.status).toBe(200); // reads still allowed for owner
 
     ctx.db.prepare("UPDATE servers SET status='ready' WHERE id=?").run(serverId);
+  });
+
+  it("refuses oversized writes at the ingress bound (SEC-010)", async () => {
+    const big = await request(app)
+      .put(`/api/v3/servers/${serverId}/files/content`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ path: "big.txt", content: "x".repeat(1_500_000) });
+    expect(big.status).toBe(413);
   });
 });

@@ -78,3 +78,10 @@ export class RateLimitError extends AppError {
     this.retryAfterSec = retryAfterSec;
   }
 }
+
+/** Engine refused a power action (already running, suspended, not configured). */
+export class EngineError extends AppError {
+  constructor(message = "Engine operation failed") {
+    super("engine_error", 409, message);
+  }
+}

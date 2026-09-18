@@ -109,7 +109,14 @@ describe("registry", () => {
       const slugs = reg.list().map((b) => b.slug);
       expect(slugs).toContain("vanilla");
       expect(slugs).toContain("paper");
+      expect(slugs).toContain("purpur");
+      expect(slugs).toContain("velocity");
       expect(slugs).toContain("bedrock-bds");
+      expect(slugs).toContain("pocketmine-mp");
+      expect(slugs).toContain("endstone");
+      const maturity = new Map(reg.list().map((b) => [b.slug, b.maturity]));
+      expect(maturity.get("paper")).toBe("stable");
+      expect(maturity.get("bedrock-bds")).toBe("experimental");
     } finally {
       db.close();
     }

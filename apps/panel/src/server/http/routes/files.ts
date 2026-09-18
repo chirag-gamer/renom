@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Database } from "../../infra/db/database.js";
-import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { requireAuth } from "../middleware/authn.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { parseQuery, parseBody } from "../../shared/validate.js";
@@ -48,6 +52,7 @@ export function filesRouter(
 
   router.get("/servers/:id/files", guard("file.read"), (req, res, next) => {
     try {
+      assertSuspendedReadable(req, res);
       const q = parseQuery(listQuery, req);
       const root = serverDataDir(env, req.params.id!);
       const entries = files.list(root, q.path);
@@ -59,12 +64,14 @@ export function filesRouter(
 
   router.get("/servers/:id/files/content", guard("file.read-content"), (req, res, next) => {
     try {
+      assertSuspendedReadable(req, res);
       const q = parseQuery(contentQuery, req);
       const root = serverDataDir(env, req.params.id!);
       const result = files.readText(root, q.path);
       audit.record({
         event: "file.read",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: q.path },
@@ -84,6 +91,7 @@ export function filesRouter(
       audit.record({
         event: "file.write",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: body.path, bytes: Buffer.byteLength(body.content) },
@@ -103,6 +111,7 @@ export function filesRouter(
       audit.record({
         event: "file.create",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: body.path, kind: "directory" },
@@ -122,6 +131,7 @@ export function filesRouter(
       audit.record({
         event: "file.rename",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { from: body.from, to: body.to },
@@ -141,6 +151,7 @@ export function filesRouter(
       audit.record({
         event: "file.delete",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: body.path },

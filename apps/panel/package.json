@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server/index.js",
     "setup:admin": "tsx src/server/cli/create-owner.ts",
+    "pretest": "npm --prefix ../../packages/contracts run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
@@ -31,6 +32,7 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^24.0.0",
     "@types/supertest": "^6.0.2",
+    "socket.io-client": "^4.8.3",
     "supertest": "^7.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",

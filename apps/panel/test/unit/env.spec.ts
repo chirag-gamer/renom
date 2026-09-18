@@ -29,8 +29,21 @@ describe("loadEnv", () => {
   });
 
   it("accepts a production secret of >=32 chars", () => {
-    const env = loadEnv({ NODE_ENV: "production", JWT_SECRET: "x".repeat(32) });
+    const env = loadEnv({
+      NODE_ENV: "production",
+      JWT_SECRET: "x".repeat(32),
+      SETUP_TOKEN: "y".repeat(16),
+    });
     expect(env.isProduction).toBe(true);
+  });
+
+  it("fails closed in production without a setup token", () => {
+    expect(() => loadEnv({ NODE_ENV: "production", JWT_SECRET: "x".repeat(32) })).toThrow(
+      /SETUP_TOKEN/,
+    );
+    expect(() =>
+      loadEnv({ NODE_ENV: "production", JWT_SECRET: "x".repeat(32), SETUP_TOKEN: "short" }),
+    ).toThrow(/at least 16/);
   });
 
   it("parses CORS origins from a comma-separated list", () => {

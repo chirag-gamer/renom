@@ -40,6 +40,32 @@ describe("first-run setup", () => {
     expect(res.status).toBe(400);
   });
 
+  it("concurrent setups mint exactly one owner (no TOCTOU twins)", async () => {
+    const dir3 = mkdtempSync(join(tmpdir(), "renom-setup-race-"));
+    const panel3 = buildPanel({
+      NODE_ENV: "test",
+      DATA_DIR: dir3,
+      LOG_LEVEL: "error",
+      BCRYPT_COST: 10,
+    } as NodeJS.ProcessEnv);
+    try {
+      const [a, b] = await Promise.all([
+        request(panel3.app)
+          .post("/api/v3/setup/admin")
+          .send({ username: "first", password: "a-long-password-1" }),
+        request(panel3.app)
+          .post("/api/v3/setup/admin")
+          .send({ username: "second", password: "a-long-password-2" }),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      expect(statuses).toEqual([201, 409]);
+      expect(panel3.ctx.users.countByRole("owner")).toBe(1);
+    } finally {
+      panel3.ctx.db.close();
+      rmSync(dir3, { recursive: true, force: true });
+    }
+  });
+
   it("creates the owner, then closes the setup door behind it", async () => {
     const created = await request(app)
       .post("/api/v3/setup/admin")
@@ -65,5 +91,72 @@ describe("first-run setup", () => {
     const res = await request(app).get("/");
     expect(res.status).toBe(200);
     expect(res.text).toContain("Renom");
+    expect(res.text).toContain("/socket.io/socket.io.js");
+  });
+
+  it("serves the socket.io client for the live console", async () => {
+    // Socket.IO owns its client bundle on the real HTTP server (supertest
+    // bypasses it), so bind ephemerally on an isolated database.
+    const dir2 = mkdtempSync(join(tmpdir(), "renom-setup-sock-"));
+    const panel2 = buildPanel({
+      NODE_ENV: "test",
+      DATA_DIR: dir2,
+      LOG_LEVEL: "error",
+      BCRYPT_COST: 10,
+    } as NodeJS.ProcessEnv);
+    await new Promise<void>((resolve) => panel2.server.listen(0, "127.0.0.1", () => resolve()));
+    const port = (panel2.server.address() as { port: number }).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/socket.io/socket.io.js`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("socket.io");
+    } finally {
+      panel2.server.close();
+      panel2.ctx.db.close();
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("setup token gate", () => {
+  let app2: ReturnType<typeof buildPanel>["app"];
+  let ctx2: ReturnType<typeof buildPanel>["ctx"];
+  let dir2: string;
+
+  beforeAll(() => {
+    dir2 = mkdtempSync(join(tmpdir(), "renom-setup-token-"));
+    const panel = buildPanel({
+      NODE_ENV: "test",
+      DATA_DIR: dir2,
+      LOG_LEVEL: "error",
+      BCRYPT_COST: 10,
+      SETUP_TOKEN: "one-time-secret",
+    } as NodeJS.ProcessEnv);
+    app2 = panel.app;
+    ctx2 = panel.ctx;
+  });
+
+  afterAll(() => {
+    ctx2.db.close();
+    rmSync(dir2, { recursive: true, force: true });
+  });
+
+  it("advertises that a token is required", async () => {
+    const res = await request(app2).get("/api/v3/setup/status");
+    expect(res.body.needsSetup).toBe(true);
+    expect(res.body.tokenRequired).toBe(true);
+  });
+
+  it("refuses owner claim without the token (403), accepts with it", async () => {
+    const denied = await request(app2)
+      .post("/api/v3/setup/admin")
+      .send({ username: "admin", password: "a-long-admin-password-1" });
+    expect(denied.status).toBe(403);
+
+    const created = await request(app2)
+      .post("/api/v3/setup/admin")
+      .set("x-setup-token", "one-time-secret")
+      .send({ username: "admin", password: "a-long-admin-password-1" });
+    expect(created.status).toBe(201);
   });
 });

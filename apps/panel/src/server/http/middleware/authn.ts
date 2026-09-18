@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import type { AuthService, Principal } from "../../modules/auth/service.js";
-import { UnauthorizedError } from "../../shared/errors.js";
+import { ForbiddenError, UnauthorizedError } from "../../shared/errors.js";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -35,8 +35,32 @@ export function requireAuth(auth: AuthService) {
 /** Requires an authenticated principal with an admin-capable role. */
 export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
   const p = req.principal;
-  if (!p || (p.role !== "admin" && p.role !== "owner")) {
+  if (!p) {
     next(new UnauthorizedError("Authentication required"));
+    return;
+  }
+  if (p.role !== "admin" && p.role !== "owner") {
+    next(new ForbiddenError("Admin role required"));
+    return;
+  }
+  // A scoped API key never inherits the owner's adminhood: global admin
+  // routes (users, key minting, blueprint import) need a full key or session.
+  if (p.scopes !== undefined && !p.scopes.includes("*")) {
+    next(new ForbiddenError("Admin role required"));
+    return;
+  }
+  next();
+}
+
+/** Requires the single owner account (managing admins is owner-only). */
+export function requireOwner(req: Request, _res: Response, next: NextFunction): void {
+  const p = req.principal;
+  if (!p) {
+    next(new UnauthorizedError("Authentication required"));
+    return;
+  }
+  if (p.role !== "owner" || (p.scopes !== undefined && !p.scopes.includes("*"))) {
+    next(new ForbiddenError("Owner role required"));
     return;
   }
   next();

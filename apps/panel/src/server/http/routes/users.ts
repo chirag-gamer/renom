@@ -3,15 +3,16 @@ import { z } from "zod";
 import type { UsersRepo, UserRow } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
+import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
-import { parseBody, parseQuery } from "../../shared/validate.js";
-import { NotFoundError, ConflictError } from "../../shared/errors.js";
+import { parseBody, parseQuery, passwordSchema } from "../../shared/validate.js";
+import { NotFoundError, ConflictError, ForbiddenError } from "../../shared/errors.js";
 import { pageQuerySchema } from "@renom/contracts";
 import { toPublicUser } from "../../modules/auth/service.js";
 
 const createUserSchema = z.object({
   username: z.string().regex(/^[a-zA-Z0-9_-]{3,32}$/, "3-32 chars: letters, digits, _ or -"),
-  password: z.string().min(8).max(128),
+  password: passwordSchema,
   email: z.string().email().optional(),
   role: z.enum(["admin", "user"]).default("user"),
   displayName: z.string().max(64).optional(),
@@ -19,6 +20,7 @@ const createUserSchema = z.object({
 
 const patchUserSchema = z.object({
   suspended: z.boolean().optional(),
+  password: passwordSchema.optional(),
   displayName: z.string().max(64).optional(),
   email: z.string().email().optional(),
   quotaMaxServers: z.number().int().min(0).max(1000).optional(),
@@ -26,7 +28,12 @@ const patchUserSchema = z.object({
   quotaDiskMb: z.number().int().min(0).max(10_485_760).optional(),
 });
 
-export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthService): Router {
+export function usersRouter(
+  users: UsersRepo,
+  audit: AuditService,
+  auth: AuthService,
+  gateway?: ConsoleGateway,
+): Router {
   const router = Router();
   // Per-route guards ONLY: a router-level .use() would intercept every later-mounted
   // /api/v3 path (Express routers fall through when no route matches, but a failed
@@ -49,6 +56,10 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
   router.post("/users", ...admin, (req, res, next) => {
     try {
       const body = parseBody(createUserSchema, req);
+      // Minting admins is owner-only: admins manage users, not each other.
+      if (body.role === "admin" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can create admins");
+      }
       if (users.byUsername(body.username)) {
         throw new ConflictError("Username already taken");
       }
@@ -62,6 +73,7 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
       audit.record({
         event: "user.create",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         target: { userId: user.id },
@@ -77,13 +89,44 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
       const body = parseBody(patchUserSchema, req);
+      // The owner account cannot be suspended: bricking the one account that
+      // can always unsuspend would lock the panel with no recovery path.
+      if (target.role === "owner" && body.suspended === true) {
+        throw new ConflictError("The owner account cannot be suspended");
+      }
+      // Touching admins (suspend, quotas, profile) is owner-only: admins
+      // manage users, not each other.
+      if (target.role !== "user" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can change admins");
+      }
+      // A password change is a credential rotation: it takes effect at once
+      // (old sessions die with the version bump, live sockets are cut too)
+      // and is always audited.
+      if (body.password !== undefined) {
+        users.setPassword(target.id, body.password);
+        users.bumpPasswordVersion(target.id);
+        gateway?.dropGrants(undefined, target.id);
+        audit.record({
+          event: "user.password.change",
+          actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          target: { userId: target.id },
+        });
+      }
       users.update(target.id, body);
       if (body.suspended !== undefined) {
         // FR-007/009: suspension invalidates sessions via passwordVersion bump
-        if (body.suspended) users.bumpPasswordVersion(target.id);
+        if (body.suspended) {
+          users.bumpPasswordVersion(target.id);
+          // Suspended users lose live console streams everywhere immediately.
+          gateway?.dropGrants(undefined, target.id);
+        }
         audit.record({
           event: body.suspended ? "user.suspend" : "user.resume",
           actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
           actorIp: req.ip,
           requestId: req.requestId,
           target: { userId: target.id },
@@ -103,6 +146,9 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
       if (target.role === "owner") {
         throw new ConflictError("The owner account cannot be deleted");
       }
+      if (target.role !== "user" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can delete admins");
+      }
       const owned = users.countOwnedServers(target.id);
       const transferTo = typeof req.query.transferTo === "string" ? req.query.transferTo : null;
       if (owned > 0 && !transferTo) {
@@ -117,9 +163,12 @@ export function usersRouter(users: UsersRepo, audit: AuditService, auth: AuthSer
       } catch (err) {
         throw new ConflictError(err instanceof Error ? err.message : "Delete failed");
       }
+      // Deleted users keep no live streams either.
+      gateway?.dropGrants(undefined, target.id);
       audit.record({
         event: "user.delete",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         target: { userId: target.id, transferredServers },

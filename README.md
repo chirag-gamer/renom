@@ -1,60 +1,85 @@
 # Renom
 
-**Run your own game servers from a panel on your own machine.** Renom is a self-hosted
-game-server panel: install it, open it in a browser, create your admin account, and manage
-servers — no accounts elsewhere, no third-party logins, no services you don't control.
+Run game servers from a panel on your own machine. No rented panel, no
+per-server fees, no account with someone else just to reach your own
+computer. You install Renom, open it in a browser, and it manages what is
+already yours.
 
-Renom grew out of [JTG Panel](https://github.com/JishnuTheGamer/Jtg). It keeps the idea —
-one machine, direct `IP:port` networking — and rebuilds the foundations: typed code
-throughout, SQLite instead of loose JSON files, passwords that fail closed, and permissions
-that default to "no" on every endpoint.
-
-> Status: early alpha on the `dev` branch. The panel installs, you can sign in, and admins
-> can manage accounts. Server lifecycle (start/stop/console/files) lands in the next slices —
-> follow `CHANGELOG.md`.
+Today that means Minecraft. Java servers (Paper, Vanilla, Purpur) install
+and boot with one click. Bedrock servers (official BDS, PocketMine-MP,
+Endstone) and plain Python or Node apps are marked Experimental while they
+earn the same trust. Players without a public IP join Java servers by name
+through the built-in tunnel; everyone else gets clear directions for
+Playit.gg or Cloudflare.
 
 ## Install it
 
-You need one thing: **Node.js 24 or newer**. Then:
+One command, three choices (install, update, delete):
 
 ```bash
-git clone https://github.com/chirag-gamer/renom.git
-cd renom
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/chirag-gamer/renom/dev/renom.sh | bash
 ```
 
-The installer asks three small questions — where the panel should listen, which port, where
-to keep its data — then asks you to create the admin account. When it finishes, it tells
-you the exact address to open. That first screen you see is a one-time setup: once the
-admin exists, it never appears again, and every further account is created from inside
-the panel by an admin.
+Read [`renom.sh`](renom.sh) first if you like. It is short on purpose. The
+installer works on a bare machine, asks for a port and an admin account,
+then prints the exact address to open. Re-running keeps your data and
+settings.
 
-To start the panel afterwards:
+Start the panel with:
 
 ```bash
 npm start --workspace @renom/panel
 ```
 
-To update later: `git pull`, re-run `./install.sh` (it keeps your data and your secret),
-restart. Back up the `panel.db` file inside your data directory and you can rebuild
-everything else from this folder.
+## Your first server
+
+Sign in, press Create, pick Paper, tick the Minecraft EULA box. The panel
+downloads the jar, writes the configs, and marks the server ready. Press
+Start and watch the console. That is the whole onboarding.
+
+Versions change on the Startup tab plus Reinstall on Settings. Mods and
+plugins come from the Addons tab (Modrinth, checksum-verified). Backups,
+schedules, files, and collaborators each have their own tab, and the admin
+home manages accounts.
+
+## Where this is going
+
+Renom starts with Minecraft because that is what we can boot and verify
+today. Next, in rough order:
+
+- [ ] Rust (oxide plugins, RCON console)
+- [ ] Palworld (dedicated server, settings editor)
+- [ ] ARK: Survival Ascended
+- [ ] Counter-Strike 2 (community servers, workshop maps)
+- [ ] Valheim (plus crossplay notes)
+- [ ] Terraria (TShock support)
+- [ ] Docker engine, so Fabric, Forge, and Velocity boot anywhere
+
+Each game lands the same way: a blueprint, a verified boot, a doc page, and
+an honest maturity label. Nothing ships as stable before it boots here.
+
+## Not yet built
+
+SFTP access, multi-machine nodes, and non-UTC schedule timezones. The README
+says when they land; until then they are absent, not half-working.
 
 ## How sign-in works
 
-Username and password, checked against your own database. Sessions expire, wrong passwords
-all look identical (so nobody can probe which accounts exist), and signing in too many
-times too fast gets a short cooldown. There is deliberately no "sign in with" button —
-your panel shouldn't depend on anyone else's login system to let you into your own servers.
+Username and password against your own database. Wrong passwords all look
+identical, so nobody can probe which accounts exist. Too many tries earns a
+short cooldown. There is no Sign in with button and never will be: your
+panel should not need someone else's login system to let you into your own
+servers.
 
-## What's inside
+## Security notes worth knowing
 
-```text
-install.sh              # the installer above
-apps/panel              # the panel: API server + the web pages it serves
-apps/panel/public       # those web pages (plain HTML/CSS/JS, no build step)
-packages/contracts      # shared request/response shapes used by server and client
-docs/                   # provenance, architecture, operations notes
-```
+Production refuses to start without a long secret, which the installer
+generates. Every endpoint assumes no until permissions say yes, and scoped
+API keys can only narrow access. All file access stays inside the server
+directory. Logins, account changes, lifecycle, backups, and schedule runs
+land in an append-only audit log. Report holes per [SECURITY.md](SECURITY.md).
+
+## For developers
 
 ```bash
 npm run build        # type-check + build
@@ -63,19 +88,29 @@ npm test             # tests (vitest)
 npm run dev          # live-reload server for development
 ```
 
-Health endpoints: `GET /healthz` (is it alive), `GET /readyz` (is the database reachable).
-
-## Security notes worth knowing
-
-- Production refuses to start without a long `JWT_SECRET` — the installer generates one.
-  No default passwords, no default secrets, anywhere.
-- Every server-scoped endpoint checks permissions first and assumes "no".
-- All file access goes through one path-confinement check, so a server can't read outside
-  its own directory.
-- Every login, account change and suspension lands in an append-only audit log.
-- See [SECURITY.md](SECURITY.md) to report a vulnerability.
+`GET /healthz` answers whether it lives, `GET /readyz` whether the database
+is reachable. Feature docs live in [`docs/features`](docs/features), each
+game server in [`docs/servers`](docs/servers), tunnels in
+[`docs/tunnels.md`](docs/tunnels.md).
 
 ## License
 
-[Apache-2.0](LICENSE). Where Renom came from and what it learned from others:
-[NOTICE](NOTICE) and [docs/PROVENANCE.md](docs/PROVENANCE.md).
+[Apache-2.0](LICENSE). Provenance and attribution: [NOTICE](NOTICE) and
+[docs/PROVENANCE.md](docs/PROVENANCE.md).
+
+## Thanks
+
+Renom stands on other people's work:
+
+- **JTG Panel** (https://github.com/JishnuTheGamer/Jtg): where this started,
+  with the author's permission for derivative use.
+- **Pterodactyl** (https://pterodactyl.io): permission vocabulary,
+  allocations, egg and blueprint concepts, and the server detail layout.
+- **PufferPanel** (https://www.pufferpanel.com): declarative template ideas.
+- **LinuxGSM** (https://linuxgsm.com): stop-signal patterns.
+- **Minekube Connect** (https://connect.minekube.com): the free tunnel for
+  servers without a public IP.
+- **PaperMC** (https://papermc.io), **Purpur** (https://purpurmc.org),
+  **PocketMine-MP** (https://pmmp.io), **Endstone** (https://endstone.dev),
+  and **Mojang** (https://www.minecraft.net): the server software this panel
+  boots.

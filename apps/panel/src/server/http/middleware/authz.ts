@@ -45,7 +45,11 @@ export function requireServerPermission(required: string | string[], db: Databas
       serverId: server.id,
     });
 
-    const hasAnyAccess = effective.length > 0 || server.owner_id === principal.userId;
+    // API-key scopes intersect the user's own permissions: a key can only
+    // narrow access, never widen it — including for server owners.
+    const scoped = intersectScopes(effective, principal.scopes);
+
+    const hasAnyAccess = scoped.length > 0;
     if (!hasAnyAccess) {
       // no relationship at all: hide existence on reads, refuse writes
       if (req.method === "GET" || req.method === "HEAD") {
@@ -56,16 +60,31 @@ export function requireServerPermission(required: string | string[], db: Databas
       return;
     }
 
-    const grantedAll = effective.includes("*");
-    if (!grantedAll && !requiredList.every((r) => effective.includes(r))) {
+    const grantedAll = scoped.includes("*");
+    if (!grantedAll && !requiredList.every((r) => scoped.includes(r))) {
       next(new ForbiddenError());
       return;
     }
 
     res.locals.server = server;
-    res.locals.effectivePermissions = effective;
+    res.locals.effectivePermissions = scoped;
     next();
   };
+}
+
+/**
+ * Narrow `effective` by API-key `scopes` (undefined = session JWT, no narrowing).
+ * '*' on either side behaves as expected: a wildcard key keeps wildcard access,
+ * a wildcard grant is reduced to exactly the key's listed scopes.
+ */
+export function intersectScopes(
+  effective: string[],
+  scopes: readonly string[] | undefined,
+): string[] {
+  if (scopes === undefined) return effective;
+  if (scopes.includes("*")) return effective;
+  if (effective.includes("*")) return [...scopes];
+  return effective.filter((p) => scopes.includes(p));
 }
 
 /** FR-023: suspension blocks ALL mutations; reads allowed for owner/admin only. */
@@ -76,5 +95,21 @@ export function assertNotSuspendedForMutation(req: Request, res: Response): void
   const isRead = req.method === "GET" || req.method === "HEAD";
   if (!isRead) {
     throw new ForbiddenError("Server is suspended");
+  }
+}
+
+/**
+ * FR-023 reads on suspended servers: the panel owner, admins, and the
+ * server's own owner may look; collaborators see a plain 404 (they are
+ * effectively detached until unsuspension).
+ */
+export function assertSuspendedReadable(req: Request, res: Response): void {
+  const server = res.locals.server as LoadedServer | undefined;
+  const p = req.principal;
+  if (!server || !p) throw new ForbiddenError();
+  if (server.status !== "suspended") return;
+  const privileged = p.role === "owner" || p.role === "admin";
+  if (!privileged && server.owner_id !== p.userId) {
+    throw new NotFoundError("Not found");
   }
 }
