@@ -27,7 +27,10 @@ async function call(
   want: number[],
   opts: { token?: string; body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<unknown> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...(opts.headers ?? {}) };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(opts.headers ?? {}),
+  };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   let res: Response;
   try {
@@ -51,27 +54,33 @@ async function call(
     pass++;
   } else {
     fail++;
-    results.push(`FAIL ${name}: want ${want.join("/")} got ${res.status} ${JSON.stringify(data)?.slice(0, 160)}`);
+    results.push(
+      `FAIL ${name}: want ${want.join("/")} got ${res.status} ${JSON.stringify(data)?.slice(0, 160)}`,
+    );
   }
   return data;
 }
 
-const anon = (n: string, m: string, p: string, w: number[], b?: unknown) => call(n, m, p, w, { body: b });
+const anon = (n: string, m: string, p: string, w: number[], b?: unknown) =>
+  call(n, m, p, w, { body: b });
 let T = "";
 const auth = () => ({ token: T });
 
 // --- setup + auth ---
-let s = (await anon("setup/status", "GET", "/setup/status", [200])) as { needsSetup: boolean };
+const s = (await anon("setup/status", "GET", "/setup/status", [200])) as { needsSetup: boolean };
 if (!s?.needsSetup) {
   fail++;
   results.push("FAIL setup/status: needsSetup not true");
 } else pass++;
 await anon("setup weak reject", "POST", "/setup/admin", [400], { username: "a", password: "x" });
-const created = (await anon("setup/admin", "POST", "/setup/admin", [201], {
+await anon("setup/admin", "POST", "/setup/admin", [201], {
   username: "admin",
   password: "admin-password-1long",
-})) as { user: { id: string } };
-await anon("setup closed", "POST", "/setup/admin", [409], { username: "second", password: "b-password-1long" });
+});
+await anon("setup closed", "POST", "/setup/admin", [409], {
+  username: "second",
+  password: "b-password-1long",
+});
 const login = (await anon("login", "POST", "/auth/login", [200], {
   username: "admin",
   password: "admin-password-1long",
@@ -167,7 +176,13 @@ await call("files write", "PUT", `/servers/${sid}/files/content`, [204], {
   ...auth(),
   body: { path: "data/note.txt", content: "hello" },
 });
-await call("files read", "GET", `/servers/${sid}/files/content?path=${encodeURIComponent("data/note.txt")}`, [200], auth());
+await call(
+  "files read",
+  "GET",
+  `/servers/${sid}/files/content?path=${encodeURIComponent("data/note.txt")}`,
+  [200],
+  auth(),
+);
 await call("files rename", "POST", `/servers/${sid}/files/rename`, [204], {
   ...auth(),
   body: { from: "data/note.txt", to: "data/renamed.txt" },
@@ -176,7 +191,13 @@ await call("files delete", "POST", `/servers/${sid}/files/delete`, [204], {
   ...auth(),
   body: { path: "data/renamed.txt" },
 });
-await call("files traversal", "GET", `/servers/${sid}/files/content?path=${encodeURIComponent("../../x")}`, [400, 404], auth());
+await call(
+  "files traversal",
+  "GET",
+  `/servers/${sid}/files/content?path=${encodeURIComponent("../../x")}`,
+  [400, 404],
+  auth(),
+);
 
 // --- backups + schedules ---
 const bk = (await call("backups create", "POST", `/servers/${sid}/backups`, [201], {
@@ -184,7 +205,13 @@ const bk = (await call("backups create", "POST", `/servers/${sid}/backups`, [201
   body: {},
 })) as { backup: { id: string } };
 await call("backups list", "GET", `/servers/${sid}/backups`, [200], auth());
-await call("backups restore", "POST", `/servers/${sid}/backups/${bk.backup.id}/restore`, [200], auth());
+await call(
+  "backups restore",
+  "POST",
+  `/servers/${sid}/backups/${bk.backup.id}/restore`,
+  [200],
+  auth(),
+);
 const sch = (await call("schedules create", "POST", `/servers/${sid}/schedules`, [201], {
   ...auth(),
   body: { name: "s", cronExpr: "0 4 * * *", tasks: [{ action: "backup", payload: {} }] },
@@ -194,7 +221,13 @@ await call("schedules bad cron", "POST", `/servers/${sid}/schedules`, [400], {
   ...auth(),
   body: { name: "bad", cronExpr: "x", tasks: [{ action: "backup", payload: {} }] },
 });
-await call("schedules run", "POST", `/servers/${sid}/schedules/${sch.schedule.id}/run`, [200], auth());
+await call(
+  "schedules run",
+  "POST",
+  `/servers/${sid}/schedules/${sch.schedule.id}/run`,
+  [200],
+  auth(),
+);
 
 // --- blueprints ---
 await call("blueprints list", "GET", "/blueprints", [200], auth());
@@ -229,9 +262,21 @@ await call("suspended write blocked", "PUT", `/servers/${sid}/files/content`, [4
 });
 await call("unsuspend", "POST", `/servers/${sid}/unsuspend`, [204], auth());
 await call("subusers remove", "DELETE", `/servers/${sid}/users/${u1.user.id}`, [204], auth());
-await call("allocs release", "DELETE", `/servers/${sid}/allocations/${alloc.allocation.id}`, [204], auth());
+await call(
+  "allocs release",
+  "DELETE",
+  `/servers/${sid}/allocations/${alloc.allocation.id}`,
+  [204],
+  auth(),
+);
 await call("backups delete", "DELETE", `/servers/${sid}/backups/${bk.backup.id}`, [204], auth());
-await call("schedules delete", "DELETE", `/servers/${sid}/schedules/${sch.schedule.id}`, [204], auth());
+await call(
+  "schedules delete",
+  "DELETE",
+  `/servers/${sid}/schedules/${sch.schedule.id}`,
+  [204],
+  auth(),
+);
 await call("servers delete", "DELETE", `/servers/${sid}`, [204], auth());
 await call("servers gone", "GET", `/servers/${sid}`, [404], auth());
 
