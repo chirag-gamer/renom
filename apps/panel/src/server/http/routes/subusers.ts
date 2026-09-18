@@ -101,6 +101,7 @@ export function subusersRouter(deps: SubusersDeps): Router {
       audit.record({
         event: "server.subuser.add",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId,
@@ -126,6 +127,7 @@ export function subusersRouter(deps: SubusersDeps): Router {
       audit.record({
         event: "server.subuser.remove",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId,

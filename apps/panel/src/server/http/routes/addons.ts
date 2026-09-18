@@ -95,6 +95,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
       audit.record({
         event: "server.addons.install",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
@@ -121,6 +122,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
       audit.record({
         event: "server.addons.remove",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,

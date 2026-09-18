@@ -59,6 +59,7 @@ export function powerRouter(deps: PowerDeps): Router {
       audit.record({
         event: `server.power.${body.action}`,
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,

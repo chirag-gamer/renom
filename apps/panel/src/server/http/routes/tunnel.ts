@@ -101,6 +101,7 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       audit.record({
         event: "server.tunnel.enable",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
@@ -124,6 +125,7 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       audit.record({
         event: "server.tunnel.disable",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,

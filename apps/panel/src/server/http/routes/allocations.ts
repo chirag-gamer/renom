@@ -4,7 +4,11 @@ import type { Database } from "../../infra/db/database.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
+import {
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import { ulid } from "../../shared/ulid.js";
@@ -32,13 +36,18 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
   router.use(requireAuth(auth));
   const guard = (perm: string) => requireServerPermission(perm, db);
 
-  router.get("/servers/:id/allocations", guard("allocation.read"), (req, res) => {
-    const rows = db
-      .prepare(
-        "SELECT id, ip, port, notes FROM allocations WHERE server_id = ? AND released = 0 ORDER BY port",
-      )
-      .all(req.params.id ?? "") as Array<{ id: string; ip: string; port: number; notes: string }>;
-    res.json({ allocations: rows });
+  router.get("/servers/:id/allocations", guard("allocation.read"), (req, res, next) => {
+    try {
+      assertSuspendedReadable(req, res);
+      const rows = db
+        .prepare(
+          "SELECT id, ip, port, notes FROM allocations WHERE server_id = ? AND released = 0 ORDER BY port",
+        )
+        .all(req.params.id ?? "") as Array<{ id: string; ip: string; port: number; notes: string }>;
+      res.json({ allocations: rows });
+    } catch (e) {
+      next(e);
+    }
   });
 
   router.post("/servers/:id/allocations", guard("allocation.update"), (req, res, next) => {
@@ -64,6 +73,7 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
       audit.record({
         event: "server.allocation.add",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId,
@@ -99,6 +109,7 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
         audit.record({
           event: "server.allocation.release",
           actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
           actorIp: req.ip,
           requestId: req.requestId,
           serverId,

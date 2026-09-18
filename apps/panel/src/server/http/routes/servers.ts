@@ -235,6 +235,7 @@ export function serversRouter(deps: ServersDeps): Router {
       audit.record({
         event: "server.update",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: updated.id,
@@ -266,6 +267,7 @@ export function serversRouter(deps: ServersDeps): Router {
       audit.record({
         event: "server.install.start",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
@@ -335,6 +337,7 @@ export function serversRouter(deps: ServersDeps): Router {
       audit.record({
         event: "server.variables.update",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: s.id,
@@ -353,9 +356,12 @@ export function serversRouter(deps: ServersDeps): Router {
       await engine.kill(id);
       servers.remove(id);
       engine.forget(id);
+      // Deleted servers stream to nobody: cut live subscriptions too.
+      gateway?.dropGrants(id);
       audit.record({
         event: "server.delete",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
@@ -381,6 +387,7 @@ export function serversRouter(deps: ServersDeps): Router {
         audit.record({
           event: "server.suspend",
           actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
           actorIp: req.ip,
           requestId: req.requestId,
           serverId: req.params.id,
@@ -405,6 +412,7 @@ export function serversRouter(deps: ServersDeps): Router {
         audit.record({
           event: "server.unsuspend",
           actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
           actorIp: req.ip,
           requestId: req.requestId,
           serverId: req.params.id,

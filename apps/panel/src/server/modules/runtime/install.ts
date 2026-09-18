@@ -94,12 +94,13 @@ export async function guardedFetch(
 
 /**
  * Executes a blueprint's declarative install ops into the server directory.
- * Network-touching providers implemented: PaperMC Fill v3, Mojang piston-meta,
- * Purpur v2. `fabric`/`forge`/`neoforge`/`bds`/`velocity`/`modrinth` fetchers
- * are explicit 409s until wired — never silent no-ops.
+ * Network-touching providers implemented: PaperMC Fill v3, Mojang
+ * piston-meta, Purpur v2, Bedrock registry, PocketMine + PHP binaries,
+ * Endstone via pip, Modrinth. `fabric`/`forge`/`neoforge`/`velocity`
+ * fetchers are explicit 409s until wired — never silent no-ops.
  *
  * All file paths are confined to the server directory; downloads are size-
- * capped and checksum-verified whenever the provider supplies a digest.
+ * capped and always checksum-verified; destructive ops refuse the root itself.
  */
 export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Promise<void> {
   const fetchImpl = ctx.fetchImpl ?? fetch;
@@ -112,19 +113,28 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
       }
       case "writefile": {
         const dest = confine(ctx.dir, sub(ctx.vars, op.path));
+        refuseRoot(ctx.dir, dest, op.path);
         mkdirSync(dirname(dest), { recursive: true });
         writeFileSync(dest, substitute(op.contentTemplate, ctx.vars), "utf8");
         break;
       }
       case "move": {
-        renameSync(
-          confine(ctx.dir, sub(ctx.vars, op.from)),
-          confine(ctx.dir, sub(ctx.vars, op.to)),
-        );
+        const from = confine(ctx.dir, sub(ctx.vars, op.from));
+        const to = confine(ctx.dir, sub(ctx.vars, op.to));
+        refuseRoot(ctx.dir, from, op.from);
+        try {
+          renameSync(from, to);
+        } catch (err) {
+          throw new EngineError(
+            `Move failed (missing parent?): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         break;
       }
       case "delete": {
-        rmSync(confine(ctx.dir, sub(ctx.vars, op.path)), { recursive: true, force: true });
+        const dest = confine(ctx.dir, sub(ctx.vars, op.path));
+        refuseRoot(ctx.dir, dest, op.path);
+        rmSync(dest, { recursive: true, force: true });
         break;
       }
       case "eula-accept": {
@@ -242,6 +252,13 @@ export function confine(serverDir: string, rel: string): string {
     throw new EngineError(`Install path escapes the server directory: ${rel}`);
   }
   return resolved;
+}
+
+/** Destructive ops must name something inside the root, never the root itself. */
+function refuseRoot(serverDir: string, resolved: string, rel: string): void {
+  if (resolved === serverDir) {
+    throw new EngineError(`Refusing to operate on the server root: ${rel}`);
+  }
 }
 
 async function fetchJson(fetchImpl: typeof fetch, url: string): Promise<unknown> {

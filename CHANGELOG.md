@@ -34,6 +34,10 @@ All notable changes to Renom are documented here. Format based on
   full negative-test battery.
 - Endpoint sweep: a manual CLI (`src/server/cli/sweep.ts`) boots a real panel
   and asserts every route (71 checks, all passing).
+- Production self-review: suspended-read guards on allocations, audit key
+  attribution everywhere, socket cuts on password change/user delete/server
+  delete, confined install paths with root refusal, wrapped move errors,
+  installer function self-tests (13/13), and a full DOM id cross-check.
 - Optional Minekube Connect tunnel per Java server: plugin install, `CONNECT_ENDPOINT`
   wiring, public-address scraping from console history into the Network tab.
 - Server detail tabs: Startup (variables), Network (allocations + tunnel), Users

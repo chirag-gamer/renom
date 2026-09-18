@@ -73,6 +73,7 @@ export function usersRouter(
       audit.record({
         event: "user.create",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         target: { userId: user.id },
@@ -99,13 +100,16 @@ export function usersRouter(
         throw new ForbiddenError("Only the owner can change admins");
       }
       // A password change is a credential rotation: it takes effect at once
-      // (old sessions die with the version bump) and is always audited.
+      // (old sessions die with the version bump, live sockets are cut too)
+      // and is always audited.
       if (body.password !== undefined) {
         users.setPassword(target.id, body.password);
         users.bumpPasswordVersion(target.id);
+        gateway?.dropGrants(undefined, target.id);
         audit.record({
           event: "user.password.change",
           actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
           actorIp: req.ip,
           requestId: req.requestId,
           target: { userId: target.id },
@@ -122,6 +126,7 @@ export function usersRouter(
         audit.record({
           event: body.suspended ? "user.suspend" : "user.resume",
           actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
           actorIp: req.ip,
           requestId: req.requestId,
           target: { userId: target.id },
@@ -158,9 +163,12 @@ export function usersRouter(
       } catch (err) {
         throw new ConflictError(err instanceof Error ? err.message : "Delete failed");
       }
+      // Deleted users keep no live streams either.
+      gateway?.dropGrants(undefined, target.id);
       audit.record({
         event: "user.delete",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         target: { userId: target.id, transferredServers },

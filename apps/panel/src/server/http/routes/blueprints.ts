@@ -89,6 +89,7 @@ export function blueprintsRouter(
       audit?.record({
         event: "blueprint.import",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         actorIp: req.ip,
         requestId: req.requestId,
         target: { slug: result.slug, tag: result.tag },

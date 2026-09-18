@@ -296,6 +296,7 @@ document.getElementById("form-user").addEventListener("submit", async (e) => {
 });
 
 document.getElementById("btn-signout").addEventListener("click", () => {
+  leaveServer();
   store.token = null;
   me = null;
   show("login");

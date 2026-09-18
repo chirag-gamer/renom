@@ -71,6 +71,7 @@ export function filesRouter(
       audit.record({
         event: "file.read",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: q.path },
@@ -90,6 +91,7 @@ export function filesRouter(
       audit.record({
         event: "file.write",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: body.path, bytes: Buffer.byteLength(body.content) },
@@ -109,6 +111,7 @@ export function filesRouter(
       audit.record({
         event: "file.create",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: body.path, kind: "directory" },
@@ -128,6 +131,7 @@ export function filesRouter(
       audit.record({
         event: "file.rename",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { from: body.from, to: body.to },
@@ -147,6 +151,7 @@ export function filesRouter(
       audit.record({
         event: "file.delete",
         actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { path: body.path },
