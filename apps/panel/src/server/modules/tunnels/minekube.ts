@@ -21,11 +21,12 @@ import { EngineError } from "../../shared/errors.js";
  * (download URLs, CONNECT_ENDPOINT precedence, address line format).
  */
 
-export const MINEKUBE_PLUGIN_URL =
-  "https://github.com/minekube/connect-java/releases/download/latest/connect-spigot.jar";
-
-/** Resolve the pinned digest for the plugin jar (fail-closed when absent). */
-async function pluginDigest(fetchImpl: typeof fetch): Promise<string> {
+/**
+ * Resolve the pinned download URL + digest for the plugin jar (fail-closed
+ * when absent). The API's asset URL replaces the mutable `latest` URL, so
+ * the bytes always match the digest from the same release document.
+ */
+async function pluginArtifact(fetchImpl: typeof fetch): Promise<{ url: string; sha256: string }> {
   const res = await guardedFetch(
     fetchImpl,
     "https://api.github.com/repos/minekube/connect-java/releases/latest",
@@ -42,7 +43,7 @@ async function pluginDigest(fetchImpl: typeof fetch): Promise<string> {
   if (!asset || !hex || !/^[a-f0-9]{64}$/i.test(hex)) {
     throw new EngineError("Minekube plugin release has no verifiable digest");
   }
-  return hex.toLowerCase();
+  return { url: asset.browser_download_url, sha256: hex.toLowerCase() };
 }
 
 /** Matches the documented console line; tolerant of the plugin's version prefix. */
@@ -74,9 +75,10 @@ export async function installPlugin(
   mkdirSync(pluginsDir, { recursive: true });
   const dest = join(pluginsDir, "connect-spigot.jar");
   if (!existsSync(dest)) {
-    await downloadFile(fetchImpl, MINEKUBE_PLUGIN_URL, dest, {
+    const artifact = await pluginArtifact(fetchImpl);
+    await downloadFile(fetchImpl, artifact.url, dest, {
       maxBytes: 64 * 1024 * 1024,
-      sha256: await pluginDigest(fetchImpl),
+      sha256: artifact.sha256,
     });
   }
   return dest;

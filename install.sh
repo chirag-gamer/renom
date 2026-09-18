@@ -33,13 +33,6 @@ ask() { # ask <prompt> <default> -> prints value
   IFS= read -r answer || answer=""
   if [ -z "$answer" ]; then printf '%s' "$default"; else printf '%s' "$answer"; fi
 }
-ask_secret() { # ask_secret <prompt> -> prints value (input hidden); fails on EOF
-  local prompt="$1" answer=""
-  printf '%s: ' "$prompt" >&2
-  IFS= read -rs answer || return 1
-  printf '\n' >&2
-  printf '%s' "$answer"
-}
 
 # Read one KEY from .env (empty when absent) so reruns keep your settings.
 env_default() {
@@ -67,7 +60,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 install_basics() {
   local missing=""
-  for tool in curl git tar; do
+  for tool in curl git tar awk; do
     have "$tool" || missing="$missing $tool"
   done
   # Java runs Minecraft servers; warn (don't force) when absent.
@@ -149,6 +142,7 @@ DATA_DIR="$(ask "Data directory (database, servers, backups)" "$(env_default DAT
 case "$PORT" in
   '' | *[!0-9]* | 0) die "Port must be a number from 1 to 65535." ;;
 esac
+PORT="$((10#$PORT))" # base-10: "08" is eight, not an octal error
 if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then die "Port must be 1-65535."; fi
 if [ "$HOST" = "0.0.0.0" ]; then
   warn "Listening on every interface is convenient but exposes logins to your whole network."

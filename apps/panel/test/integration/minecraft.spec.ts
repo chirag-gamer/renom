@@ -205,6 +205,29 @@ describe("minekube address scraping", () => {
     expect(endpointValid("a")).toBe(false);
     expect(endpointValid("has space")).toBe(false);
   });
+
+  it("installs the tunnel plugin checksum-verified", async () => {
+    const { installPlugin } = await import("../../src/server/modules/tunnels/minekube.js");
+    const jarBytes = Buffer.from("fake-connect-jar");
+    const jarSha256 = createHash("sha256").update(jarBytes).digest("hex");
+    const fetchImpl = stubFetch({
+      "https://api.github.com/repos/minekube/connect-java/releases/latest": {
+        json: {
+          assets: [
+            { name: "connect-spigot.jar", browser_download_url: "https://github.com/mk/connect-spigot.jar", digest: `sha256:${jarSha256}` },
+          ],
+        },
+      },
+      "https://github.com/mk/connect-spigot.jar": { bytes: jarBytes },
+    });
+    const srv = mkdtempSync(join(tmpdir(), "renom-tunnel-"));
+    try {
+      const dest = await installPlugin(srv, fetchImpl);
+      expect(readFileSync(dest)).toEqual(jarBytes);
+    } finally {
+      rmSync(srv, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("EULA gate + variables + tunnel API", () => {

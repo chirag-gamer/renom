@@ -1,7 +1,7 @@
 # Completion ledger
 
 `Requirement → implementation → tests → verification → commit → docs`.
-A requirement is complete only when all five exist. Suite: **145/145 green**
+A requirement is complete only when all five exist. Suite: **146/146 green**
 (`npm test`), `npm run build` + `npm run typecheck` clean, CI green on PR #10,
 live smoke-tested including a real Paper boot (`Done (40.4s)!`).
 
@@ -108,7 +108,7 @@ password changes do not kill API keys (separate revocation model, documented);
 | ------------------------------------------------------------------------------------- | -------------------------------------- |
 | `npm run build` (contracts + panel `tsc`)                                             | clean                                  |
 | `npm run typecheck`                                                                   | clean                                  |
-| `npm test` (vitest)                                                                   | 16 files, 145 tests, all pass          |
+| `npm test` (vitest)                                                                   | 16 files, 146 tests, all pass          |
 | eslint on all touched files                                                           | clean (`--fix` applied, then verified) |
 | prettier `--check .`                                                                  | clean                                  |
 | Live: setup/status → owner → 2nd setup 409 → login → power → console line over socket | pass                                   |
