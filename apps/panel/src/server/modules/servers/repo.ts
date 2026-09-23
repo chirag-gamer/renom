@@ -44,8 +44,10 @@ export class ServersRepo {
     const where = ["s.deleted_at IS NULL"];
     const params: unknown[] = [];
     if (!admin) {
-      where.push("s.owner_id = ?");
-      params.push(args.userId);
+      where.push(
+        "(s.owner_id = ? OR EXISTS (SELECT 1 FROM subusers su WHERE su.server_id = s.id AND su.user_id = ?))",
+      );
+      params.push(args.userId, args.userId);
     }
     if (args.cursor) {
       where.push("s.id > ?");

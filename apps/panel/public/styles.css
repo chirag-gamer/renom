@@ -24,16 +24,104 @@
 * {
   box-sizing: border-box;
 }
+[hidden] {
+  display: none !important;
+}
 body {
   margin: 0;
+  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
   font: 16px/1.6 var(--mono);
 }
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+.app-sidebar {
+  display: flex;
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 240px;
+  flex-direction: column;
+  padding: 24px 16px;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+}
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-brand strong {
+  font: 400 28px/1.2 var(--serif);
+}
+.sidebar-brand span,
+.sidebar-user {
+  color: var(--muted);
+  font-size: 12px;
+}
+.sidebar-nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 0;
+}
+.sidebar-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+.sidebar-nav button:hover,
+.sidebar-nav button.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.sidebar-nav button span {
+  width: 18px;
+  text-align: center;
+}
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 12px 0;
+  border-top: 1px solid var(--border);
+}
+.sidebar-user {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-signout {
+  margin: 0;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+.sidebar-signout:hover {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.app-main {
+  width: calc(100% - 240px);
+  margin-left: 240px;
+}
 .shell {
-  max-width: 560px;
+  width: min(100%, 1120px);
   margin: 0 auto;
-  padding: 48px 24px 64px;
+  padding: 48px 32px 64px;
 }
 .shell:has(.wide:not([hidden])) {
   max-width: 880px;
@@ -253,6 +341,69 @@ textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
+.file-editor {
+  width: min(900px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+}
+.file-editor::backdrop {
+  background: rgb(28 28 26 / 55%);
+}
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dialog-header h3 {
+  margin: 0;
+}
+.file-editor textarea {
+  min-height: 360px;
+  resize: vertical;
+}
+.permission-form {
+  max-width: 720px;
+}
+.permission-form fieldset {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.permission-form legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+.permission-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-low);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.permission-option input {
+  width: auto;
+  margin: 0;
+}
 .chip {
   display: inline-block;
   background: var(--accent-soft);
@@ -261,10 +412,59 @@ textarea:focus {
   padding: 2px 8px;
   font-size: 13px;
 }
-@media (max-width: 560px) {
-  .shell {
-    padding: 24px 16px 48px;
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.account-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-low);
+}
+@media (max-width: 760px) {
+  .app-sidebar {
+    position: static;
+    width: 100%;
+    min-height: auto;
   }
+  .app-shell {
+    display: block;
+  }
+  .sidebar-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sidebar-footer {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .app-main {
+    width: 100%;
+    margin: 0;
+  }
+  .shell {
+    padding: 28px 16px 48px;
+  }
+  .page-header {
+    display: block;
+  }
+}
+@media (max-width: 560px) {
   .card {
     padding: 18px;
   }

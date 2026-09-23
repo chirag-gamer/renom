@@ -19,6 +19,46 @@ export interface ConsoleLine {
 const HISTORY_LIMIT = 500;
 const LINE_MAX = 4096;
 
+function javaMajor(candidate: string): number | null {
+  try {
+    const result = spawnSync(candidate, ["-version"], { encoding: "utf8", windowsHide: true });
+    if (result.status !== 0) return null;
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    return Number(output.match(/version "(\d+)(?:\.|\")/)?.[1] ?? NaN) || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveJavaBinary(version?: string): string | null {
+  const executable = process.platform === "win32" ? "java.exe" : "java";
+  const requested = version ? Number(version) : null;
+  if (version && (requested === null || !Number.isInteger(requested) || requested <= 0))
+    return null;
+  const candidates = version
+    ? [
+        process.env[`JAVA_HOME_${version}`]
+          ? join(process.env[`JAVA_HOME_${version}`]!, "bin", executable)
+          : null,
+        process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", executable) : null,
+        `/usr/lib/jvm/java-${version}-openjdk-amd64/bin/${executable}`,
+        `/usr/lib/jvm/java-${version}-openjdk-arm64/bin/${executable}`,
+        `/usr/lib/jvm/java-${version}-openjdk/bin/${executable}`,
+        `/usr/lib/jvm/temurin-${version}-jdk-amd64/bin/${executable}`,
+        `/opt/java/openjdk-${version}/bin/${executable}`,
+        executable,
+      ]
+    : [process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", executable) : null, executable];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (
+      (candidate === executable || existsSync(candidate)) &&
+      (!requested || javaMajor(candidate) === requested)
+    )
+      return candidate;
+  }
+  return null;
+}
 interface LiveProcess {
   /** Null when this slot only holds history + listeners (never started, or finished). */
   proc: ChildProcess | null;
@@ -103,6 +143,15 @@ export class LocalProcessEngine {
     const [rawCmd, ...args] = argv;
     if (!rawCmd) throw new EngineError("Blueprint has an empty start command");
     let cmd = rawCmd;
+    if (rawCmd === "java") {
+      const javaBinary = resolveJavaBinary(vars["javaVersion"]);
+      if (!javaBinary) {
+        throw new EngineError(
+          `Java ${vars["javaVersion"] ?? "runtime"} is not installed on this host. Install it before starting this server.`,
+        );
+      }
+      cmd = javaBinary;
+    }
     // Cross-OS binaries: `bedrock_server` on Linux is `bedrock_server.exe`
     // next to it on Windows. Prefer the exact name, fall back to .exe there.
     // (Checked against the server root, where installs place binaries.)

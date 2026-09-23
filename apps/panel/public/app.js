@@ -7,11 +7,50 @@ const views = {
   setup: document.getElementById("view-setup"),
   login: document.getElementById("view-login"),
   home: document.getElementById("view-home"),
+  admin: document.getElementById("view-admin"),
+  account: document.getElementById("view-account"),
+  api: document.getElementById("view-api"),
   server: document.getElementById("view-server"),
 };
 
 function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
+  document.getElementById("app-sidebar").hidden = name === "setup" || name === "login";
+  document.querySelectorAll("[data-view-link]").forEach((link) => {
+    link.classList.toggle(
+      "active",
+      link.dataset.viewLink === name || (name === "server" && link.dataset.viewLink === "home"),
+    );
+  });
+}
+
+function setView(name) {
+  if (name === "admin" && me?.role !== "owner" && me?.role !== "admin") return;
+  if (name === "home") {
+    show("home");
+    return;
+  }
+  show(name);
+  if (name === "admin") {
+    void refreshUsers();
+    void refreshAdminServers();
+  }
+  if (name === "api") void refreshApiKeys();
+  if (name === "account") renderAccount();
+}
+
+function renderAccount() {
+  const target = document.getElementById("account-summary");
+  if (!target || !me) return;
+  target.innerHTML = "";
+  const row = document.createElement("div");
+  row.className = "account-summary";
+  const name = document.createElement("strong");
+  name.textContent = me.displayName || me.username;
+  const metadata = document.createElement("span");
+  metadata.textContent = `${me.username} · ${me.role}`;
+  row.append(name, metadata);
+  target.append(row);
 }
 
 function fail(el, message) {
@@ -56,6 +95,60 @@ let me = null;
 let currentServer = null;
 let socket = null;
 let filesDir = "";
+const serverPermissions = [
+  "websocket.connect",
+  "control.console",
+  "control.start",
+  "control.stop",
+  "control.restart",
+  "control.kill",
+  "file.read",
+  "file.read-content",
+  "file.update",
+  "file.create",
+  "file.delete",
+  "backup.read",
+  "backup.create",
+  "backup.download",
+  "backup.restore",
+  "backup.delete",
+  "schedule.read",
+  "schedule.create",
+  "schedule.update",
+  "schedule.delete",
+  "schedule.run",
+  "startup.read",
+  "startup.update",
+  "user.read",
+  "user.create",
+  "user.delete",
+];
+
+function renderPermissionOptions() {
+  renderPermissionOptionsInto("permission-options", serverPermissions, "permission");
+}
+
+function renderApiPermissionOptions() {
+  renderPermissionOptionsInto("api-permission-options", serverPermissions, "api-scope");
+}
+
+function renderPermissionOptionsInto(targetId, options, inputName) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  target.innerHTML = "";
+  for (const permission of options) {
+    const label = document.createElement("label");
+    label.className = "permission-option";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = inputName;
+    input.value = permission;
+    const text = document.createElement("span");
+    text.textContent = permission;
+    label.append(input, text);
+    target.append(label);
+  }
+}
 
 async function boot() {
   try {
@@ -155,15 +248,14 @@ async function loadHome() {
   me = data.user;
   document.getElementById("home-greeting").textContent =
     `Welcome back, ${me.displayName || me.username}.`;
+  document.getElementById("sidebar-user").textContent =
+    `${me.displayName || me.username} · ${me.role}`;
+  document.querySelectorAll("[data-admin-only]").forEach((link) => {
+    link.hidden = me.role !== "owner" && me.role !== "admin";
+  });
   await Promise.all([refreshServers(), refreshBlueprints()]);
-  const adminPanel = document.getElementById("admin-panel");
-  if (me.role === "owner" || me.role === "admin") {
-    adminPanel.hidden = false;
-    await refreshUsers();
-  } else {
-    adminPanel.hidden = true;
-  }
-  show("home");
+  if (me.role === "owner" || me.role === "admin") await refreshUsers();
+  setView("home");
   return true;
 }
 
@@ -195,6 +287,43 @@ async function refreshServers() {
   }
 }
 
+async function refreshAdminServers() {
+  const list = document.getElementById("admin-server-list");
+  const err = document.getElementById("admin-servers-error");
+  if (!list || !err) return;
+  err.hidden = true;
+  list.innerHTML = "";
+  let cursor = null;
+  for (;;) {
+    const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
+    const { status, data } = await api(`/servers${qs}`, { token: store.token });
+    if (status !== 200) {
+      fail(err, describeProblem(status, data));
+      return;
+    }
+    if (data.items.length === 0 && !cursor) {
+      const empty = document.createElement("li");
+      empty.textContent = "No servers exist on this panel.";
+      list.append(empty);
+    }
+    for (const server of data.items) {
+      const li = document.createElement("li");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "linklike";
+      open.textContent = server.name;
+      open.addEventListener("click", () => openServer(server.id));
+      const meta = document.createElement("span");
+      meta.className = "role";
+      meta.textContent = `${server.blueprintSlug} · ${server.status}`;
+      li.append(open, meta);
+      list.append(li);
+    }
+    if (!data.nextCursor) return;
+    cursor = data.nextCursor;
+  }
+}
+
 async function refreshBlueprints() {
   const select = document.getElementById("blueprint-select");
   if (select.options.length > 0) return;
@@ -216,14 +345,19 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   const err = document.getElementById("server-error");
   err.hidden = true;
   const fd = new FormData(e.target);
+  const body = {
+    name: fd.get("name"),
+    blueprintSlug: fd.get("blueprint"),
+    eulaAccepted: document.getElementById("eula-check").checked || undefined,
+  };
+  if (me?.role === "owner" || me?.role === "admin") {
+    body.memoryMb = Number(fd.get("memoryMb")) || 1024;
+    body.diskQuotaMb = Number(fd.get("diskQuotaMb")) || 5120;
+  }
   const { status, data } = await api("/servers", {
     method: "POST",
     token: store.token,
-    body: {
-      name: fd.get("name"),
-      blueprintSlug: fd.get("blueprint"),
-      eulaAccepted: document.getElementById("eula-check").checked || undefined,
-    },
+    body,
   });
   if (status === 201) {
     e.target.reset();
@@ -265,7 +399,60 @@ async function refreshUsers() {
         });
         if (res.status !== 200) fail(err, describeProblem(res.status, res.data));
       });
-      li.append(name, role, reset);
+      const suspend = document.createElement("button");
+      suspend.type = "button";
+      suspend.className = "linklike";
+      suspend.textContent = u.suspended ? "Resume" : "Suspend";
+      suspend.addEventListener("click", async () => {
+        const err = document.getElementById("user-error");
+        const res = await api(`/users/${u.id}`, {
+          method: "PATCH",
+          token: store.token,
+          body: { suspended: !u.suspended },
+        });
+        if (res.status !== 200) fail(err, describeProblem(res.status, res.data));
+        else refreshUsers();
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "linklike danger-text";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Delete ${u.username}?`)) return;
+        const err = document.getElementById("user-error");
+        let res = await api(`/users/${u.id}`, { method: "DELETE", token: store.token });
+        if (res.status === 409) {
+          const transferTo = window.prompt(
+            `Transfer ${u.username}'s servers to which username? Leave blank to cancel.`,
+          );
+          if (!transferTo) return;
+          let target = null;
+          let cursor = null;
+          for (;;) {
+            const qs = cursor
+              ? `/users?limit=100&cursor=${encodeURIComponent(cursor)}`
+              : "/users?limit=100";
+            const users = await api(qs, { token: store.token });
+            if (users.status !== 200) break;
+            target = users.data.items.find(
+              (candidate) => candidate.id !== u.id && candidate.username === transferTo,
+            );
+            if (target || !users.data.nextCursor) break;
+            cursor = users.data.nextCursor;
+          }
+          if (!target) {
+            fail(err, "That transfer account was not found.");
+            return;
+          }
+          res = await api(`/users/${u.id}?transferTo=${encodeURIComponent(target.id)}`, {
+            method: "DELETE",
+            token: store.token,
+          });
+        }
+        if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
+        else refreshUsers();
+      });
+      li.append(name, role, reset, suspend, remove);
       list.append(li);
     }
     if (!data.nextCursor) return;
@@ -295,11 +482,72 @@ document.getElementById("form-user").addEventListener("submit", async (e) => {
   }
 });
 
-document.getElementById("btn-signout").addEventListener("click", () => {
+function signOut() {
   leaveServer();
   store.token = null;
   me = null;
   show("login");
+}
+
+document.getElementById("btn-signout").addEventListener("click", signOut);
+document.getElementById("btn-sidebar-signout").addEventListener("click", signOut);
+document.querySelectorAll("[data-view-link]").forEach((link) => {
+  link.addEventListener("click", () => setView(link.dataset.viewLink));
+});
+
+async function refreshApiKeys() {
+  const list = document.getElementById("api-key-list");
+  const err = document.getElementById("api-error");
+  if (!list || !err) return;
+  err.hidden = true;
+  list.innerHTML = "";
+  const { status, data } = await api("/api-keys", { token: store.token });
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  if (data.keys.length === 0) {
+    const empty = document.createElement("li");
+    empty.textContent = "No API keys yet.";
+    list.append(empty);
+    return;
+  }
+  for (const key of data.keys) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${key.memo || "API key"} · ${key.scopes.join(", ")}`;
+    const revoke = document.createElement("button");
+    revoke.type = "button";
+    revoke.className = "linklike danger-text";
+    revoke.textContent = "Revoke";
+    revoke.addEventListener("click", async () => {
+      if (!window.confirm("Revoke this API key?")) return;
+      const res = await api(`/api-keys/${key.id}`, { method: "DELETE", token: store.token });
+      if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
+      else refreshApiKeys();
+    });
+    li.append(name, revoke);
+    list.append(li);
+  }
+}
+
+document.getElementById("form-api-key").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("api-error");
+  err.hidden = true;
+  const fd = new FormData(e.target);
+  const { status, data } = await api("/api-keys", {
+    method: "POST",
+    token: store.token,
+    body: { memo: fd.get("memo") || "", scopes: fd.getAll("api-scope").map(String) },
+  });
+  if (status !== 201) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  window.prompt("Copy this API key now. It will not be shown again:", data.token);
+  e.target.reset();
+  refreshApiKeys();
 });
 
 /* ---------- server detail ---------- */
@@ -536,7 +784,37 @@ async function openFile(path) {
   }
   document.getElementById("file-editing").textContent = path;
   document.getElementById("file-content").value = data.content;
+  document.getElementById("file-dialog-path").textContent = path;
+  document.getElementById("file-dialog-content").value = data.content;
+  const dialog = document.getElementById("file-editor");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
 }
+
+document.getElementById("btn-file-close").addEventListener("click", () => {
+  const dialog = document.getElementById("file-editor");
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+});
+
+document.getElementById("btn-file-dialog-save").addEventListener("click", async () => {
+  const err = document.getElementById("file-dialog-error");
+  err.hidden = true;
+  const path = document.getElementById("file-dialog-path").textContent;
+  if (!path) return;
+  const { status, data } = await api(`/servers/${currentServer.id}/files/content`, {
+    method: "PUT",
+    token: store.token,
+    body: { path, content: document.getElementById("file-dialog-content").value },
+  });
+  if (status !== 204) fail(err, describeProblem(status, data));
+  else {
+    document.getElementById("file-editing").textContent = path;
+    document.getElementById("file-content").value =
+      document.getElementById("file-dialog-content").value;
+    err.hidden = true;
+  }
+});
 
 document.getElementById("form-file-read").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -607,7 +885,22 @@ async function refreshBackups() {
       if (res.status !== 200) fail(err, describeProblem(res.status, res.data));
       else refreshBackups();
     });
-    li.append(name, restore);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "linklike danger-text";
+    remove.textContent = b.locked ? "Unlock" : "Delete";
+    remove.addEventListener("click", async () => {
+      if (!b.locked && !window.confirm(`Delete backup ${b.fileName}? This cannot be undone.`))
+        return;
+      const res = await api(
+        `/servers/${currentServer.id}/backups/${b.id}${b.locked ? "/unlock" : ""}`,
+        { method: b.locked ? "POST" : "DELETE", token: store.token },
+      );
+      if (res.status !== 200 && res.status !== 204)
+        fail(err, describeProblem(res.status, res.data));
+      else refreshBackups();
+    });
+    li.append(name, restore, remove);
     list.append(li);
   }
 }
@@ -785,6 +1078,7 @@ async function refreshVariables() {
     return;
   }
   for (const v of data.variables) {
+    if (v.key === "maxMemory") continue;
     const label = document.createElement("label");
     label.textContent = v.label;
     const input = document.createElement("input");
@@ -911,10 +1205,7 @@ document.getElementById("form-subuser").addEventListener("submit", async (e) => 
   const err = document.getElementById("subusers-error");
   err.hidden = true;
   const fd = new FormData(e.target);
-  const permissions = String(fd.get("permissions") || "")
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
+  const permissions = fd.getAll("permission").map(String);
   const { status, data } = await api(`/servers/${currentServer.id}/users`, {
     method: "POST",
     token: store.token,
@@ -932,19 +1223,26 @@ document.getElementById("form-subuser").addEventListener("submit", async (e) => 
 function fillSettings() {
   document.getElementById("settings-name").value = currentServer.name;
   document.getElementById("settings-desc").value = currentServer.description || "";
+  document.getElementById("settings-memory").value = currentServer.memoryMb;
+  document.getElementById("settings-disk").value = currentServer.diskQuotaMb;
 }
 
 document.getElementById("form-settings").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = document.getElementById("settings-error");
   err.hidden = true;
+  const body = {
+    name: document.getElementById("settings-name").value,
+    description: document.getElementById("settings-desc").value,
+  };
+  if (me?.role === "owner" || me?.role === "admin") {
+    body.memoryMb = Number(document.getElementById("settings-memory").value);
+    body.diskQuotaMb = Number(document.getElementById("settings-disk").value);
+  }
   const { status, data } = await api(`/servers/${currentServer.id}`, {
     method: "PATCH",
     token: store.token,
-    body: {
-      name: document.getElementById("settings-name").value,
-      description: document.getElementById("settings-desc").value,
-    },
+    body,
   });
   if (status !== 200) fail(err, describeProblem(status, data));
   else {
@@ -989,4 +1287,6 @@ document.getElementById("btn-open-props").addEventListener("click", () => {
   openFile("server.properties");
 });
 
+renderPermissionOptions();
+renderApiPermissionOptions();
 boot();

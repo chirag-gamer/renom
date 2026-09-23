@@ -141,15 +141,27 @@ describe("api keys", () => {
 });
 
 describe("subusers", () => {
-  it("owner grants alice console-only access; she reads but cannot start", async () => {
+  it("owner grants alice console, rename, and user access; she cannot start or edit resources", async () => {
     const grant = await request(app)
       .post(`/api/v3/servers/${serverId}/users`)
       .set("authorization", `Bearer ${ownerToken}`)
       .send({
         username: "alice",
-        permissions: ["websocket.connect", "control.console", "user.create"],
+        permissions: ["websocket.connect", "control.console", "user.create", "settings.rename"],
       });
     expect(grant.status).toBe(201);
+
+    const servers = await request(app)
+      .get("/api/v3/servers")
+      .set("authorization", `Bearer ${aliceToken}`);
+    expect(servers.status).toBe(200);
+    expect(servers.body.items.map((item: { id: string }) => item.id)).toContain(serverId);
+
+    const resources = await request(app)
+      .patch(`/api/v3/servers/${serverId}`)
+      .set("authorization", `Bearer ${aliceToken}`)
+      .send({ memoryMb: 4096 });
+    expect(resources.status).toBe(403);
 
     const start = await request(app)
       .post(`/api/v3/servers/${serverId}/power`)

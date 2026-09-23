@@ -42,6 +42,16 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     },
     variables: [
       {
+        key: "javaVersion",
+        label: "Java version",
+        type: "enum",
+        default: "25",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        options: ["17", "21", "25"],
+      },
+      {
         key: "mcVersion",
         label: "Minecraft version",
         type: "string",
@@ -126,6 +136,16 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     },
     variables: [
       {
+        key: "javaVersion",
+        label: "Java version",
+        type: "enum",
+        default: "25",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        options: ["17", "21", "25"],
+      },
+      {
         key: "mcVersion",
         label: "Minecraft version",
         type: "string",
@@ -201,6 +221,16 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
       envCanon: {},
     },
     variables: [
+      {
+        key: "javaVersion",
+        label: "Java version",
+        type: "enum",
+        default: "25",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        options: ["17", "21", "25"],
+      },
       {
         key: "mcVersion",
         label: "Minecraft version",

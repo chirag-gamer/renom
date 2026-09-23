@@ -7,297 +7,396 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="brand">
-        <h1>Renom</h1>
-        <p class="tagline">Your game servers, on your machine.</p>
-      </header>
-
-      <section id="view-setup" class="card" hidden>
-        <h2>First, create your admin account</h2>
-        <p>
-          This screen only appears once. Whoever you create here owns the panel — after this, new
-          accounts are made from inside, never from this page.
-        </p>
-        <form id="form-setup">
-          <label
-            >Username
-            <input
-              name="username"
-              autocomplete="username"
-              required
-              minlength="3"
-              maxlength="32"
-              placeholder="e.g. admin"
-            />
-          </label>
-          <label
-            >Password <span class="hint">at least 12 characters</span>
-            <input
-              name="password"
-              type="password"
-              autocomplete="new-password"
-              required
-              minlength="12"
-              placeholder="Pick something long you don't reuse"
-            />
-          </label>
-          <label
-            >Email <span class="hint">optional</span>
-            <input name="email" type="email" autocomplete="email" placeholder="you@example.com" />
-          </label>
-          <label id="setup-token-wrap" hidden
-            >Setup token
-            <span class="hint"
-              >the installer printed this — it proves you're the one installing</span
-            >
-            <input name="setupToken" autocomplete="off" placeholder="Paste the setup token" />
-          </label>
-          <p class="error" id="setup-error" role="alert" hidden></p>
-          <button type="submit">Create admin account</button>
-        </form>
-      </section>
-
-      <section id="view-login" class="card" hidden>
-        <h2>Sign in</h2>
-        <p>Everything here lives on your own server. Sign in to manage it.</p>
-        <form id="form-login">
-          <label
-            >Username
-            <input name="username" autocomplete="username" required placeholder="Your username" />
-          </label>
-          <label
-            >Password
-            <input
-              name="password"
-              type="password"
-              autocomplete="current-password"
-              required
-              placeholder="Your password"
-            />
-          </label>
-          <p class="error" id="login-error" role="alert" hidden></p>
-          <button type="submit">Sign in</button>
-        </form>
-        <p class="note">
-          Locked out after too many tries? Wait a minute — the limit resets on its own.
-        </p>
-      </section>
-
-      <section id="view-home" class="card" hidden>
-        <h2 id="home-greeting">You're in.</h2>
-        <p id="home-sub">These are the game servers on this machine.</p>
-
-        <div id="servers-wrap">
-          <h3>Servers</h3>
-          <ul id="server-list" class="server-list"></ul>
-          <p id="server-empty" class="note" hidden>No servers yet. Create the first one below.</p>
-          <h3>New server</h3>
-          <form id="form-server" class="inline-form">
-            <input
-              name="name"
-              required
-              minlength="1"
-              maxlength="64"
-              placeholder="Name, e.g. survival"
-            />
-            <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
-            <button type="submit">Create</button>
-          </form>
-          <label class="check"
-            ><input type="checkbox" id="eula-check" /> I accept the Minecraft EULA
-            <span class="hint">(minecraft.net/eula — tick this for Minecraft servers)</span></label
-          >
-          <p class="error" id="server-error" role="alert" hidden></p>
-        </div>
-
-        <div id="admin-panel" hidden>
-          <h3>People with access</h3>
-          <ul id="user-list" class="user-list"></ul>
-          <h3>Add someone</h3>
-          <form id="form-user" class="inline-form">
-            <input name="username" required minlength="3" maxlength="32" placeholder="Username" />
-            <input
-              name="password"
-              type="password"
-              required
-              minlength="12"
-              placeholder="Password (12+ chars)"
-            />
-            <select name="role" aria-label="Role">
-              <option value="user">Player / user</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button type="submit">Add</button>
-          </form>
-          <p class="error" id="user-error" role="alert" hidden></p>
-        </div>
-
-        <p><button type="button" id="btn-signout" class="secondary">Sign out</button></p>
-      </section>
-
-      <section id="view-server" class="card wide" hidden>
-        <p><button type="button" id="btn-back" class="secondary">← All servers</button></p>
-        <h2 id="srv-name">Server</h2>
-        <p id="srv-meta" class="note"></p>
-        <div id="srv-power" class="btn-row" role="group" aria-label="Power">
-          <button type="button" data-power="start">Start</button>
-          <button type="button" data-power="restart" class="secondary">Restart</button>
-          <button type="button" data-power="stop" class="secondary">Stop</button>
-          <button type="button" data-power="kill" class="danger">Kill</button>
-        </div>
-        <p class="error" id="srv-error" role="alert" hidden></p>
-
-        <nav class="tabs" aria-label="Server sections">
-          <button type="button" data-tab="console" class="active">Console</button>
-          <button type="button" data-tab="files">Files</button>
-          <button type="button" data-tab="backups">Backups</button>
-          <button type="button" data-tab="schedules">Schedules</button>
-          <button type="button" data-tab="addons">Addons</button>
-          <button type="button" data-tab="startup">Startup</button>
-          <button type="button" data-tab="network">Network</button>
-          <button type="button" data-tab="users">Users</button>
-          <button type="button" data-tab="settings">Settings</button>
+    <div class="app-shell">
+      <aside class="app-sidebar" id="app-sidebar">
+        <div class="sidebar-brand"><strong>Renom</strong><span>Server management</span></div>
+        <nav class="sidebar-nav" aria-label="Main navigation">
+          <button type="button" data-view-link="home"><span>⌂</span> Servers</button>
+          <button type="button" data-view-link="admin" data-admin-only hidden>
+            <span>♙</span> Administration
+          </button>
+          <button type="button" data-view-link="account"><span>◉</span> Account</button>
+          <button type="button" data-view-link="api"><span>⌘</span> API keys</button>
         </nav>
-
-        <div id="tab-console">
-          <pre id="console-log" class="console" aria-live="off"></pre>
-          <form id="form-console" class="inline-form">
-            <input
-              name="command"
-              id="console-input"
-              placeholder="Type a server command, then Enter"
-              autocomplete="off"
-            />
-            <button type="submit">Send</button>
-          </form>
-          <p class="note" id="console-note">Live output appears here while the server runs.</p>
+        <div class="sidebar-footer">
+          <div id="sidebar-user" class="sidebar-user"></div>
+          <button type="button" id="btn-sidebar-signout" class="sidebar-signout">Sign out</button>
         </div>
+      </aside>
+      <main class="shell app-main">
+        <header class="brand">
+          <h1>Renom</h1>
+          <p class="tagline">Your game servers, on your machine.</p>
+        </header>
 
-        <div id="tab-files" hidden>
-          <p class="note" id="files-path">/</p>
+        <section id="view-setup" class="card" hidden>
+          <h2>First, create your admin account</h2>
           <p>
-            <button type="button" id="btn-open-props" class="secondary">
-              Open server.properties
-            </button>
+            This screen only appears once. Whoever you create here owns the panel — after this, new
+            accounts are made from inside, never from this page.
           </p>
-          <ul id="file-list" class="file-list"></ul>
-          <form id="form-file-read" class="inline-form">
-            <input name="path" placeholder="File to open, e.g. server.properties" />
-            <button type="submit" class="secondary">Open</button>
-          </form>
-          <label
-            >Editing: <span id="file-editing" class="note">nothing open</span>
-            <textarea
-              id="file-content"
-              rows="10"
-              placeholder="File contents appear here"
-            ></textarea>
-          </label>
-          <p><button type="button" id="btn-file-save">Save file</button></p>
-          <p class="error" id="files-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-backups" hidden>
-          <ul id="backup-list" class="user-list"></ul>
-          <p><button type="button" id="btn-backup">Back up now</button></p>
-          <p class="error" id="backups-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-schedules" hidden>
-          <ul id="schedule-list" class="user-list"></ul>
-          <form id="form-schedule" class="inline-form">
-            <input name="name" required maxlength="64" placeholder="Name, e.g. nightly restart" />
-            <input name="cron" required placeholder="When, e.g. 0 4 * * *" />
-            <select name="action" aria-label="Does">
-              <option value="restart">Restart the server</option>
-              <option value="start">Start the server</option>
-              <option value="stop">Stop the server</option>
-              <option value="backup">Back it up</option>
-            </select>
-            <button type="submit">Add schedule</button>
-          </form>
-          <p class="error" id="schedules-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-addons" hidden>
-          <p>Mods and plugins from Modrinth. They activate on the next start.</p>
-          <ul id="addon-list" class="user-list"></ul>
-          <form id="form-addon" class="inline-form">
-            <input name="projects" required placeholder="Project ids, e.g. lithium, phosphor" />
-            <button type="submit">Install from Modrinth</button>
-          </form>
-          <p class="note">
-            Set an exact Minecraft version on the Startup tab first — “latest” can't resolve files.
-          </p>
-          <p class="error" id="addons-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-startup" hidden>
-          <p>
-            These are the knobs your server's blueprint defines. Changes apply on the next start.
-          </p>
-          <form id="form-variables">
-            <div id="variable-fields"></div>
-            <p><button type="submit">Save startup settings</button></p>
-          </form>
-          <p class="error" id="startup-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-network" hidden>
-          <h3>Addresses</h3>
-          <ul id="alloc-list" class="user-list"></ul>
-          <h3>Public tunnel <span class="chip">optional</span></h3>
-          <p id="tunnel-info" class="note">No tunnel. Players join you by your IP and port.</p>
-          <form id="form-tunnel" class="inline-form">
-            <input name="endpoint" placeholder="Endpoint name, e.g. my-server-1" />
-            <button type="submit">Enable Minekube tunnel</button>
-          </form>
-          <p class="note">
-            Installs the Minekube Connect plugin and shows the public address here after boot.
-          </p>
-          <p class="error" id="network-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-users" hidden>
-          <p>People who can touch this server — and exactly what they're allowed to do.</p>
-          <ul id="subuser-list" class="user-list"></ul>
-          <form id="form-subuser" class="inline-form">
-            <input name="username" required placeholder="Username" />
-            <input
-              name="permissions"
-              required
-              placeholder="Permissions, e.g. control.console,file.read"
-            />
-            <button type="submit">Invite</button>
-          </form>
-          <p class="error" id="subusers-error" role="alert" hidden></p>
-        </div>
-
-        <div id="tab-settings" hidden>
-          <form id="form-settings">
+          <form id="form-setup">
             <label
-              >Name
-              <input name="name" id="settings-name" required maxlength="64" />
+              >Username
+              <input
+                name="username"
+                autocomplete="username"
+                required
+                minlength="3"
+                maxlength="32"
+                placeholder="e.g. admin"
+              />
             </label>
             <label
-              >Description
-              <input name="description" id="settings-desc" maxlength="500" />
+              >Password <span class="hint">at least 12 characters</span>
+              <input
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                required
+                minlength="12"
+                placeholder="Pick something long you don't reuse"
+              />
             </label>
-            <p><button type="submit">Save settings</button></p>
+            <label
+              >Email <span class="hint">optional</span>
+              <input name="email" type="email" autocomplete="email" placeholder="you@example.com" />
+            </label>
+            <label id="setup-token-wrap" hidden
+              >Setup token
+              <span class="hint"
+                >the installer printed this — it proves you're the one installing</span
+              >
+              <input name="setupToken" autocomplete="off" placeholder="Paste the setup token" />
+            </label>
+            <p class="error" id="setup-error" role="alert" hidden></p>
+            <button type="submit">Create admin account</button>
           </form>
-          <p>
-            <button type="button" id="btn-reinstall" class="secondary">
-              Reinstall server files
-            </button>
+        </section>
+
+        <section id="view-login" class="card" hidden>
+          <h2>Sign in</h2>
+          <p>Everything here lives on your own server. Sign in to manage it.</p>
+          <form id="form-login">
+            <label
+              >Username
+              <input name="username" autocomplete="username" required placeholder="Your username" />
+            </label>
+            <label
+              >Password
+              <input
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                placeholder="Your password"
+              />
+            </label>
+            <p class="error" id="login-error" role="alert" hidden></p>
+            <button type="submit">Sign in</button>
+          </form>
+          <p class="note">
+            Locked out after too many tries? Wait a minute — the limit resets on its own.
           </p>
-          <p>
-            <button type="button" id="btn-delete-server" class="danger">Delete this server</button>
+        </section>
+
+        <section id="view-home" class="card" hidden>
+          <h2 id="home-greeting">You're in.</h2>
+          <p id="home-sub">These are the game servers on this machine.</p>
+
+          <div id="servers-wrap">
+            <h3>Servers</h3>
+            <ul id="server-list" class="server-list"></ul>
+            <p id="server-empty" class="note" hidden>No servers yet. Create the first one below.</p>
+            <h3>New server</h3>
+            <form id="form-server" class="inline-form">
+              <input
+                name="name"
+                required
+                minlength="1"
+                maxlength="64"
+                placeholder="Name, e.g. survival"
+              />
+              <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
+              <label class="admin-create-field" data-admin-only hidden
+                >Memory MB<input name="memoryMb" type="number" min="128" max="1048576" value="1024"
+              /></label>
+              <label class="admin-create-field" data-admin-only hidden
+                >Disk MB<input
+                  name="diskQuotaMb"
+                  type="number"
+                  min="256"
+                  max="10485760"
+                  value="5120"
+              /></label>
+              <button type="submit">Create</button>
+            </form>
+            <label class="check"
+              ><input type="checkbox" id="eula-check" /> I accept the Minecraft EULA
+              <span class="hint"
+                >(minecraft.net/eula — tick this for Minecraft servers)</span
+              ></label
+            >
+            <p class="error" id="server-error" role="alert" hidden></p>
+          </div>
+
+          <p><button type="button" id="btn-signout" class="secondary">Sign out</button></p>
+        </section>
+
+        <section id="view-admin" class="card wide" hidden>
+          <div class="page-header">
+            <div>
+              <p class="eyebrow">Administration</p>
+              <h2>Panel management</h2>
+              <p class="note">Manage accounts, roles, quotas, and access across this machine.</p>
+            </div>
+          </div>
+          <div id="admin-panel">
+            <h3>People with access</h3>
+            <ul id="user-list" class="user-list"></ul>
+            <h3>Add someone</h3>
+            <form id="form-user" class="inline-form">
+              <input name="username" required minlength="3" maxlength="32" placeholder="Username" />
+              <input
+                name="password"
+                type="password"
+                required
+                minlength="12"
+                placeholder="Password (12+ chars)"
+              />
+              <select name="role" aria-label="Role">
+                <option value="user">Player / user</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button type="submit">Add account</button>
+            </form>
+            <p class="error" id="user-error" role="alert" hidden></p>
+            <h3>Servers</h3>
+            <ul id="admin-server-list" class="user-list"></ul>
+            <p class="error" id="admin-servers-error" role="alert" hidden></p>
+          </div>
+        </section>
+
+        <section id="view-account" class="card" hidden>
+          <p class="eyebrow">Account</p>
+          <h2>Your account</h2>
+          <p class="note">Account settings are managed by the panel administrator.</p>
+          <div id="account-summary"></div>
+        </section>
+
+        <section id="view-api" class="card" hidden>
+          <p class="eyebrow">Developer access</p>
+          <h2>API keys</h2>
+          <p class="note">
+            Create narrowly scoped credentials for scripts. Secrets are shown only once.
           </p>
-          <p class="error" id="settings-error" role="alert" hidden></p>
-        </div>
-      </section>
-    </main>
+          <ul id="api-key-list" class="user-list"></ul>
+          <form id="form-api-key" class="permission-form">
+            <label
+              >Label<input name="memo" maxlength="128" placeholder="e.g. backup script"
+            /></label>
+            <fieldset>
+              <legend>Scopes</legend>
+              <div id="api-permission-options" class="permission-grid"></div>
+            </fieldset>
+            <button type="submit">Create API key</button>
+          </form>
+          <p class="error" id="api-error" role="alert" hidden></p>
+        </section>
+
+        <section id="view-server" class="card wide" hidden>
+          <p><button type="button" id="btn-back" class="secondary">← All servers</button></p>
+          <h2 id="srv-name">Server</h2>
+          <p id="srv-meta" class="note"></p>
+          <div id="srv-power" class="btn-row" role="group" aria-label="Power">
+            <button type="button" data-power="start">Start</button>
+            <button type="button" data-power="restart" class="secondary">Restart</button>
+            <button type="button" data-power="stop" class="secondary">Stop</button>
+            <button type="button" data-power="kill" class="danger">Kill</button>
+          </div>
+          <p class="error" id="srv-error" role="alert" hidden></p>
+
+          <nav class="tabs" aria-label="Server sections">
+            <button type="button" data-tab="console" class="active">Console</button>
+            <button type="button" data-tab="files">Files</button>
+            <button type="button" data-tab="backups">Backups</button>
+            <button type="button" data-tab="schedules">Schedules</button>
+            <button type="button" data-tab="addons">Addons</button>
+            <button type="button" data-tab="startup">Startup</button>
+            <button type="button" data-tab="network">Network</button>
+            <button type="button" data-tab="users">Users</button>
+            <button type="button" data-tab="settings">Settings</button>
+          </nav>
+
+          <div id="tab-console">
+            <pre id="console-log" class="console" aria-live="off"></pre>
+            <form id="form-console" class="inline-form">
+              <input
+                name="command"
+                id="console-input"
+                placeholder="Type a server command, then Enter"
+                autocomplete="off"
+              />
+              <button type="submit">Send</button>
+            </form>
+            <p class="note" id="console-note">Live output appears here while the server runs.</p>
+          </div>
+
+          <div id="tab-files" hidden>
+            <p class="note" id="files-path">/</p>
+            <p>
+              <button type="button" id="btn-open-props" class="secondary">
+                Open server.properties
+              </button>
+            </p>
+            <ul id="file-list" class="file-list"></ul>
+            <form id="form-file-read" class="inline-form">
+              <input name="path" placeholder="File to open, e.g. server.properties" />
+              <button type="submit" class="secondary">Open</button>
+            </form>
+            <label
+              >Editing: <span id="file-editing" class="note">nothing open</span>
+              <textarea
+                id="file-content"
+                rows="10"
+                placeholder="File contents appear here"
+              ></textarea>
+            </label>
+            <p><button type="button" id="btn-file-save">Save file</button></p>
+            <p class="error" id="files-error" role="alert" hidden></p>
+          </div>
+
+          <dialog id="file-editor" class="file-editor">
+            <div class="dialog-header">
+              <h3>Edit file</h3>
+              <button type="button" id="btn-file-close" class="secondary">Close</button>
+            </div>
+            <p id="file-dialog-path" class="note"></p>
+            <textarea id="file-dialog-content" rows="18" spellcheck="false"></textarea>
+            <p><button type="button" id="btn-file-dialog-save">Save changes</button></p>
+            <p class="error" id="file-dialog-error" role="alert" hidden></p>
+          </dialog>
+
+          <div id="tab-backups" hidden>
+            <ul id="backup-list" class="user-list"></ul>
+            <p><button type="button" id="btn-backup">Back up now</button></p>
+            <p class="error" id="backups-error" role="alert" hidden></p>
+          </div>
+
+          <div id="tab-schedules" hidden>
+            <ul id="schedule-list" class="user-list"></ul>
+            <form id="form-schedule" class="inline-form">
+              <input name="name" required maxlength="64" placeholder="Name, e.g. nightly restart" />
+              <input name="cron" required placeholder="When, e.g. 0 4 * * *" />
+              <select name="action" aria-label="Does">
+                <option value="restart">Restart the server</option>
+                <option value="start">Start the server</option>
+                <option value="stop">Stop the server</option>
+                <option value="backup">Back it up</option>
+              </select>
+              <button type="submit">Add schedule</button>
+            </form>
+            <p class="error" id="schedules-error" role="alert" hidden></p>
+          </div>
+
+          <div id="tab-addons" hidden>
+            <p>Mods and plugins from Modrinth. They activate on the next start.</p>
+            <ul id="addon-list" class="user-list"></ul>
+            <form id="form-addon" class="inline-form">
+              <input name="projects" required placeholder="Project ids, e.g. lithium, phosphor" />
+              <button type="submit">Install from Modrinth</button>
+            </form>
+            <p class="note">
+              Set an exact Minecraft version on the Startup tab first — “latest” can't resolve
+              files.
+            </p>
+            <p class="error" id="addons-error" role="alert" hidden></p>
+          </div>
+
+          <div id="tab-startup" hidden>
+            <p>
+              These are the knobs your server's blueprint defines. Changes apply on the next start.
+            </p>
+            <form id="form-variables">
+              <div id="variable-fields"></div>
+              <p><button type="submit">Save startup settings</button></p>
+            </form>
+            <p class="error" id="startup-error" role="alert" hidden></p>
+          </div>
+
+          <div id="tab-network" hidden>
+            <h3>Addresses</h3>
+            <ul id="alloc-list" class="user-list"></ul>
+            <h3>Public tunnel <span class="chip">optional</span></h3>
+            <p id="tunnel-info" class="note">No tunnel. Players join you by your IP and port.</p>
+            <form id="form-tunnel" class="inline-form">
+              <input name="endpoint" placeholder="Endpoint name, e.g. my-server-1" />
+              <button type="submit">Enable Minekube tunnel</button>
+            </form>
+            <p class="note">
+              Installs the Minekube Connect plugin and shows the public address here after boot.
+            </p>
+            <p class="error" id="network-error" role="alert" hidden></p>
+          </div>
+
+          <div id="tab-users" hidden>
+            <p>People who can touch this server — and exactly what they're allowed to do.</p>
+            <ul id="subuser-list" class="user-list"></ul>
+            <form id="form-subuser" class="permission-form">
+              <label>
+                Username
+                <input name="username" required placeholder="Username" />
+              </label>
+              <fieldset>
+                <legend>Permissions</legend>
+                <div id="permission-options" class="permission-grid"></div>
+              </fieldset>
+              <button type="submit">Invite collaborator</button>
+            </form>
+            <p class="error" id="subusers-error" role="alert" hidden></p>
+          </div>
+
+          <div id="tab-settings" hidden>
+            <form id="form-settings">
+              <label
+                >Name
+                <input name="name" id="settings-name" required maxlength="64" />
+              </label>
+              <label
+                >Description
+                <input name="description" id="settings-desc" maxlength="500" />
+              </label>
+              <label data-admin-only hidden
+                >Memory limit (MB)
+                <input name="memoryMb" id="settings-memory" type="number" min="128" max="1048576" />
+              </label>
+              <label data-admin-only hidden
+                >Disk quota (MB)
+                <input
+                  name="diskQuotaMb"
+                  id="settings-disk"
+                  type="number"
+                  min="256"
+                  max="10485760"
+                />
+              </label>
+              <p><button type="submit">Save settings</button></p>
+            </form>
+            <p>
+              <button type="button" id="btn-reinstall" class="secondary">
+                Reinstall server files
+              </button>
+            </p>
+            <p>
+              <button type="button" id="btn-delete-server" class="danger">
+                Delete this server
+              </button>
+            </p>
+            <p class="error" id="settings-error" role="alert" hidden></p>
+          </div>
+        </section>
+      </main>
+    </div>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/app.js"></script>
   </body>
