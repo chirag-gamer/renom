@@ -91,6 +91,114 @@ describe("auth + users + authorization", () => {
     expect(res.body.user.quotas.maxServers).toBeGreaterThan(0);
   });
 
+  it("admin user detail exposes owned servers and can edit username", async () => {
+    const created = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "zoe", password: "zoe-password-1", role: "user" });
+    const userId = created.body.user.id as string;
+    const server = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "zoe-owned",
+        blueprintSlug: "paper",
+        ownerUsername: "zoe",
+        eulaAccepted: true,
+      });
+
+    const detail = await request(app)
+      .get(`/api/v3/users/${userId}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.user.username).toBe("zoe");
+    expect(detail.body.servers).toHaveLength(1);
+    expect(detail.body.servers[0].ownerUsername).toBe("zoe");
+
+    const renamed = await request(app)
+      .patch(`/api/v3/users/${userId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "zoe-renamed" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.user.username).toBe("zoe-renamed");
+    expect(server.status).toBe(201);
+  });
+
+  it("users can update their display name and password through account", async () => {
+    const created = await request(app)
+      .post("/api/v3/users")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "account-user", password: "account-password-1" });
+    const userId = created.body.user.id as string;
+    const login = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "account-user", password: "account-password-1" });
+    const token = login.body.token as string;
+    const key = await request(app)
+      .post("/api/v3/api-keys")
+      .set("authorization", `Bearer ${token}`)
+      .send({ memo: "account test", scopes: ["*"] });
+    const denied = await request(app)
+      .patch("/api/v3/account")
+      .set("authorization", `Bearer ${key.body.token}`)
+      .send({ displayName: "Should not work" });
+    expect(denied.status).toBe(403);
+    const updated = await request(app)
+      .patch("/api/v3/account")
+      .set("authorization", `Bearer ${token}`)
+      .send({ displayName: "Account User", password: "account-password-2" });
+    expect(updated.status).toBe(200);
+    expect(updated.body.passwordChanged).toBe(true);
+
+    const stale = await request(app).get("/api/v3/auth/me").set("authorization", `Bearer ${token}`);
+    expect(stale.status).toBe(401);
+    const fresh = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "account-user", password: "account-password-2" });
+    expect(fresh.status).toBe(200);
+    expect(fresh.body.user.displayName).toBe("Account User");
+    expect(userId).toBeTruthy();
+  });
+
+  it("rejects duplicate email before rotating account or admin passwords", async () => {
+    const recipient = ctx.users.create({
+      username: "email-recipient",
+      password: "email-recipient-password",
+      email: "taken@example.com",
+      role: "user",
+    });
+    const source = ctx.users.create({
+      username: "email-source",
+      password: "email-source-password",
+      role: "user",
+    });
+    const login = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: source.username, password: "email-source-password" });
+    const token = login.body.token as string;
+
+    const account = await request(app)
+      .patch("/api/v3/account")
+      .set("authorization", `Bearer ${token}`)
+      .send({ email: recipient.email, password: "new-source-password" });
+    expect(account.status).toBe(409);
+
+    const admin = await request(app)
+      .patch(`/api/v3/users/${source.id}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ email: recipient.email, password: "new-source-password" });
+    expect(admin.status).toBe(409);
+
+    const old = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: source.username, password: "email-source-password" });
+    const rotated = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: source.username, password: "new-source-password" });
+    expect(old.status).toBe(200);
+    expect(rotated.status).toBe(401);
+  });
+
   it("owner can update user roles while admins cannot promote accounts", async () => {
     const aliceId = ctx.users.byUsername("alice")!.id;
     try {

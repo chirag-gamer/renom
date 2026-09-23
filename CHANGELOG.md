@@ -70,6 +70,8 @@ All notable changes to Renom are documented here. Format based on
 - Web client (`apps/panel/public`, no build step): setup, sign-in, servers list + creation,
   server detail with live console, file browser + editor, backups, schedules, and an admin
   home with user management — in plain language.
+- Dedicated account self-service, admin user detail pages, and an admin server-creation page;
+  the main server list no longer contains server creation, and admin server rows show their owner.
 - Files API and blueprints catalog API are now served by the panel (routers existed but
   were never mounted); built-in blueprints seed idempotently at boot.
 

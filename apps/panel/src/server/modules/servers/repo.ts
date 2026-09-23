@@ -7,6 +7,7 @@ export interface ServerRow {
   name: string;
   description: string;
   owner_id: string;
+  owner_username: string;
   blueprint_id: string;
   blueprint_slug: string;
   blueprint_version_tag: string;
@@ -21,7 +22,7 @@ export interface ServerRow {
   updated_at: number;
 }
 
-const PUBLIC_COLUMNS = `s.id, s.name, s.description, s.owner_id, s.blueprint_id, b.slug AS blueprint_slug,
+const PUBLIC_COLUMNS = `s.id, s.name, s.description, s.owner_id, u.username AS owner_username, s.blueprint_id, b.slug AS blueprint_slug,
   s.blueprint_version_tag, s.image_ref, s.node_id, s.status, s.runtime_state,
   s.memory_mb, s.disk_quota_mb, s.eula_accepted_at, s.created_at, s.updated_at`;
 
@@ -31,8 +32,9 @@ export class ServersRepo {
   byId(id: string): ServerRow | null {
     const row = this.db
       .prepare(
-        `SELECT ${PUBLIC_COLUMNS} FROM servers s JOIN blueprints b ON b.id = s.blueprint_id
-         WHERE s.id = ? AND s.deleted_at IS NULL`,
+        `SELECT ${PUBLIC_COLUMNS} FROM servers s
+          JOIN users u ON u.id = s.owner_id JOIN blueprints b ON b.id = s.blueprint_id
+          WHERE s.id = ? AND s.deleted_at IS NULL`,
       )
       .get(id) as ServerRow | undefined;
     return row ?? null;
@@ -56,10 +58,21 @@ export class ServersRepo {
     params.push(args.limit);
     return this.db
       .prepare(
-        `SELECT ${PUBLIC_COLUMNS} FROM servers s JOIN blueprints b ON b.id = s.blueprint_id
-         WHERE ${where.join(" AND ")} ORDER BY s.id LIMIT ?`,
+        `SELECT ${PUBLIC_COLUMNS} FROM servers s
+          JOIN users u ON u.id = s.owner_id JOIN blueprints b ON b.id = s.blueprint_id
+          WHERE ${where.join(" AND ")} ORDER BY s.id LIMIT ?`,
       )
       .all(...params) as unknown as ServerRow[];
+  }
+
+  listOwned(userId: string): ServerRow[] {
+    return this.db
+      .prepare(
+        `SELECT ${PUBLIC_COLUMNS} FROM servers s
+         JOIN users u ON u.id = s.owner_id JOIN blueprints b ON b.id = s.blueprint_id
+         WHERE s.owner_id = ? AND s.deleted_at IS NULL ORDER BY s.id`,
+      )
+      .all(userId) as unknown as ServerRow[];
   }
 
   countOwned(userId: string): number {
@@ -275,6 +288,7 @@ export function toPublicServer(
     name: s.name,
     description: s.description,
     ownerId: s.owner_id,
+    ownerUsername: s.owner_username,
     blueprintSlug: s.blueprint_slug,
     status: s.status as PublicServer["status"],
     runtimeState: s.runtime_state as PublicServer["runtimeState"],

@@ -9,6 +9,8 @@ const views = {
   home: document.getElementById("view-home"),
   admin: document.getElementById("view-admin"),
   account: document.getElementById("view-account"),
+  "server-create": document.getElementById("view-server-create"),
+  "user-detail": document.getElementById("view-user-detail"),
   api: document.getElementById("view-api"),
   server: document.getElementById("view-server"),
 };
@@ -20,19 +22,27 @@ function show(name) {
   document.querySelectorAll("[data-route]").forEach((link) => {
     link.classList.toggle(
       "active",
-      link.dataset.route === name || (name === "server" && link.dataset.route === "home"),
+      link.dataset.route === name ||
+        ((name === "server-create" || name === "user-detail") && link.dataset.route === "admin") ||
+        (name === "server" && link.dataset.route === "home"),
     );
   });
 }
 
-function setView(name) {
-  if (name === "admin" && me?.role !== "owner" && me?.role !== "admin") return;
+function setView(name, detailId = "") {
+  const adminOnly = name === "admin" || name === "server-create" || name === "user-detail";
+  if (adminOnly && me?.role !== "owner" && me?.role !== "admin") return;
   show(name);
   if (name === "admin") {
     setAdminSection(window.location.pathname.split("/")[2] || "users");
     void refreshUsers();
     void refreshAdminServers();
   }
+  if (name === "server-create") {
+    void refreshBlueprints();
+    void refreshUsers();
+  }
+  if (name === "user-detail") void refreshUserDetail(detailId);
   if (name === "api") void refreshApiKeys();
   if (name === "account") renderAccount();
 }
@@ -74,6 +84,23 @@ async function routeFromPath() {
     return;
   }
   if (currentServer) leaveServer();
+  if (path === "/admin/servers/new") {
+    if (me?.role !== "owner" && me?.role !== "admin") {
+      await navigate("/");
+      return;
+    }
+    setView("server-create");
+    return;
+  }
+  const userMatch = path.match(/^\/admin\/users\/([^/]+)$/);
+  if (userMatch) {
+    if (me?.role !== "owner" && me?.role !== "admin") {
+      await navigate("/");
+      return;
+    }
+    setView("user-detail", userMatch[1]);
+    return;
+  }
   if (path.startsWith("/admin")) {
     if (me?.role !== "owner" && me?.role !== "admin") {
       await navigate("/");
@@ -105,6 +132,9 @@ function renderAccount() {
   metadata.textContent = `${me.username} · ${me.role}`;
   row.append(name, metadata);
   target.append(row);
+  document.getElementById("account-display-name").value = me.displayName || me.username;
+  document.getElementById("account-email").value = me.email || "";
+  document.getElementById("account-password").value = "";
 }
 
 function fail(el, message) {
@@ -150,6 +180,8 @@ let currentServer = null;
 let socket = null;
 let filesDir = "";
 let editingUserId = "";
+let userDetailWasSuspended = false;
+let userDetailRequest = 0;
 const serverPermissions = [
   "websocket.connect",
   "control.console",
@@ -342,9 +374,6 @@ async function loadHome() {
   document.querySelectorAll("[data-admin-only]").forEach((link) => {
     link.hidden = me.role !== "owner" && me.role !== "admin";
   });
-  const canCreate = me.role === "owner" || me.role === "admin";
-  document.getElementById("server-create-heading").hidden = !canCreate;
-  document.getElementById("form-server").hidden = !canCreate;
   await Promise.all([refreshServers(), refreshBlueprints()]);
   await routeFromPath();
   return true;
@@ -353,7 +382,7 @@ async function loadHome() {
 async function refreshServers() {
   const list = document.getElementById("server-list");
   const empty = document.getElementById("server-empty");
-  const err = document.getElementById("server-error");
+  const err = document.getElementById("server-list-error");
   empty.hidden = true;
   const { status, data } = await api("/servers?limit=100", { token: store.token });
   list.innerHTML = "";
@@ -413,7 +442,8 @@ async function refreshAdminServers() {
       open.addEventListener("click", () => openServer(server.id));
       const meta = document.createElement("span");
       meta.className = "role";
-      meta.textContent = `${server.blueprintSlug} · ${server.status}`;
+      const owner = server.ownerUsername ? ` · owner: ${server.ownerUsername}` : "";
+      meta.textContent = `${server.blueprintSlug} · ${server.status}${owner}`;
       li.append(open, meta);
       list.append(li);
     }
@@ -438,13 +468,22 @@ async function refreshBlueprints() {
   }
 }
 
+document.getElementById("btn-admin-create-server").addEventListener("click", () => {
+  void navigate("/admin/servers/new");
+});
+
+document.getElementById("btn-server-create-back").addEventListener("click", () => {
+  void navigate("/admin/servers");
+});
+
 document.getElementById("form-server").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const err = document.getElementById("server-error");
+  const err = document.getElementById("server-create-error");
   err.hidden = true;
   const fd = new FormData(e.target);
   const body = {
     name: fd.get("name"),
+    description: fd.get("description") || "",
     blueprintSlug: fd.get("blueprint"),
     eulaAccepted: document.getElementById("eula-check").checked || undefined,
   };
@@ -460,36 +499,12 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   });
   if (status === 201) {
     e.target.reset();
-    await refreshServers();
-    openServer(data.server.id);
+    await refreshAdminServers();
+    await navigate("/admin/servers");
   } else {
     fail(err, describeProblem(status, data));
   }
 });
-
-function openUserEditor(user) {
-  editingUserId = user.id;
-  document.getElementById("user-editor-title").textContent = `Edit ${user.username}`;
-  document.getElementById("user-editor-username").textContent = user.username;
-  document.getElementById("user-editor-display-name").value = user.displayName || user.username;
-  document.getElementById("user-editor-email").value = user.email || "";
-  document.getElementById("user-editor-role").value = user.role === "admin" ? "admin" : "user";
-  document.getElementById("user-editor-role").disabled =
-    user.role === "owner" || me?.role !== "owner";
-  document.getElementById("user-editor-max-servers").value = user.quotas.maxServers;
-  document.getElementById("user-editor-ram").value = user.quotas.ramMb;
-  document.getElementById("user-editor-disk").value = user.quotas.diskMb;
-  document.getElementById("user-editor-error").hidden = true;
-  const dialog = document.getElementById("user-editor");
-  if (typeof dialog.showModal === "function") dialog.showModal();
-  else dialog.setAttribute("open", "");
-}
-
-function closeUserEditor() {
-  const dialog = document.getElementById("user-editor");
-  if (typeof dialog.close === "function") dialog.close();
-  else dialog.removeAttribute("open");
-}
 
 async function refreshUsers() {
   const list = document.getElementById("user-list");
@@ -510,18 +525,15 @@ async function refreshUsers() {
         ownerSelect.append(option);
       }
       const li = document.createElement("li");
-      const name = document.createElement("span");
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "linklike";
       name.textContent = u.displayName || u.username;
+      name.addEventListener("click", () => navigate(`/admin/users/${u.id}`));
       const role = document.createElement("span");
       role.className = "role";
       role.textContent = `${u.role}${u.suspended ? " (suspended)" : ""}`;
       const canManage = u.role === "user" || me?.role === "owner";
-      const edit = document.createElement("button");
-      edit.type = "button";
-      edit.className = "linklike";
-      edit.textContent = "Edit";
-      edit.hidden = !canManage;
-      edit.addEventListener("click", () => openUserEditor(u));
       const reset = document.createElement("button");
       reset.type = "button";
       reset.className = "linklike";
@@ -593,7 +605,7 @@ async function refreshUsers() {
         if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
         else refreshUsers();
       });
-      li.append(name, role, edit, reset, suspend, remove);
+      li.append(name, role, reset, suspend, remove);
       list.append(li);
     }
     if (!data.nextCursor) return;
@@ -623,24 +635,138 @@ document.getElementById("form-user").addEventListener("submit", async (e) => {
   }
 });
 
-document.getElementById("btn-user-editor-close").addEventListener("click", closeUserEditor);
+async function refreshUserDetail(userId) {
+  editingUserId = userId;
+  const request = ++userDetailRequest;
+  const err = document.getElementById("user-detail-error");
+  const list = document.getElementById("user-owned-servers");
+  err.hidden = true;
+  list.innerHTML = "";
+  const { status, data } = await api(`/users/${encodeURIComponent(userId)}`, {
+    token: store.token,
+  });
+  if (request !== userDetailRequest) return;
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  const user = data.user;
+  document.getElementById("user-detail-heading").textContent = user.displayName || user.username;
+  document.getElementById("user-detail-meta").textContent = `${user.username} · ${user.role}`;
+  document.getElementById("user-detail-username").value = user.username;
+  document.getElementById("user-detail-display-name").value = user.displayName || user.username;
+  document.getElementById("user-detail-email").value = user.email || "";
+  document.getElementById("user-detail-role").value = user.role === "admin" ? "admin" : "user";
+  document.getElementById("user-detail-status").value = user.suspended ? "suspended" : "active";
+  userDetailWasSuspended = user.suspended;
+  document.getElementById("user-detail-max-servers").value = user.quotas.maxServers;
+  document.getElementById("user-detail-ram").value = user.quotas.ramMb;
+  document.getElementById("user-detail-disk").value = user.quotas.diskMb;
+  document.getElementById("user-detail-password").value = "";
 
-document.getElementById("form-user-edit").addEventListener("submit", async (e) => {
+  const canManage = user.role === "user" || me?.role === "owner";
+  document.getElementById("user-detail-save").disabled = !canManage;
+  document.getElementById("btn-user-detail-delete").disabled = !canManage || user.role === "owner";
+  for (const id of [
+    "user-detail-username",
+    "user-detail-display-name",
+    "user-detail-email",
+    "user-detail-password",
+    "user-detail-max-servers",
+    "user-detail-ram",
+    "user-detail-disk",
+  ]) {
+    document.getElementById(id).disabled = !canManage;
+  }
+  document.getElementById("user-detail-role").disabled =
+    !canManage || me?.role !== "owner" || user.role === "owner";
+  document.getElementById("user-detail-status").disabled = !canManage || user.role === "owner";
+
+  if (data.servers.length === 0) {
+    const empty = document.createElement("li");
+    empty.textContent = "This user owns no servers.";
+    list.append(empty);
+  }
+  for (const server of data.servers) {
+    const li = document.createElement("li");
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "linklike";
+    open.textContent = server.name;
+    open.addEventListener("click", () => navigate(`/servers/${server.id}/console`));
+    const meta = document.createElement("span");
+    meta.className = "role";
+    meta.textContent = `${server.blueprintSlug} · ${server.status}`;
+    li.append(open, meta);
+    list.append(li);
+  }
+}
+
+document
+  .getElementById("btn-user-detail-back")
+  .addEventListener("click", () => navigate("/admin/users"));
+
+document.getElementById("btn-user-detail-delete").addEventListener("click", async () => {
+  const err = document.getElementById("user-detail-error");
+  const userId = editingUserId;
+  err.hidden = true;
+  if (!window.confirm("Delete this user?")) return;
+  let res = await api(`/users/${userId}`, { method: "DELETE", token: store.token });
+  if (res.status === 409) {
+    const transferTo = window.prompt(
+      "Transfer this user's servers to which username? Leave blank to cancel.",
+    );
+    if (!transferTo) return;
+    let target = null;
+    let cursor = null;
+    for (;;) {
+      const qs = cursor
+        ? `/users?limit=100&cursor=${encodeURIComponent(cursor)}`
+        : "/users?limit=100";
+      const users = await api(qs, { token: store.token });
+      if (users.status !== 200) break;
+      target = users.data.items.find(
+        (candidate) => candidate.id !== userId && candidate.username === transferTo,
+      );
+      if (target || !users.data.nextCursor) break;
+      cursor = users.data.nextCursor;
+    }
+    if (!target) {
+      fail(err, "That transfer account was not found or is suspended.");
+      return;
+    }
+    res = await api(`/users/${userId}?transferTo=${encodeURIComponent(target.id)}`, {
+      method: "DELETE",
+      token: store.token,
+    });
+  }
+  if (res.status !== 204) {
+    fail(err, describeProblem(res.status, res.data));
+    return;
+  }
+  if (editingUserId === userId) await navigate("/admin/users");
+});
+
+document.getElementById("form-user-detail").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const err = document.getElementById("user-editor-error");
+  const err = document.getElementById("user-detail-error");
   err.hidden = true;
   const fd = new FormData(e.target);
   const body = {
+    username: String(fd.get("username") || "").trim(),
     displayName: String(fd.get("displayName") || "").trim(),
     quotaMaxServers: Number(fd.get("quotaMaxServers")),
     quotaRamMb: Number(fd.get("quotaRamMb")),
     quotaDiskMb: Number(fd.get("quotaDiskMb")),
   };
+  const suspended = fd.get("status") === "suspended";
+  if (suspended !== userDetailWasSuspended) body.suspended = suspended;
   const email = String(fd.get("email") || "").trim();
   if (email) body.email = email;
-  if (me?.role === "owner" && !document.getElementById("user-editor-role").disabled) {
-    body.role = fd.get("role");
-  }
+  const password = String(fd.get("password") || "");
+  if (password) body.password = password;
+  const roleSelect = document.getElementById("user-detail-role");
+  if (!roleSelect.disabled) body.role = roleSelect.value;
   const { status, data } = await api(`/users/${editingUserId}`, {
     method: "PATCH",
     token: store.token,
@@ -650,8 +776,44 @@ document.getElementById("form-user-edit").addEventListener("submit", async (e) =
     fail(err, describeProblem(status, data));
     return;
   }
-  closeUserEditor();
-  await refreshUsers();
+  if (password && editingUserId === me?.id) {
+    store.token = null;
+    me = null;
+    history.replaceState({}, "", "/login");
+    show("login");
+    return;
+  }
+  await refreshUserDetail(editingUserId);
+});
+
+document.getElementById("form-account").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("account-error");
+  err.hidden = true;
+  const fd = new FormData(e.target);
+  const body = { displayName: String(fd.get("displayName") || "").trim() };
+  const email = String(fd.get("email") || "").trim();
+  if (email) body.email = email;
+  const password = String(fd.get("password") || "");
+  if (password) body.password = password;
+  const { status, data } = await api("/account", {
+    method: "PATCH",
+    token: store.token,
+    body,
+  });
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  if (data.passwordChanged) {
+    store.token = null;
+    me = null;
+    history.replaceState({}, "", "/login");
+    show("login");
+    return;
+  }
+  me = { ...me, ...data.user };
+  renderAccount();
 });
 
 function signOut() {

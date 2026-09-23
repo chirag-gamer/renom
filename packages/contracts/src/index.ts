@@ -135,6 +135,7 @@ export const publicServerSchema = z.object({
   name: z.string(),
   description: z.string(),
   ownerId: z.string(),
+  ownerUsername: z.string(),
   blueprintSlug: z.string(),
   status: z.enum(serverStatuses),
   runtimeState: z.enum(runtimeStates).nullable(),

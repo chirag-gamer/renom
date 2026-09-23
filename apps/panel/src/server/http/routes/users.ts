@@ -1,5 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
+import type { ServersRepo } from "../../modules/servers/repo.js";
+import { toPublicServer } from "../../modules/servers/repo.js";
 import type { UsersRepo, UserRow } from "../../modules/users/repo.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
@@ -22,6 +24,10 @@ const patchUserSchema = z.object({
   suspended: z.boolean().optional(),
   password: passwordSchema.optional(),
   role: z.enum(["admin", "user"]).optional(),
+  username: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]{3,32}$/, "3-32 chars: letters, digits, _ or -")
+    .optional(),
   displayName: z.string().max(64).optional(),
   email: z.string().email().optional(),
   quotaMaxServers: z.number().int().min(0).max(1000).optional(),
@@ -29,8 +35,15 @@ const patchUserSchema = z.object({
   quotaDiskMb: z.number().int().min(0).max(10_485_760).optional(),
 });
 
+const accountPatchSchema = z.object({
+  displayName: z.string().max(64).optional(),
+  email: z.string().email().optional(),
+  password: passwordSchema.optional(),
+});
+
 export function usersRouter(
   users: UsersRepo,
+  servers: ServersRepo,
   audit: AuditService,
   auth: AuthService,
   gateway?: ConsoleGateway,
@@ -40,6 +53,62 @@ export function usersRouter(
   // /api/v3 path (Express routers fall through when no route matches, but a failed
   // guard short-circuits with its own error).
   const admin = [requireAuth(auth), requireAdmin] as const;
+
+  router.patch("/account", requireAuth(auth), (req, res, next) => {
+    try {
+      if (req.principal!.scopes !== undefined) {
+        throw new ForbiddenError("Account changes require a browser session");
+      }
+      const target = users.byId(req.principal!.userId);
+      if (!target) throw new NotFoundError("User not found");
+      const body = parseBody(accountPatchSchema, req);
+      if (body.email !== undefined) {
+        const existing = users.byEmail(body.email);
+        if (existing && existing.id !== target.id) {
+          throw new ConflictError("Email already taken");
+        }
+      }
+      if (body.password !== undefined) {
+        users.setPassword(target.id, body.password);
+        users.bumpPasswordVersion(target.id);
+        gateway?.disconnectUser(target.id);
+        audit.record({
+          event: "user.account.password.change",
+          actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          target: { userId: target.id },
+        });
+      }
+      users.update(target.id, body);
+      audit.record({
+        event: "user.account.update",
+        actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        target: { userId: target.id },
+      });
+      const updated = users.byId(target.id)!;
+      res.json({ user: toPublicUser(updated), passwordChanged: body.password !== undefined });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get("/users/:id", ...admin, (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const target = users.byId(req.params.id ?? "");
+      if (!target) throw new NotFoundError("User not found");
+      const owned = servers
+        .listOwned(target.id)
+        .map((server) => toPublicServer(server, servers.primaryAllocation(server.id)));
+      res.json({ user: toPublicUserWithQuotas(target), servers: owned });
+    } catch (e) {
+      next(e);
+    }
+  });
 
   router.get("/users", ...admin, (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -90,6 +159,18 @@ export function usersRouter(
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
       const body = parseBody(patchUserSchema, req);
+      if (body.email !== undefined) {
+        const existing = users.byEmail(body.email);
+        if (existing && existing.id !== target.id) {
+          throw new ConflictError("Email already taken");
+        }
+      }
+      if (body.username !== undefined && body.username !== target.username) {
+        const existing = users.byUsername(body.username);
+        if (existing && existing.id !== target.id) {
+          throw new ConflictError("Username already taken");
+        }
+      }
       // The owner account cannot be suspended: bricking the one account that
       // can always unsuspend would lock the panel with no recovery path.
       if (target.role === "owner" && body.suspended === true) {
@@ -166,6 +247,9 @@ export function usersRouter(
     try {
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
+      if (target.id === req.principal!.userId) {
+        throw new ConflictError("You cannot delete the account you are using");
+      }
       if (target.role === "owner") {
         throw new ConflictError("The owner account cannot be deleted");
       }
