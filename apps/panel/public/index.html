@@ -131,30 +131,11 @@
               <button type="button" data-admin-section="servers">Servers</button>
             </nav>
             <div id="admin-users-section">
-              <h3>People with access</h3>
+              <div class="section-header">
+                <h3>People with access</h3>
+                <button type="button" id="btn-admin-create-user">Create user</button>
+              </div>
               <ul id="user-list" class="user-list"></ul>
-              <h3>Add someone</h3>
-              <form id="form-user" class="inline-form">
-                <input
-                  name="username"
-                  required
-                  minlength="3"
-                  maxlength="32"
-                  placeholder="Username"
-                />
-                <input
-                  name="password"
-                  type="password"
-                  required
-                  minlength="12"
-                  placeholder="Password (12+ chars)"
-                />
-                <select name="role" aria-label="Role">
-                  <option value="user">Player / user</option>
-                  <option value="admin">Admin</option>
-                </select>
-                <button type="submit">Add account</button>
-              </form>
               <p class="error" id="user-error" role="alert" hidden></p>
             </div>
             <div id="admin-servers-section" hidden>
@@ -166,6 +147,51 @@
               <p class="error" id="admin-servers-error" role="alert" hidden></p>
             </div>
           </div>
+        </section>
+
+        <section id="view-user-create" class="card wide" hidden>
+          <p>
+            <button type="button" id="btn-user-create-back" class="secondary">← All users</button>
+          </p>
+          <p class="eyebrow">User management</p>
+          <h2>Create user</h2>
+          <p class="note">
+            Create an account, then manage its profile and servers from the user page.
+          </p>
+          <form id="form-user-create" class="permission-form">
+            <div class="form-grid">
+              <label
+                >Username<input
+                  name="username"
+                  required
+                  minlength="3"
+                  maxlength="32"
+                  placeholder="Username"
+                />
+              </label>
+              <label
+                >Password<input
+                  name="password"
+                  type="password"
+                  required
+                  minlength="12"
+                  autocomplete="new-password"
+                  placeholder="At least 12 characters"
+                />
+              </label>
+              <label>Display name<input name="displayName" maxlength="64" /></label>
+              <label>Email<input name="email" type="email" /></label>
+              <label
+                >Tier
+                <select name="role" aria-label="Role">
+                  <option value="user">Player / user</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <p><button type="submit">Create user</button></p>
+            <p class="error" id="user-create-error" role="alert" hidden></p>
+          </form>
         </section>
 
         <section id="view-user-detail" class="card wide" hidden>
