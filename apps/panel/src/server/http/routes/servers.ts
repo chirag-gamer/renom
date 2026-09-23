@@ -206,8 +206,14 @@ export function serversRouter(deps: ServersDeps): Router {
       const body = parseBody(patchServerSchema, req);
       const id = req.params.id ?? "";
       if (body.memoryMb !== undefined || body.diskQuotaMb !== undefined) {
-        if (req.principal!.role !== "owner" && req.principal!.role !== "admin") {
-          throw new ForbiddenError("Only panel administrators can edit server resources");
+        const permissions = res.locals.effectivePermissions as string[];
+        if (
+          (req.principal!.role !== "owner" && req.principal!.role !== "admin") ||
+          (!permissions.includes("*") && !permissions.includes("settings.resources"))
+        ) {
+          throw new ForbiddenError(
+            "Only panel administrators with settings.resources can edit resources",
+          );
         }
       }
       const updated = servers.update(id, body);

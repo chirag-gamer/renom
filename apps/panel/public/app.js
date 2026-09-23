@@ -45,7 +45,11 @@ function renderAccount() {
   target.innerHTML = "";
   const row = document.createElement("div");
   row.className = "account-summary";
-  row.innerHTML = `<strong>${me.displayName || me.username}</strong><span>${me.username} · ${me.role}</span>`;
+  const name = document.createElement("strong");
+  name.textContent = me.displayName || me.username;
+  const metadata = document.createElement("span");
+  metadata.textContent = `${me.username} · ${me.role}`;
+  row.append(name, metadata);
   target.append(row);
 }
 
@@ -92,6 +96,7 @@ let currentServer = null;
 let socket = null;
 let filesDir = "";
 const serverPermissions = [
+  "websocket.connect",
   "control.console",
   "control.start",
   "control.stop",
@@ -120,14 +125,14 @@ const serverPermissions = [
 ];
 
 function renderPermissionOptions() {
-  renderPermissionOptionsInto("permission-options", serverPermissions);
+  renderPermissionOptionsInto("permission-options", serverPermissions, "permission");
 }
 
 function renderApiPermissionOptions() {
-  renderPermissionOptionsInto("api-permission-options", serverPermissions);
+  renderPermissionOptionsInto("api-permission-options", serverPermissions, "api-scope");
 }
 
-function renderPermissionOptionsInto(targetId, options) {
+function renderPermissionOptionsInto(targetId, options, inputName) {
   const target = document.getElementById(targetId);
   if (!target) return;
   target.innerHTML = "";
@@ -136,7 +141,7 @@ function renderPermissionOptionsInto(targetId, options) {
     label.className = "permission-option";
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.name = "api-scope";
+    input.name = inputName;
     input.value = permission;
     const text = document.createElement("span");
     text.textContent = permission;
@@ -288,29 +293,34 @@ async function refreshAdminServers() {
   if (!list || !err) return;
   err.hidden = true;
   list.innerHTML = "";
-  const { status, data } = await api("/servers?limit=100", { token: store.token });
-  if (status !== 200) {
-    fail(err, describeProblem(status, data));
-    return;
-  }
-  if (data.items.length === 0) {
-    const empty = document.createElement("li");
-    empty.textContent = "No servers exist on this panel.";
-    list.append(empty);
-    return;
-  }
-  for (const server of data.items) {
-    const li = document.createElement("li");
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "linklike";
-    open.textContent = server.name;
-    open.addEventListener("click", () => openServer(server.id));
-    const meta = document.createElement("span");
-    meta.className = "role";
-    meta.textContent = `${server.blueprintSlug} · ${server.status}`;
-    li.append(open, meta);
-    list.append(li);
+  let cursor = null;
+  for (;;) {
+    const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
+    const { status, data } = await api(`/servers${qs}`, { token: store.token });
+    if (status !== 200) {
+      fail(err, describeProblem(status, data));
+      return;
+    }
+    if (data.items.length === 0 && !cursor) {
+      const empty = document.createElement("li");
+      empty.textContent = "No servers exist on this panel.";
+      list.append(empty);
+    }
+    for (const server of data.items) {
+      const li = document.createElement("li");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "linklike";
+      open.textContent = server.name;
+      open.addEventListener("click", () => openServer(server.id));
+      const meta = document.createElement("span");
+      meta.className = "role";
+      meta.textContent = `${server.blueprintSlug} · ${server.status}`;
+      li.append(open, meta);
+      list.append(li);
+    }
+    if (!data.nextCursor) return;
+    cursor = data.nextCursor;
   }
 }
 
@@ -410,7 +420,26 @@ async function refreshUsers() {
       remove.addEventListener("click", async () => {
         if (!window.confirm(`Delete ${u.username}?`)) return;
         const err = document.getElementById("user-error");
-        const res = await api(`/users/${u.id}`, { method: "DELETE", token: store.token });
+        let res = await api(`/users/${u.id}`, { method: "DELETE", token: store.token });
+        if (res.status === 409) {
+          const transferTo = window.prompt(
+            `Transfer ${u.username}'s servers to which username? Leave blank to cancel.`,
+          );
+          if (!transferTo) return;
+          const users = await api("/users?limit=100", { token: store.token });
+          const target =
+            users.status === 200
+              ? users.data.items.find((candidate) => candidate.username === transferTo)
+              : null;
+          if (!target) {
+            fail(err, "That transfer account was not found.");
+            return;
+          }
+          res = await api(`/users/${u.id}?transferTo=${encodeURIComponent(target.id)}`, {
+            method: "DELETE",
+            token: store.token,
+          });
+        }
         if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
         else refreshUsers();
       });
@@ -856,7 +885,7 @@ async function refreshBackups() {
         return;
       const res = await api(
         `/servers/${currentServer.id}/backups/${b.id}${b.locked ? "/unlock" : ""}`,
-        { method: "POST", token: store.token },
+        { method: b.locked ? "POST" : "DELETE", token: store.token },
       );
       if (res.status !== 200 && res.status !== 204)
         fail(err, describeProblem(res.status, res.data));

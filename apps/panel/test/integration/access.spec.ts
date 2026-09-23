@@ -147,7 +147,7 @@ describe("subusers", () => {
       .set("authorization", `Bearer ${ownerToken}`)
       .send({
         username: "alice",
-        permissions: ["websocket.connect", "control.console", "user.create"],
+        permissions: ["websocket.connect", "control.console", "user.create", "settings.rename"],
       });
     expect(grant.status).toBe(201);
 

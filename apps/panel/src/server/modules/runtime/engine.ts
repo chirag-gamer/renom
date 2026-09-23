@@ -19,31 +19,42 @@ export interface ConsoleLine {
 const HISTORY_LIMIT = 500;
 const LINE_MAX = 4096;
 
+function javaMajor(candidate: string): number | null {
+  try {
+    const result = spawnSync(candidate, ["-version"], { encoding: "utf8", windowsHide: true });
+    if (result.status !== 0) return null;
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    return Number(output.match(/version "(\d+)(?:\.|\")/)?.[1] ?? NaN) || null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveJavaBinary(version?: string): string | null {
   const executable = process.platform === "win32" ? "java.exe" : "java";
-  const roots = version
-    ? [process.env[`JAVA_HOME_${version}`]].filter((value): value is string => Boolean(value))
-    : [process.env.JAVA_HOME].filter((value): value is string => Boolean(value));
-  for (const root of roots) {
-    const candidate = join(root, "bin", executable);
-    if (existsSync(candidate)) return candidate;
+  const requested = version ? Number(version) : null;
+  const candidates = version
+    ? [
+        process.env[`JAVA_HOME_${version}`]
+          ? join(process.env[`JAVA_HOME_${version}`]!, "bin", executable)
+          : null,
+        process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", executable) : null,
+        `/usr/lib/jvm/java-${version}-openjdk-amd64/bin/${executable}`,
+        `/usr/lib/jvm/java-${version}-openjdk-arm64/bin/${executable}`,
+        `/usr/lib/jvm/java-${version}-openjdk/bin/${executable}`,
+        `/usr/lib/jvm/temurin-${version}-jdk-amd64/bin/${executable}`,
+        `/opt/java/openjdk-${version}/bin/${executable}`,
+        executable,
+      ]
+    : [process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", executable) : null, executable];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (
+      (candidate === executable || existsSync(candidate)) &&
+      (!requested || javaMajor(candidate) === requested)
+    )
+      return candidate;
   }
-  if (version) {
-    const suffixes = process.platform === "win32" ? ["", "-jdk", "-jre"] : ["", "-jdk", "-jre"];
-    const rootsByVersion = [
-      process.env.JAVA_HOME,
-      `/usr/lib/jvm/java-${version}`,
-      `/opt/java/openjdk-${version}`,
-    ];
-    for (const root of rootsByVersion) {
-      if (!root) continue;
-      for (const suffix of suffixes) {
-        const candidate = join(root, `bin${suffix}`, executable);
-        if (existsSync(candidate)) return candidate;
-      }
-    }
-  }
-  if (!version) return executable;
   return null;
 }
 interface LiveProcess {
