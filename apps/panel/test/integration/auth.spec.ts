@@ -92,29 +92,31 @@ describe("auth + users + authorization", () => {
   });
 
   it("owner can update user roles while admins cannot promote accounts", async () => {
-    const aliceLogin = await request(app)
-      .post("/api/v3/auth/login")
-      .send({ username: "alice", password: "alice-password" });
-    const staleAliceToken = aliceLogin.body.token as string;
     const aliceId = ctx.users.byUsername("alice")!.id;
-    const promote = await request(app)
-      .patch(`/api/v3/users/${aliceId}`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ role: "admin" });
-    expect(promote.status).toBe(200);
-    expect(promote.body.user.role).toBe("admin");
+    try {
+      const aliceLogin = await request(app)
+        .post("/api/v3/auth/login")
+        .send({ username: "alice", password: "alice-password" });
+      const staleAliceToken = aliceLogin.body.token as string;
+      const promote = await request(app)
+        .patch(`/api/v3/users/${aliceId}`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ role: "admin" });
+      expect(promote.status).toBe(200);
+      expect(promote.body.user.role).toBe("admin");
 
-    const stale = await request(app)
-      .get("/api/v3/auth/me")
-      .set("authorization", `Bearer ${staleAliceToken}`);
-    expect(stale.status).toBe(401);
-
-    const demote = await request(app)
-      .patch(`/api/v3/users/${aliceId}`)
-      .set("authorization", `Bearer ${ownerToken}`)
-      .send({ role: "user" });
-    expect(demote.status).toBe(200);
-    expect(demote.body.user.role).toBe("user");
+      const stale = await request(app)
+        .get("/api/v3/auth/me")
+        .set("authorization", `Bearer ${staleAliceToken}`);
+      expect(stale.status).toBe(401);
+    } finally {
+      const demote = await request(app)
+        .patch(`/api/v3/users/${aliceId}`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ role: "user" });
+      expect(demote.status).toBe(200);
+      expect(demote.body.user.role).toBe("user");
+    }
   });
 
   it("admins manage users but cannot mint or touch other admins (owner-only)", async () => {

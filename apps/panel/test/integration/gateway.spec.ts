@@ -158,6 +158,30 @@ describe("console gateway", () => {
     socket.close();
   });
 
+  it("disconnects sockets when a user's role changes", async () => {
+    const { default: request } = await import("supertest");
+    const api = request(`http://127.0.0.1:${port}`);
+    const roleUser = ctx.users.create({
+      username: "role-socket",
+      password: "role-socket-password",
+      role: "admin",
+    });
+    const login = await api
+      .post("/api/v3/auth/login")
+      .send({ username: "role-socket", password: "role-socket-password" });
+    const socket = connect(login.body.token as string);
+    await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+    const disconnected = new Promise<void>((resolve) => socket.on("disconnect", () => resolve()));
+
+    const demote = await api
+      .patch(`/api/v3/users/${roleUser.id}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ role: "user" });
+    expect(demote.status).toBe(200);
+    await disconnected;
+    socket.close();
+  });
+
   it("a granted subuser joins; revocation cuts the live stream", async () => {
     const { default: request } = await import("supertest");
     const api = request(`http://127.0.0.1:${port}`);

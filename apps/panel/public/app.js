@@ -777,6 +777,14 @@ async function openServer(id, tab = "console", updateUrl = true) {
   if (canServer("websocket.connect")) joinConsoleSocket();
 }
 
+function leaveServer() {
+  if (socket) {
+    socket.close();
+    socket = null;
+  }
+  currentServer = null;
+}
+
 function canServerAny(required) {
   if (!currentServer) return false;
   const permissions = Array.isArray(currentServer.permissions) ? currentServer.permissions : [];
@@ -810,6 +818,7 @@ function applyServerPermissions() {
     : "Live updates unavailable — refresh to see new output.";
   document.getElementById("form-file-read").hidden = !canServer("file.read");
   document.getElementById("btn-file-save").hidden = !canServer("file.update");
+  document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
   document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
   document.getElementById("btn-backup").hidden = !canServer("backup.create");
   document.getElementById("form-schedule").hidden = !canServer("schedule.create");
@@ -1195,7 +1204,7 @@ async function refreshSchedules() {
     run.type = "button";
     run.className = "linklike";
     run.textContent = "Run now";
-    run.hidden = !canServer("schedule.run");
+    run.hidden = !canServer("schedule.update");
     run.addEventListener("click", async () => {
       const res = await api(`/servers/${currentServer.id}/schedules/${s.id}/run`, {
         method: "POST",

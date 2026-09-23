@@ -127,6 +127,7 @@ export function usersRouter(
       if (roleChanged) {
         users.bumpPasswordVersion(target.id);
         gateway?.dropGrants(undefined, target.id);
+        gateway?.disconnectUser(target.id);
         audit.record({
           event: "user.role.change",
           actorUserId: req.principal!.userId,

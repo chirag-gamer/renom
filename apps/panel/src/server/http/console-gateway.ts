@@ -21,6 +21,7 @@ export interface ConsoleGateway {
    * server suspension, and key revocation. Omitted arguments are wildcards.
    */
   dropGrants(serverId?: string, userId?: string): void;
+  disconnectUser(userId: string): void;
   /** Cut every socket authenticated with a revoked API key. */
   dropKey(apiKeyId: string): void;
 }
@@ -192,6 +193,16 @@ export function attachConsoleGateway(
           unsubscribe(entry.socket, sid);
           entry.socket.emit("console:revoked", { v: 1, serverId: sid });
         }
+      }
+    },
+    disconnectUser(userId: string): void {
+      for (const entry of live.values()) {
+        if (entry.userId !== userId) continue;
+        for (const sid of [...entry.servers]) {
+          unsubscribe(entry.socket, sid);
+          entry.socket.emit("console:revoked", { v: 1, serverId: sid });
+        }
+        entry.socket.disconnect(true);
       }
     },
     dropKey(apiKeyId: string): void {
