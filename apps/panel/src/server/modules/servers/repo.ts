@@ -65,14 +65,14 @@ export class ServersRepo {
       .all(...params) as unknown as ServerRow[];
   }
 
-  listOwned(userId: string, limit = 100): ServerRow[] {
+  listOwned(userId: string): ServerRow[] {
     return this.db
       .prepare(
         `SELECT ${PUBLIC_COLUMNS} FROM servers s
          JOIN users u ON u.id = s.owner_id JOIN blueprints b ON b.id = s.blueprint_id
-         WHERE s.owner_id = ? AND s.deleted_at IS NULL ORDER BY s.id LIMIT ?`,
+         WHERE s.owner_id = ? AND s.deleted_at IS NULL ORDER BY s.id`,
       )
-      .all(userId, limit) as unknown as ServerRow[];
+      .all(userId) as unknown as ServerRow[];
   }
 
   countOwned(userId: string): number {

@@ -38,6 +38,12 @@ export class UsersRepo {
     return row ?? null;
   }
 
+  byEmail(email: string): UserRow | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE").get(email) as
+      UserRow | undefined;
+    return row ?? null;
+  }
+
   byId(id: string): UserRow | null {
     const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
     return row ?? null;

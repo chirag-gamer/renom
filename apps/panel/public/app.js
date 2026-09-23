@@ -181,6 +181,7 @@ let socket = null;
 let filesDir = "";
 let editingUserId = "";
 let userDetailWasSuspended = false;
+let userDetailRequest = 0;
 const serverPermissions = [
   "websocket.connect",
   "control.console",
@@ -381,7 +382,7 @@ async function loadHome() {
 async function refreshServers() {
   const list = document.getElementById("server-list");
   const empty = document.getElementById("server-empty");
-  const err = document.getElementById("server-error");
+  const err = document.getElementById("server-list-error");
   empty.hidden = true;
   const { status, data } = await api("/servers?limit=100", { token: store.token });
   list.innerHTML = "";
@@ -477,7 +478,7 @@ document.getElementById("btn-server-create-back").addEventListener("click", () =
 
 document.getElementById("form-server").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const err = document.getElementById("server-error");
+  const err = document.getElementById("server-create-error");
   err.hidden = true;
   const fd = new FormData(e.target);
   const body = {
@@ -636,6 +637,7 @@ document.getElementById("form-user").addEventListener("submit", async (e) => {
 
 async function refreshUserDetail(userId) {
   editingUserId = userId;
+  const request = ++userDetailRequest;
   const err = document.getElementById("user-detail-error");
   const list = document.getElementById("user-owned-servers");
   err.hidden = true;
@@ -643,6 +645,7 @@ async function refreshUserDetail(userId) {
   const { status, data } = await api(`/users/${encodeURIComponent(userId)}`, {
     token: store.token,
   });
+  if (request !== userDetailRequest) return;
   if (status !== 200) {
     fail(err, describeProblem(status, data));
     return;
@@ -705,9 +708,10 @@ document
 
 document.getElementById("btn-user-detail-delete").addEventListener("click", async () => {
   const err = document.getElementById("user-detail-error");
+  const userId = editingUserId;
   err.hidden = true;
   if (!window.confirm("Delete this user?")) return;
-  let res = await api(`/users/${editingUserId}`, { method: "DELETE", token: store.token });
+  let res = await api(`/users/${userId}`, { method: "DELETE", token: store.token });
   if (res.status === 409) {
     const transferTo = window.prompt(
       "Transfer this user's servers to which username? Leave blank to cancel.",
@@ -722,7 +726,7 @@ document.getElementById("btn-user-detail-delete").addEventListener("click", asyn
       const users = await api(qs, { token: store.token });
       if (users.status !== 200) break;
       target = users.data.items.find(
-        (candidate) => candidate.id !== editingUserId && candidate.username === transferTo,
+        (candidate) => candidate.id !== userId && candidate.username === transferTo,
       );
       if (target || !users.data.nextCursor) break;
       cursor = users.data.nextCursor;
@@ -731,7 +735,7 @@ document.getElementById("btn-user-detail-delete").addEventListener("click", asyn
       fail(err, "That transfer account was not found or is suspended.");
       return;
     }
-    res = await api(`/users/${editingUserId}?transferTo=${encodeURIComponent(target.id)}`, {
+    res = await api(`/users/${userId}?transferTo=${encodeURIComponent(target.id)}`, {
       method: "DELETE",
       token: store.token,
     });
@@ -740,7 +744,7 @@ document.getElementById("btn-user-detail-delete").addEventListener("click", asyn
     fail(err, describeProblem(res.status, res.data));
     return;
   }
-  await navigate("/admin/users");
+  if (editingUserId === userId) await navigate("/admin/users");
 });
 
 document.getElementById("form-user-detail").addEventListener("submit", async (e) => {

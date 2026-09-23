@@ -62,6 +62,12 @@ export function usersRouter(
       const target = users.byId(req.principal!.userId);
       if (!target) throw new NotFoundError("User not found");
       const body = parseBody(accountPatchSchema, req);
+      if (body.email !== undefined) {
+        const existing = users.byEmail(body.email);
+        if (existing && existing.id !== target.id) {
+          throw new ConflictError("Email already taken");
+        }
+      }
       if (body.password !== undefined) {
         users.setPassword(target.id, body.password);
         users.bumpPasswordVersion(target.id);
@@ -153,6 +159,12 @@ export function usersRouter(
       const target = users.byId(req.params.id ?? "");
       if (!target) throw new NotFoundError("User not found");
       const body = parseBody(patchUserSchema, req);
+      if (body.email !== undefined) {
+        const existing = users.byEmail(body.email);
+        if (existing && existing.id !== target.id) {
+          throw new ConflictError("Email already taken");
+        }
+      }
       if (body.username !== undefined && body.username !== target.username) {
         const existing = users.byUsername(body.username);
         if (existing && existing.id !== target.id) {

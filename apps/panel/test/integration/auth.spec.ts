@@ -160,6 +160,45 @@ describe("auth + users + authorization", () => {
     expect(userId).toBeTruthy();
   });
 
+  it("rejects duplicate email before rotating account or admin passwords", async () => {
+    const recipient = ctx.users.create({
+      username: "email-recipient",
+      password: "email-recipient-password",
+      email: "taken@example.com",
+      role: "user",
+    });
+    const source = ctx.users.create({
+      username: "email-source",
+      password: "email-source-password",
+      role: "user",
+    });
+    const login = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: source.username, password: "email-source-password" });
+    const token = login.body.token as string;
+
+    const account = await request(app)
+      .patch("/api/v3/account")
+      .set("authorization", `Bearer ${token}`)
+      .send({ email: recipient.email, password: "new-source-password" });
+    expect(account.status).toBe(409);
+
+    const admin = await request(app)
+      .patch(`/api/v3/users/${source.id}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ email: recipient.email, password: "new-source-password" });
+    expect(admin.status).toBe(409);
+
+    const old = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: source.username, password: "email-source-password" });
+    const rotated = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: source.username, password: "new-source-password" });
+    expect(old.status).toBe(200);
+    expect(rotated.status).toBe(401);
+  });
+
   it("owner can update user roles while admins cannot promote accounts", async () => {
     const aliceId = ctx.users.byUsername("alice")!.id;
     try {
