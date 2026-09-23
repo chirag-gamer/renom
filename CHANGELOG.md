@@ -72,6 +72,7 @@ All notable changes to Renom are documented here. Format based on
   home with user management — in plain language.
 - Files API and blueprints catalog API are now served by the panel (routers existed but
   were never mounted); built-in blueprints seed idempotently at boot.
+
 ### Fixed
 
 - Permission-aware server detail: related collaborators can open server metadata with their
