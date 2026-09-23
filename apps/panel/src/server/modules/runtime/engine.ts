@@ -59,8 +59,11 @@ function resolveJavaBinaryVersion(version: string): string | null {
 
 function resolveJavaBinary(version: string | undefined, mcVersion?: string): string | null {
   if (version === "auto" || !version) {
-    const major = Number.parseInt(mcVersion ?? "", 10);
-    const versions = Number.isNaN(major) || major >= 1.21 ? ["25", "21", "17"] : ["21", "17"];
+    const [majorText, minorText] = (mcVersion ?? "").split(".");
+    const major = Number(majorText);
+    const minor = Number(minorText ?? "0");
+    const needsJava25 = major > 1 || (major === 1 && minor >= 21);
+    const versions = !Number.isFinite(major) || needsJava25 ? ["25", "21", "17"] : ["21", "17"];
     for (const candidate of versions) {
       const binary = resolveJavaBinaryVersion(candidate);
       if (binary) return binary;

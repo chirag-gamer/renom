@@ -17,12 +17,6 @@ function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
   const topbar = document.getElementById("app-topbar");
   if (topbar) topbar.hidden = name === "setup" || name === "login";
-  document.querySelectorAll("[data-admin-section]").forEach((button) => {
-    button.addEventListener("click", () => {
-      history.pushState({}, "", `/admin/${button.dataset.adminSection}`);
-      setAdminSection(button.dataset.adminSection);
-    });
-  });
   document.querySelectorAll("[data-route]").forEach((link) => {
     link.classList.toggle(
       "active",
@@ -360,6 +354,7 @@ async function refreshServers() {
   const list = document.getElementById("server-list");
   const empty = document.getElementById("server-empty");
   const err = document.getElementById("server-error");
+  empty.hidden = true;
   const { status, data } = await api("/servers?limit=100", { token: store.token });
   list.innerHTML = "";
   if (status !== 200) {
@@ -1541,6 +1536,13 @@ document.getElementById("btn-delete-server").addEventListener("click", async () 
 
 document.getElementById("btn-open-props").addEventListener("click", () => {
   openFile("server.properties");
+});
+
+document.querySelectorAll("[data-admin-section]").forEach((button) => {
+  button.addEventListener("click", () => {
+    history.pushState({}, "", `/admin/${button.dataset.adminSection}`);
+    setAdminSection(button.dataset.adminSection);
+  });
 });
 
 renderPermissionOptions();

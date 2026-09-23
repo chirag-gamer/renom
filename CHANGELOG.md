@@ -80,7 +80,10 @@ All notable changes to Renom are documented here. Format based on
   allowed by those grants. Suspended servers remain existence-hidden from collaborators.
 - Admin user editing now supports display name, email, role, and quotas; role changes rotate
   the target's sessions, disconnect live sockets, and server transfer rejects self-transfer and
-  suspended recipients.
+  suspended recipients. Manual schedule runs use `schedule.update`, and file dialog saves respect
+  `file.update`.
+- Server-list load failures no longer reuse the successful-empty-state message; Java `auto` runtime
+  selection correctly treats Minecraft `1.21+` versions as Java 25 candidates.
 
 - Review batch (cubic PR #10/#11): setup-token gate against owner claiming; `.env`
   auto-loading so the installer-generated config takes effect; API-key scopes enforced on
