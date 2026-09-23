@@ -75,6 +75,19 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
+- Permission-aware server detail: related collaborators can open server metadata with their
+  effective grants returned by the API, and the client only loads and exposes tabs/actions
+  allowed by those grants. Suspended servers remain existence-hidden from collaborators.
+- Admin user editing now supports display name, email, role, and quotas; role changes rotate
+  the target's sessions, disconnect live sockets, and server transfer rejects self-transfer and
+  suspended recipients. Manual schedule runs use `schedule.update`, and file dialog saves respect
+  `file.update`.
+- Server-list load failures no longer reuse the successful-empty-state message; Java `auto` runtime
+  selection follows Minecraft patch-level compatibility; suspended collaborators cannot read
+  console history, and revoked keys or rotated user credentials disconnect live sockets.
+- Unauthorized deep-link tabs normalize to the first permitted server tab, and successful server
+  deletion returns to the home route before refreshing the server list.
+
 - Review batch (cubic PR #10/#11): setup-token gate against owner claiming; `.env`
   auto-loading so the installer-generated config takes effect; API-key scopes enforced on
   admin routes, key minting, subuser grants, and the socket console; suspended servers are

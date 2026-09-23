@@ -21,6 +21,7 @@ const createUserSchema = z.object({
 const patchUserSchema = z.object({
   suspended: z.boolean().optional(),
   password: passwordSchema.optional(),
+  role: z.enum(["admin", "user"]).optional(),
   displayName: z.string().max(64).optional(),
   email: z.string().email().optional(),
   quotaMaxServers: z.number().int().min(0).max(1000).optional(),
@@ -94,11 +95,18 @@ export function usersRouter(
       if (target.role === "owner" && body.suspended === true) {
         throw new ConflictError("The owner account cannot be suspended");
       }
+      if (body.role !== undefined && target.role === "owner") {
+        throw new ConflictError("The owner account cannot change roles");
+      }
+      if (body.role === "admin" && req.principal!.role !== "owner") {
+        throw new ForbiddenError("Only the owner can make admins");
+      }
       // Touching admins (suspend, quotas, profile) is owner-only: admins
       // manage users, not each other.
       if (target.role !== "user" && req.principal!.role !== "owner") {
         throw new ForbiddenError("Only the owner can change admins");
       }
+      const roleChanged = body.role !== undefined && body.role !== target.role;
       // A password change is a credential rotation: it takes effect at once
       // (old sessions die with the version bump, live sockets are cut too)
       // and is always audited.
@@ -106,6 +114,7 @@ export function usersRouter(
         users.setPassword(target.id, body.password);
         users.bumpPasswordVersion(target.id);
         gateway?.dropGrants(undefined, target.id);
+        gateway?.disconnectUser(target.id);
         audit.record({
           event: "user.password.change",
           actorUserId: req.principal!.userId,
@@ -116,12 +125,26 @@ export function usersRouter(
         });
       }
       users.update(target.id, body);
+      if (roleChanged) {
+        users.bumpPasswordVersion(target.id);
+        gateway?.dropGrants(undefined, target.id);
+        gateway?.disconnectUser(target.id);
+        audit.record({
+          event: "user.role.change",
+          actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          target: { userId: target.id, role: body.role },
+        });
+      }
       if (body.suspended !== undefined) {
         // FR-007/009: suspension invalidates sessions via passwordVersion bump
         if (body.suspended) {
           users.bumpPasswordVersion(target.id);
           // Suspended users lose live console streams everywhere immediately.
           gateway?.dropGrants(undefined, target.id);
+          gateway?.disconnectUser(target.id);
         }
         audit.record({
           event: body.suspended ? "user.suspend" : "user.resume",
@@ -156,6 +179,15 @@ export function usersRouter(
           ownedServers: owned,
         });
       }
+      if (transferTo === target.id) {
+        throw new ConflictError("A user cannot transfer servers to themselves");
+      }
+      if (transferTo) {
+        const recipient = users.byId(transferTo);
+        if (!recipient || recipient.suspended === 1) {
+          throw new ConflictError("Transfer target must be an active account");
+        }
+      }
       let transferredServers = 0;
       try {
         const r = users.deleteCascade(target.id, transferTo);
@@ -165,6 +197,7 @@ export function usersRouter(
       }
       // Deleted users keep no live streams either.
       gateway?.dropGrants(undefined, target.id);
+      gateway?.disconnectUser(target.id);
       audit.record({
         event: "user.delete",
         actorUserId: req.principal!.userId,

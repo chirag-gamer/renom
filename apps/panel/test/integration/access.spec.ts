@@ -173,6 +173,30 @@ describe("subusers", () => {
       .get(`/api/v3/servers/${serverId}/console/history`)
       .set("authorization", `Bearer ${aliceToken}`);
     expect(history.status).toBe(200);
+
+    const detail = await request(app)
+      .get(`/api/v3/servers/${serverId}`)
+      .set("authorization", `Bearer ${aliceToken}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.server.permissions).toEqual(
+      expect.arrayContaining(["websocket.connect", "control.console"]),
+    );
+    expect(detail.body.server.permissions).not.toContain("startup.read");
+
+    ctx.db.prepare("UPDATE servers SET status = 'suspended' WHERE id = ?").run(serverId);
+    const suspendedDetail = await request(app)
+      .get(`/api/v3/servers/${serverId}`)
+      .set("authorization", `Bearer ${aliceToken}`);
+    expect(suspendedDetail.status).toBe(404);
+    const suspendedHistory = await request(app)
+      .get(`/api/v3/servers/${serverId}/console/history`)
+      .set("authorization", `Bearer ${aliceToken}`);
+    expect(suspendedHistory.status).toBe(404);
+    const ownerDetail = await request(app)
+      .get(`/api/v3/servers/${serverId}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(ownerDetail.status).toBe(200);
+    ctx.db.prepare("UPDATE servers SET status = 'ready' WHERE id = ?").run(serverId);
   });
 
   it("a collaborator cannot escalate anyone to wildcard", async () => {

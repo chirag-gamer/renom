@@ -9,7 +9,12 @@ import type { Database } from "../../infra/db/database.js";
 import type { LocalProcessEngine } from "../../modules/runtime/engine.js";
 import type { ConsoleGateway } from "../console-gateway.js";
 import { requireAuth, requireAdmin } from "../middleware/authn.js";
-import { requireServerPermission, assertNotSuspendedForMutation } from "../middleware/authz.js";
+import {
+  requireServerAccess,
+  requireServerPermission,
+  assertNotSuspendedForMutation,
+  assertSuspendedReadable,
+} from "../middleware/authz.js";
 import { parseBody, parseQuery } from "../../shared/validate.js";
 import {
   BadRequestError,
@@ -190,14 +195,20 @@ export function serversRouter(deps: ServersDeps): Router {
 
   router.get(
     "/servers/:id",
-    guard("startup.read"),
+    requireServerAccess(deps.db),
     (req: Request, res: Response, next: NextFunction) => {
+      assertSuspendedReadable(req, res);
       const s = servers.byId(req.params.id ?? "");
       if (!s) {
         next(new NotFoundError("Not found"));
         return;
       }
-      res.json({ server: toPublicServer(s, servers.primaryAllocation(s.id)) });
+      res.json({
+        server: {
+          ...toPublicServer(s, servers.primaryAllocation(s.id)),
+          permissions: res.locals.effectivePermissions as string[],
+        },
+      });
     },
   );
 

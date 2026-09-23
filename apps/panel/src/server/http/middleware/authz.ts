@@ -11,6 +11,12 @@ export interface LoadedServer {
   runtime_state: string | null;
 }
 
+export function requireServerAccess(db: Database) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    authorizeServerRequest(req, res, next, db, null);
+  };
+}
+
 /**
  * Server-scoped authorization (SEC-004): deny-by-default.
  * - Unknown server -> 404 for everyone (existence hiding).
@@ -22,54 +28,58 @@ export interface LoadedServer {
 export function requireServerPermission(required: string | string[], db: Database) {
   const requiredList = Array.isArray(required) ? required : [required];
   return (req: Request, res: Response, next: NextFunction): void => {
-    const principal = req.principal;
-    if (!principal) {
-      next(new ForbiddenError());
-      return;
-    }
-    const serverId = req.params.id ?? "";
-    const server = db
-      .prepare(
-        "SELECT id, name, owner_id, status, runtime_state FROM servers WHERE id = ? AND deleted_at IS NULL",
-      )
-      .get(serverId) as LoadedServer | undefined;
-
-    if (!server) {
-      next(new NotFoundError("Not found"));
-      return;
-    }
-
-    const effective = resolveEffectivePermissions(db, {
-      userId: principal.userId,
-      role: principal.role,
-      serverId: server.id,
-    });
-
-    // API-key scopes intersect the user's own permissions: a key can only
-    // narrow access, never widen it — including for server owners.
-    const scoped = intersectScopes(effective, principal.scopes);
-
-    const hasAnyAccess = scoped.length > 0;
-    if (!hasAnyAccess) {
-      // no relationship at all: hide existence on reads, refuse writes
-      if (req.method === "GET" || req.method === "HEAD") {
-        next(new NotFoundError("Not found"));
-      } else {
-        next(new ForbiddenError());
-      }
-      return;
-    }
-
-    const grantedAll = scoped.includes("*");
-    if (!grantedAll && !requiredList.every((r) => scoped.includes(r))) {
-      next(new ForbiddenError());
-      return;
-    }
-
-    res.locals.server = server;
-    res.locals.effectivePermissions = scoped;
-    next();
+    authorizeServerRequest(req, res, next, db, requiredList);
   };
+}
+
+function authorizeServerRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  db: Database,
+  requiredList: string[] | null,
+): void {
+  const principal = req.principal;
+  if (!principal) {
+    next(new ForbiddenError());
+    return;
+  }
+  const serverId = req.params.id ?? "";
+  const server = db
+    .prepare(
+      "SELECT id, name, owner_id, status, runtime_state FROM servers WHERE id = ? AND deleted_at IS NULL",
+    )
+    .get(serverId) as LoadedServer | undefined;
+
+  if (!server) {
+    next(new NotFoundError("Not found"));
+    return;
+  }
+
+  const effective = resolveEffectivePermissions(db, {
+    userId: principal.userId,
+    role: principal.role,
+    serverId: server.id,
+  });
+  const scoped = intersectScopes(effective, principal.scopes);
+
+  if (scoped.length === 0) {
+    if (req.method === "GET" || req.method === "HEAD") {
+      next(new NotFoundError("Not found"));
+    } else {
+      next(new ForbiddenError());
+    }
+    return;
+  }
+
+  if (requiredList && !scoped.includes("*") && !requiredList.every((r) => scoped.includes(r))) {
+    next(new ForbiddenError());
+    return;
+  }
+
+  res.locals.server = server;
+  res.locals.effectivePermissions = scoped;
+  next();
 }
 
 /**

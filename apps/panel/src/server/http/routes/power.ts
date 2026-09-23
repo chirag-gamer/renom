@@ -6,7 +6,7 @@ import type { LocalProcessEngine, PowerAction } from "../../modules/runtime/engi
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
-import { requireServerPermission } from "../middleware/authz.js";
+import { requireServerPermission, assertSuspendedReadable } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
 import { ForbiddenError } from "../../shared/errors.js";
 
@@ -90,6 +90,7 @@ export function powerRouter(deps: PowerDeps): Router {
       await new Promise<void>((resolve, reject) => {
         guard(req, res, (err?: unknown) => (err ? reject(err) : resolve()));
       });
+      assertSuspendedReadable(req, res);
       const limit = Math.min(Math.max(Number(req.query.limit ?? 100) || 100, 1), 500);
       res.json({ lines: engine.history(req.params.id ?? "", limit) });
     })().catch(next);
