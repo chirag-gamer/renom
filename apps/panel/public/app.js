@@ -9,6 +9,7 @@ const views = {
   home: document.getElementById("view-home"),
   admin: document.getElementById("view-admin"),
   account: document.getElementById("view-account"),
+  "user-create": document.getElementById("view-user-create"),
   "server-create": document.getElementById("view-server-create"),
   "user-detail": document.getElementById("view-user-detail"),
   api: document.getElementById("view-api"),
@@ -23,14 +24,19 @@ function show(name) {
     link.classList.toggle(
       "active",
       link.dataset.route === name ||
-        ((name === "server-create" || name === "user-detail") && link.dataset.route === "admin") ||
+        ((name === "user-create" || name === "server-create" || name === "user-detail") &&
+          link.dataset.route === "admin") ||
         (name === "server" && link.dataset.route === "home"),
     );
   });
 }
 
 function setView(name, detailId = "") {
-  const adminOnly = name === "admin" || name === "server-create" || name === "user-detail";
+  const adminOnly =
+    name === "admin" ||
+    name === "user-create" ||
+    name === "server-create" ||
+    name === "user-detail";
   if (adminOnly && me?.role !== "owner" && me?.role !== "admin") return;
   show(name);
   if (name === "admin") {
@@ -90,6 +96,14 @@ async function routeFromPath() {
       return;
     }
     setView("server-create");
+    return;
+  }
+  if (path === "/admin/users/new") {
+    if (me?.role !== "owner" && me?.role !== "admin") {
+      await navigate("/");
+      return;
+    }
+    setView("user-create");
     return;
   }
   const userMatch = path.match(/^\/admin\/users\/([^/]+)$/);
@@ -506,6 +520,10 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   }
 });
 
+document.getElementById("btn-admin-create-user").addEventListener("click", () => {
+  void navigate("/admin/users/new");
+});
+
 async function refreshUsers() {
   const list = document.getElementById("user-list");
   list.innerHTML = "";
@@ -613,20 +631,31 @@ async function refreshUsers() {
   }
 }
 
-document.getElementById("form-user").addEventListener("submit", async (e) => {
+document.getElementById("btn-user-create-back").addEventListener("click", () => {
+  void navigate("/admin/users");
+});
+
+document.getElementById("form-user-create").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const err = document.getElementById("user-error");
+  const err = document.getElementById("user-create-error");
   err.hidden = true;
   const fd = new FormData(e.target);
+  const body = {
+    username: String(fd.get("username") || "").trim(),
+    password: String(fd.get("password") || ""),
+    displayName: String(fd.get("displayName") || "").trim() || undefined,
+    email: String(fd.get("email") || "").trim() || undefined,
+    role: fd.get("role"),
+  };
   try {
     const { status, data } = await api("/users", {
       method: "POST",
       token: store.token,
-      body: { username: fd.get("username"), password: fd.get("password"), role: fd.get("role") },
+      body,
     });
     if (status === 201) {
       e.target.reset();
-      await refreshUsers();
+      await navigate("/admin/users");
     } else {
       fail(err, describeProblem(status, data));
     }
@@ -944,11 +973,15 @@ function leaveServer() {
 
 function canServerAny(required) {
   if (!currentServer) return false;
-  const permissions = Array.isArray(currentServer.permissions) ? currentServer.permissions : [];
   const requiredList = Array.isArray(required) ? required : [required];
-  return (
-    permissions.includes("*") || requiredList.some((permission) => permissions.includes(permission))
-  );
+  if (Array.isArray(currentServer.permissions)) {
+    const permissions = currentServer.permissions;
+    return (
+      permissions.includes("*") ||
+      requiredList.some((permission) => permissions.includes(permission))
+    );
+  }
+  return isPanelAdmin() || currentServer.ownerId === me?.id;
 }
 
 function canServer(permission) {
