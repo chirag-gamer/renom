@@ -79,6 +79,7 @@ async function routeFromPath() {
     await openServer(serverMatch[1], serverMatch[2] || "console", false);
     return;
   }
+  if (currentServer) leaveServer();
   if (path.startsWith("/admin")) {
     if (me?.role !== "owner" && me?.role !== "admin") {
       await navigate("/");
@@ -282,7 +283,10 @@ document.getElementById("form-login").addEventListener("submit", async (e) => {
     });
     if (status === 200) {
       store.token = data.token;
-      const destination = window.location.pathname === "/login" ? "/" : window.location.pathname;
+      const destination =
+        window.location.pathname === "/login" || window.location.pathname === "/register"
+          ? "/"
+          : window.location.pathname;
       history.replaceState({}, "", destination);
       await loadHome();
     } else if (status === 429) {
@@ -326,9 +330,15 @@ async function loadHome() {
 async function refreshServers() {
   const list = document.getElementById("server-list");
   const empty = document.getElementById("server-empty");
+  const err = document.getElementById("server-error");
   const { status, data } = await api("/servers?limit=100", { token: store.token });
   list.innerHTML = "";
-  if (status !== 200 || data.items.length === 0) {
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  err.hidden = true;
+  if (data.items.length === 0) {
     empty.hidden = false;
     return;
   }
@@ -443,7 +453,7 @@ async function refreshUsers() {
     const { status, data } = await api(`/users${qs}`, { token: store.token });
     if (status !== 200) return;
     const ownerSelect = document.getElementById("owner-username");
-    if (ownerSelect) ownerSelect.innerHTML = "";
+    if (ownerSelect && cursor === null) ownerSelect.innerHTML = "";
     for (const u of data.items) {
       if (ownerSelect) {
         const option = document.createElement("option");
@@ -640,7 +650,7 @@ document.getElementById("btn-back").addEventListener("click", async () => {
 async function openServer(id, tab = "console", updateUrl = true) {
   const { status, data } = await api(`/servers/${id}`, { token: store.token });
   if (status !== 200) {
-    await loadHome();
+    await navigate("/");
     return;
   }
   currentServer = data.server;
