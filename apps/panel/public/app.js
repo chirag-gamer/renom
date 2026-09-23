@@ -426,11 +426,20 @@ async function refreshUsers() {
             `Transfer ${u.username}'s servers to which username? Leave blank to cancel.`,
           );
           if (!transferTo) return;
-          const users = await api("/users?limit=100", { token: store.token });
-          const target =
-            users.status === 200
-              ? users.data.items.find((candidate) => candidate.username === transferTo)
-              : null;
+          let target = null;
+          let cursor = null;
+          for (;;) {
+            const qs = cursor
+              ? `/users?limit=100&cursor=${encodeURIComponent(cursor)}`
+              : "/users?limit=100";
+            const users = await api(qs, { token: store.token });
+            if (users.status !== 200) break;
+            target = users.data.items.find(
+              (candidate) => candidate.id !== u.id && candidate.username === transferTo,
+            );
+            if (target || !users.data.nextCursor) break;
+            cursor = users.data.nextCursor;
+          }
           if (!target) {
             fail(err, "That transfer account was not found.");
             return;

@@ -141,7 +141,7 @@ describe("api keys", () => {
 });
 
 describe("subusers", () => {
-  it("owner grants alice console-only access; she reads but cannot start", async () => {
+  it("owner grants alice console, rename, and user access; she cannot start or edit resources", async () => {
     const grant = await request(app)
       .post(`/api/v3/servers/${serverId}/users`)
       .set("authorization", `Bearer ${ownerToken}`)

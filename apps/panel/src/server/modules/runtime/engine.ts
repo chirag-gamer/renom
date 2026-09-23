@@ -33,6 +33,8 @@ function javaMajor(candidate: string): number | null {
 function resolveJavaBinary(version?: string): string | null {
   const executable = process.platform === "win32" ? "java.exe" : "java";
   const requested = version ? Number(version) : null;
+  if (version && (requested === null || !Number.isInteger(requested) || requested <= 0))
+    return null;
   const candidates = version
     ? [
         process.env[`JAVA_HOME_${version}`]
