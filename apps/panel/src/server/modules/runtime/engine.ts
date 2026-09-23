@@ -57,14 +57,25 @@ function resolveJavaBinaryVersion(version: string): string | null {
   return null;
 }
 
+export function javaRuntimeCandidates(mcVersion?: string): string[] {
+  const [majorText, minorText, patchText] = (mcVersion ?? "").split(".");
+  const major = Number(majorText);
+  const minor = Number(minorText ?? "0");
+  const patch = Number.parseInt(patchText ?? "0", 10);
+  if (
+    !Number.isFinite(major) ||
+    major > 1 ||
+    (major === 1 && (minor > 21 || (minor === 21 && patch >= 9)))
+  ) {
+    return ["25", "21", "17"];
+  }
+  if (major === 1 && (minor > 20 || (minor === 20 && patch >= 5))) return ["21", "17"];
+  return ["17", "21"];
+}
+
 function resolveJavaBinary(version: string | undefined, mcVersion?: string): string | null {
   if (version === "auto" || !version) {
-    const [majorText, minorText] = (mcVersion ?? "").split(".");
-    const major = Number(majorText);
-    const minor = Number(minorText ?? "0");
-    const needsJava25 = major > 1 || (major === 1 && minor >= 21);
-    const versions = !Number.isFinite(major) || needsJava25 ? ["25", "21", "17"] : ["21", "17"];
-    for (const candidate of versions) {
+    for (const candidate of javaRuntimeCandidates(mcVersion)) {
       const binary = resolveJavaBinaryVersion(candidate);
       if (binary) return binary;
     }

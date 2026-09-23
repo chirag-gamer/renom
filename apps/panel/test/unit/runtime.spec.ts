@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { confineWorkdir, substitute } from "../../src/server/modules/runtime/engine.js";
+import {
+  confineWorkdir,
+  javaRuntimeCandidates,
+  substitute,
+} from "../../src/server/modules/runtime/engine.js";
 import { confine } from "../../src/server/modules/runtime/install.js";
 
 const ROOT = resolve(tmpdir(), "renom-confine-test");
@@ -27,6 +31,16 @@ describe("install path confinement", () => {
     expect(confine(ROOT, "plugins/x.jar")).toBe(join(ROOT, "plugins", "x.jar"));
     expect(() => confine(ROOT, "../../evil")).toThrow(/escapes/);
     expect(confine(ROOT, "/abs")).toBe(join(ROOT, "abs"));
+  });
+});
+
+describe("java runtime selection", () => {
+  it("maps Minecraft patch releases to the matching runtime preference", () => {
+    expect(javaRuntimeCandidates("1.20.4")).toEqual(["17", "21"]);
+    expect(javaRuntimeCandidates("1.20.5+")).toEqual(["21", "17"]);
+    expect(javaRuntimeCandidates("1.21.8")).toEqual(["21", "17"]);
+    expect(javaRuntimeCandidates("1.21.9+")).toEqual(["25", "21", "17"]);
+    expect(javaRuntimeCandidates("latest")).toEqual(["25", "21", "17"]);
   });
 });
 

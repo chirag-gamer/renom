@@ -114,6 +114,7 @@ export function usersRouter(
         users.setPassword(target.id, body.password);
         users.bumpPasswordVersion(target.id);
         gateway?.dropGrants(undefined, target.id);
+        gateway?.disconnectUser(target.id);
         audit.record({
           event: "user.password.change",
           actorUserId: req.principal!.userId,
@@ -143,6 +144,7 @@ export function usersRouter(
           users.bumpPasswordVersion(target.id);
           // Suspended users lose live console streams everywhere immediately.
           gateway?.dropGrants(undefined, target.id);
+          gateway?.disconnectUser(target.id);
         }
         audit.record({
           event: body.suspended ? "user.suspend" : "user.resume",
@@ -195,6 +197,7 @@ export function usersRouter(
       }
       // Deleted users keep no live streams either.
       gateway?.dropGrants(undefined, target.id);
+      gateway?.disconnectUser(target.id);
       audit.record({
         event: "user.delete",
         actorUserId: req.principal!.userId,

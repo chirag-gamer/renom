@@ -83,7 +83,10 @@ All notable changes to Renom are documented here. Format based on
   suspended recipients. Manual schedule runs use `schedule.update`, and file dialog saves respect
   `file.update`.
 - Server-list load failures no longer reuse the successful-empty-state message; Java `auto` runtime
-  selection correctly treats Minecraft `1.21+` versions as Java 25 candidates.
+  selection follows Minecraft patch-level compatibility; suspended collaborators cannot read
+  console history, and revoked keys or rotated user credentials disconnect live sockets.
+- Unauthorized deep-link tabs normalize to the first permitted server tab, and successful server
+  deletion returns to the home route before refreshing the server list.
 
 - Review batch (cubic PR #10/#11): setup-token gate against owner claiming; `.env`
   auto-loading so the installer-generated config takes effect; API-key scopes enforced on

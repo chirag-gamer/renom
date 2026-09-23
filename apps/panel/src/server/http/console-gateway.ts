@@ -212,6 +212,7 @@ export function attachConsoleGateway(
           unsubscribe(entry.socket, sid);
           entry.socket.emit("console:revoked", { v: 1, serverId: sid });
         }
+        entry.socket.disconnect(true);
       }
     },
   };

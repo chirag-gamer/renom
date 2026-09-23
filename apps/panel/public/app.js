@@ -879,6 +879,7 @@ document.querySelectorAll(".tabs button").forEach((btn) => {
 });
 
 function setTab(name, updateUrl = true) {
+  const requestedName = name;
   const tabNames = [
     "console",
     "files",
@@ -892,7 +893,10 @@ function setTab(name, updateUrl = true) {
   ];
   const available = availableServerTabs();
   if (!tabNames.includes(name) || !available.includes(name)) name = available[0] || "console";
-  if (updateUrl && currentServer) history.pushState({}, "", `/servers/${currentServer.id}/${name}`);
+  if (currentServer && (updateUrl || name !== requestedName)) {
+    const method = updateUrl ? "pushState" : "replaceState";
+    history[method]({}, "", `/servers/${currentServer.id}/${name}`);
+  }
   document
     .querySelectorAll(".tabs button")
     .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
@@ -1530,7 +1534,8 @@ document.getElementById("btn-delete-server").addEventListener("click", async () 
   if (status !== 204) fail(err, describeProblem(status, data));
   else {
     leaveServer();
-    loadHome();
+    history.replaceState({}, "", "/");
+    await loadHome();
   }
 });
 

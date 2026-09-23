@@ -188,6 +188,10 @@ describe("subusers", () => {
       .get(`/api/v3/servers/${serverId}`)
       .set("authorization", `Bearer ${aliceToken}`);
     expect(suspendedDetail.status).toBe(404);
+    const suspendedHistory = await request(app)
+      .get(`/api/v3/servers/${serverId}/console/history`)
+      .set("authorization", `Bearer ${aliceToken}`);
+    expect(suspendedHistory.status).toBe(404);
     const ownerDetail = await request(app)
       .get(`/api/v3/servers/${serverId}`)
       .set("authorization", `Bearer ${ownerToken}`);

@@ -141,6 +141,7 @@ export const publicServerSchema = z.object({
   memoryMb: z.number(),
   diskQuotaMb: z.number(),
   primaryAllocation: z.object({ ip: z.string(), port: z.number() }).nullable(),
+  permissions: z.array(z.string()).optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });
