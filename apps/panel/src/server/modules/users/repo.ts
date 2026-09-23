@@ -184,6 +184,7 @@ export class UsersRepo {
     id: string,
     patch: {
       suspended?: boolean;
+      role?: "admin" | "user";
       displayName?: string;
       email?: string;
       quotaMaxServers?: number;
@@ -196,6 +197,10 @@ export class UsersRepo {
     if (patch.suspended !== undefined) {
       sets.push("suspended = ?");
       params.push(patch.suspended ? 1 : 0);
+    }
+    if (patch.role !== undefined) {
+      sets.push("role = ?");
+      params.push(patch.role);
     }
     if (patch.displayName !== undefined) {
       sets.push("display_name = ?");

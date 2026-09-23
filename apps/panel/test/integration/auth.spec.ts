@@ -91,6 +91,32 @@ describe("auth + users + authorization", () => {
     expect(res.body.user.quotas.maxServers).toBeGreaterThan(0);
   });
 
+  it("owner can update user roles while admins cannot promote accounts", async () => {
+    const aliceLogin = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "alice", password: "alice-password" });
+    const staleAliceToken = aliceLogin.body.token as string;
+    const aliceId = ctx.users.byUsername("alice")!.id;
+    const promote = await request(app)
+      .patch(`/api/v3/users/${aliceId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ role: "admin" });
+    expect(promote.status).toBe(200);
+    expect(promote.body.user.role).toBe("admin");
+
+    const stale = await request(app)
+      .get("/api/v3/auth/me")
+      .set("authorization", `Bearer ${staleAliceToken}`);
+    expect(stale.status).toBe(401);
+
+    const demote = await request(app)
+      .patch(`/api/v3/users/${aliceId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ role: "user" });
+    expect(demote.status).toBe(200);
+    expect(demote.body.user.role).toBe("user");
+  });
+
   it("admins manage users but cannot mint or touch other admins (owner-only)", async () => {
     const mkAdmin = await request(app)
       .post("/api/v3/users")
@@ -113,6 +139,12 @@ describe("auth + users + authorization", () => {
       .set("authorization", `Bearer ${carol}`)
       .send({ username: "erin", password: "erin-password-1", role: "user" });
     expect(mkUser.status).toBe(201);
+
+    const promote = await request(app)
+      .patch(`/api/v3/users/${mkUser.body.user.id}`)
+      .set("authorization", `Bearer ${carol}`)
+      .send({ role: "admin" });
+    expect(promote.status).toBe(403);
   });
 
   it("non-admin cannot create users or list them (PERMISSIONS matrix)", async () => {

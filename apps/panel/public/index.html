@@ -196,6 +196,59 @@
           </div>
         </section>
 
+        <dialog id="user-editor" class="user-editor">
+          <div class="dialog-header">
+            <h3 id="user-editor-title">Edit user</h3>
+            <button type="button" id="btn-user-editor-close" class="secondary">Close</button>
+          </div>
+          <form id="form-user-edit">
+            <p id="user-editor-username" class="note"></p>
+            <label
+              >Display name<input name="displayName" id="user-editor-display-name" maxlength="64" />
+            </label>
+            <label>Email<input name="email" id="user-editor-email" type="email" /></label>
+            <label
+              >Role
+              <select name="role" id="user-editor-role">
+                <option value="user">Player / user</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <fieldset>
+              <legend>Quotas</legend>
+              <label
+                >Max servers<input
+                  name="quotaMaxServers"
+                  id="user-editor-max-servers"
+                  type="number"
+                  min="0"
+                  max="1000"
+                />
+              </label>
+              <label
+                >RAM MB<input
+                  name="quotaRamMb"
+                  id="user-editor-ram"
+                  type="number"
+                  min="0"
+                  max="1048576"
+                />
+              </label>
+              <label
+                >Disk MB<input
+                  name="quotaDiskMb"
+                  id="user-editor-disk"
+                  type="number"
+                  min="0"
+                  max="10485760"
+                />
+              </label>
+            </fieldset>
+            <p><button type="submit">Save user</button></p>
+            <p class="error" id="user-editor-error" role="alert" hidden></p>
+          </form>
+        </dialog>
+
         <section id="view-account" class="card" hidden>
           <p class="eyebrow">Account</p>
           <h2>Your account</h2>
@@ -235,7 +288,7 @@
           </div>
           <p class="error" id="srv-error" role="alert" hidden></p>
 
-          <nav class="tabs" aria-label="Server sections">
+          <nav class="tabs" id="server-tabs" aria-label="Server sections">
             <button type="button" data-tab="console" class="active">Console</button>
             <button type="button" data-tab="files">Files</button>
             <button type="button" data-tab="backups">Backups</button>

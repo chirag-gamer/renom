@@ -343,7 +343,8 @@ textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
-.file-editor {
+.file-editor,
+.user-editor {
   width: min(900px, calc(100vw - 32px));
   padding: 24px;
   border: 1px solid var(--border);
@@ -351,7 +352,8 @@ textarea:focus {
   background: var(--card);
   color: var(--text);
 }
-.file-editor::backdrop {
+.file-editor::backdrop,
+.user-editor::backdrop {
   background: rgb(28 28 26 / 55%);
 }
 .dialog-header {
@@ -362,6 +364,25 @@ textarea:focus {
 }
 .dialog-header h3 {
   margin: 0;
+}
+.user-editor {
+  width: min(640px, calc(100vw - 32px));
+}
+.user-editor fieldset {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.user-editor fieldset legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 .file-editor textarea {
   min-height: 360px;
@@ -486,6 +507,9 @@ textarea:focus {
 @media (max-width: 560px) {
   .card {
     padding: 18px;
+  }
+  .user-editor fieldset {
+    grid-template-columns: 1fr;
   }
   .brand h1 {
     font-size: 32px;

@@ -155,6 +155,7 @@ let me = null;
 let currentServer = null;
 let socket = null;
 let filesDir = "";
+let editingUserId = "";
 const serverPermissions = [
   "websocket.connect",
   "control.console",
@@ -164,25 +165,54 @@ const serverPermissions = [
   "control.kill",
   "file.read",
   "file.read-content",
-  "file.update",
   "file.create",
+  "file.update",
   "file.delete",
+  "file.archive",
+  "file.sftp",
   "backup.read",
   "backup.create",
   "backup.download",
   "backup.restore",
   "backup.delete",
+  "allocation.read",
+  "allocation.update",
+  "startup.read",
+  "startup.update",
   "schedule.read",
   "schedule.create",
   "schedule.update",
   "schedule.delete",
   "schedule.run",
-  "startup.read",
-  "startup.update",
   "user.read",
   "user.create",
+  "user.update",
   "user.delete",
+  "activity.read",
+  "settings.rename",
+  "settings.reinstall",
+  "settings.resources",
+  "settings.delete",
 ];
+
+const serverTabPermissions = {
+  console: "control.console",
+  files: "file.read",
+  backups: "backup.read",
+  schedules: "schedule.read",
+  addons: "startup.read",
+  startup: "startup.read",
+  network: "allocation.read",
+  users: "user.read",
+  settings: ["settings.rename", "settings.resources", "settings.reinstall", "settings.delete"],
+};
+
+const serverPowerPermissions = {
+  start: "control.start",
+  restart: "control.restart",
+  stop: "control.stop",
+  kill: "control.kill",
+};
 
 function renderPermissionOptions() {
   renderPermissionOptionsInto("permission-options", serverPermissions, "permission");
@@ -322,7 +352,6 @@ async function loadHome() {
   document.getElementById("server-create-heading").hidden = !canCreate;
   document.getElementById("form-server").hidden = !canCreate;
   await Promise.all([refreshServers(), refreshBlueprints()]);
-  if (me.role === "owner" || me.role === "admin") await refreshUsers();
   await routeFromPath();
   return true;
 }
@@ -443,6 +472,30 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   }
 });
 
+function openUserEditor(user) {
+  editingUserId = user.id;
+  document.getElementById("user-editor-title").textContent = `Edit ${user.username}`;
+  document.getElementById("user-editor-username").textContent = user.username;
+  document.getElementById("user-editor-display-name").value = user.displayName || user.username;
+  document.getElementById("user-editor-email").value = user.email || "";
+  document.getElementById("user-editor-role").value = user.role === "admin" ? "admin" : "user";
+  document.getElementById("user-editor-role").disabled =
+    user.role === "owner" || me?.role !== "owner";
+  document.getElementById("user-editor-max-servers").value = user.quotas.maxServers;
+  document.getElementById("user-editor-ram").value = user.quotas.ramMb;
+  document.getElementById("user-editor-disk").value = user.quotas.diskMb;
+  document.getElementById("user-editor-error").hidden = true;
+  const dialog = document.getElementById("user-editor");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+function closeUserEditor() {
+  const dialog = document.getElementById("user-editor");
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+}
+
 async function refreshUsers() {
   const list = document.getElementById("user-list");
   list.innerHTML = "";
@@ -455,7 +508,7 @@ async function refreshUsers() {
     const ownerSelect = document.getElementById("owner-username");
     if (ownerSelect && cursor === null) ownerSelect.innerHTML = "";
     for (const u of data.items) {
-      if (ownerSelect) {
+      if (ownerSelect && !u.suspended) {
         const option = document.createElement("option");
         option.value = u.username;
         option.textContent = u.displayName || u.username;
@@ -466,11 +519,19 @@ async function refreshUsers() {
       name.textContent = u.displayName || u.username;
       const role = document.createElement("span");
       role.className = "role";
-      role.textContent = u.role + (u.suspended ? " (suspended)" : "");
+      role.textContent = `${u.role}${u.suspended ? " (suspended)" : ""}`;
+      const canManage = u.role === "user" || me?.role === "owner";
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "linklike";
+      edit.textContent = "Edit";
+      edit.hidden = !canManage;
+      edit.addEventListener("click", () => openUserEditor(u));
       const reset = document.createElement("button");
       reset.type = "button";
       reset.className = "linklike";
       reset.textContent = "Set password";
+      reset.hidden = !canManage;
       reset.addEventListener("click", async () => {
         const password = window.prompt(`New password for ${u.username} (12+ characters):`);
         if (!password) return;
@@ -486,6 +547,7 @@ async function refreshUsers() {
       suspend.type = "button";
       suspend.className = "linklike";
       suspend.textContent = u.suspended ? "Resume" : "Suspend";
+      suspend.hidden = !canManage || u.role === "owner";
       suspend.addEventListener("click", async () => {
         const err = document.getElementById("user-error");
         const res = await api(`/users/${u.id}`, {
@@ -500,6 +562,7 @@ async function refreshUsers() {
       remove.type = "button";
       remove.className = "linklike danger-text";
       remove.textContent = "Delete";
+      remove.hidden = !canManage || u.role === "owner";
       remove.addEventListener("click", async () => {
         if (!window.confirm(`Delete ${u.username}?`)) return;
         const err = document.getElementById("user-error");
@@ -524,7 +587,7 @@ async function refreshUsers() {
             cursor = users.data.nextCursor;
           }
           if (!target) {
-            fail(err, "That transfer account was not found.");
+            fail(err, "That transfer account was not found or is suspended.");
             return;
           }
           res = await api(`/users/${u.id}?transferTo=${encodeURIComponent(target.id)}`, {
@@ -535,7 +598,7 @@ async function refreshUsers() {
         if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
         else refreshUsers();
       });
-      li.append(name, role, reset, suspend, remove);
+      li.append(name, role, edit, reset, suspend, remove);
       list.append(li);
     }
     if (!data.nextCursor) return;
@@ -563,6 +626,37 @@ document.getElementById("form-user").addEventListener("submit", async (e) => {
   } catch {
     fail(err, "Couldn't reach the panel. Check it's running and try again.");
   }
+});
+
+document.getElementById("btn-user-editor-close").addEventListener("click", closeUserEditor);
+
+document.getElementById("form-user-edit").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("user-editor-error");
+  err.hidden = true;
+  const fd = new FormData(e.target);
+  const body = {
+    displayName: String(fd.get("displayName") || "").trim(),
+    quotaMaxServers: Number(fd.get("quotaMaxServers")),
+    quotaRamMb: Number(fd.get("quotaRamMb")),
+    quotaDiskMb: Number(fd.get("quotaDiskMb")),
+  };
+  const email = String(fd.get("email") || "").trim();
+  if (email) body.email = email;
+  if (me?.role === "owner" && !document.getElementById("user-editor-role").disabled) {
+    body.role = fd.get("role");
+  }
+  const { status, data } = await api(`/users/${editingUserId}`, {
+    method: "PATCH",
+    token: store.token,
+    body,
+  });
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  closeUserEditor();
+  await refreshUsers();
 });
 
 function signOut() {
@@ -661,28 +755,86 @@ async function openServer(id, tab = "console", updateUrl = true) {
   document.getElementById("file-editing").textContent = "nothing open";
   document.getElementById("file-content").value = "";
   renderServerHeader();
+  applyServerPermissions();
   setTab(tab, false);
   show("server");
-  await Promise.all([
-    refreshConsoleHistory(),
-    refreshFiles(),
-    refreshBackups(),
-    refreshSchedules(),
-    refreshAddons(),
-    refreshVariables(),
-    refreshNetwork(),
-    refreshSubusers(),
-    fillSettings(),
-  ]);
-  joinConsoleSocket();
+  const tasks = [];
+  if (canServer("control.console")) tasks.push(refreshConsoleHistory());
+  if (canServer("file.read")) tasks.push(refreshFiles());
+  if (canServer("backup.read")) tasks.push(refreshBackups());
+  if (canServer("schedule.read")) tasks.push(refreshSchedules());
+  if (canServer("startup.read")) tasks.push(refreshAddons(), refreshVariables());
+  if (canServer("allocation.read")) tasks.push(refreshNetwork());
+  if (canServer("user.read")) tasks.push(refreshSubusers());
+  if (
+    canServer("settings.rename") ||
+    canServer("settings.reinstall") ||
+    canServer("settings.delete")
+  ) {
+    tasks.push(Promise.resolve(fillSettings()));
+  }
+  await Promise.all(tasks);
+  if (canServer("websocket.connect")) joinConsoleSocket();
 }
 
-function leaveServer() {
-  if (socket) {
-    socket.close();
-    socket = null;
+function canServerAny(required) {
+  if (!currentServer) return false;
+  const permissions = Array.isArray(currentServer.permissions) ? currentServer.permissions : [];
+  const requiredList = Array.isArray(required) ? required : [required];
+  return (
+    permissions.includes("*") || requiredList.some((permission) => permissions.includes(permission))
+  );
+}
+
+function canServer(permission) {
+  return canServerAny(permission);
+}
+
+function isPanelAdmin() {
+  return me?.role === "owner" || me?.role === "admin";
+}
+
+function applyServerPermissions() {
+  const tabButtons = document.querySelectorAll("#server-tabs [data-tab]");
+  for (const button of tabButtons) {
+    button.hidden = !canServerAny(serverTabPermissions[button.dataset.tab]);
   }
-  currentServer = null;
+  document.querySelectorAll("#srv-power [data-power]").forEach((button) => {
+    button.hidden = !canServer(serverPowerPermissions[button.dataset.power]);
+  });
+  document.getElementById("form-console").hidden = !canServer("control.console");
+  const consoleNote = document.getElementById("console-note");
+  consoleNote.hidden = false;
+  consoleNote.textContent = canServer("websocket.connect")
+    ? "Live output appears here while the server runs."
+    : "Live updates unavailable — refresh to see new output.";
+  document.getElementById("form-file-read").hidden = !canServer("file.read");
+  document.getElementById("btn-file-save").hidden = !canServer("file.update");
+  document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
+  document.getElementById("btn-backup").hidden = !canServer("backup.create");
+  document.getElementById("form-schedule").hidden = !canServer("schedule.create");
+  document.getElementById("form-addon").hidden = !canServer("startup.update");
+  document.getElementById("form-variables").hidden = !canServer("startup.update");
+  document.getElementById("form-tunnel").hidden = !canServer("allocation.update");
+  document.getElementById("form-subuser").hidden = !canServer("user.create");
+  document.getElementById("form-settings").hidden = !canServer("settings.rename");
+  document.getElementById("btn-reinstall").hidden = !canServer("settings.reinstall");
+  document.getElementById("btn-delete-server").hidden =
+    !canServer("settings.delete") || !isPanelAdmin();
+  const canEditResources = isPanelAdmin() && canServer("settings.resources");
+  document.getElementById("settings-memory").closest("label").hidden = !canEditResources;
+  document.getElementById("settings-disk").closest("label").hidden = !canEditResources;
+}
+
+function availableServerTabs() {
+  return Object.keys(serverTabPermissions).filter((tab) => canServerAny(serverTabPermissions[tab]));
+}
+
+function fillSettings() {
+  document.getElementById("settings-name").value = currentServer.name;
+  document.getElementById("settings-desc").value = currentServer.description || "";
+  document.getElementById("settings-memory").value = currentServer.memoryMb;
+  document.getElementById("settings-disk").value = currentServer.diskQuotaMb;
 }
 
 function renderServerHeader() {
@@ -734,7 +886,8 @@ function setTab(name, updateUrl = true) {
     "users",
     "settings",
   ];
-  if (!tabNames.includes(name)) name = "console";
+  const available = availableServerTabs();
+  if (!tabNames.includes(name) || !available.includes(name)) name = available[0] || "console";
   if (updateUrl && currentServer) history.pushState({}, "", `/servers/${currentServer.id}/${name}`);
   document
     .querySelectorAll(".tabs button")
@@ -848,6 +1001,7 @@ async function refreshFiles() {
     btn.type = "button";
     btn.className = "linklike";
     btn.textContent = (item.isDir ? "📁 " : "") + item.name;
+    if (!item.isDir) btn.hidden = !canServer("file.read-content");
     btn.addEventListener("click", () => {
       const next = filesDir ? `${filesDir}/${item.name}` : item.name;
       if (item.isDir) {
@@ -965,6 +1119,7 @@ async function refreshBackups() {
     restore.type = "button";
     restore.className = "linklike";
     restore.textContent = "Restore";
+    restore.hidden = !canServer("backup.restore");
     restore.addEventListener("click", async () => {
       if (
         !window.confirm(
@@ -983,6 +1138,7 @@ async function refreshBackups() {
     remove.type = "button";
     remove.className = "linklike danger-text";
     remove.textContent = b.locked ? "Unlock" : "Delete";
+    remove.hidden = !canServer("backup.delete");
     remove.addEventListener("click", async () => {
       if (!b.locked && !window.confirm(`Delete backup ${b.fileName}? This cannot be undone.`))
         return;
@@ -1039,6 +1195,7 @@ async function refreshSchedules() {
     run.type = "button";
     run.className = "linklike";
     run.textContent = "Run now";
+    run.hidden = !canServer("schedule.run");
     run.addEventListener("click", async () => {
       const res = await api(`/servers/${currentServer.id}/schedules/${s.id}/run`, {
         method: "POST",
@@ -1050,6 +1207,7 @@ async function refreshSchedules() {
     del.type = "button";
     del.className = "linklike danger-text";
     del.textContent = "Delete";
+    del.hidden = !canServer("schedule.delete");
     del.addEventListener("click", async () => {
       const res = await api(`/servers/${currentServer.id}/schedules/${s.id}`, {
         method: "DELETE",
@@ -1121,6 +1279,7 @@ async function refreshAddons() {
     remove.type = "button";
     remove.className = "linklike danger-text";
     remove.textContent = "Remove";
+    remove.hidden = !canServer("startup.update");
     remove.addEventListener("click", async () => {
       const res = await api(
         `/servers/${currentServer.id}/addons/${a.folder}/${encodeURIComponent(a.name)}`,
@@ -1281,6 +1440,7 @@ async function refreshSubusers() {
     remove.type = "button";
     remove.className = "linklike danger-text";
     remove.textContent = "Remove";
+    remove.hidden = !canServer("user.delete");
     remove.addEventListener("click", async () => {
       const res = await api(`/servers/${currentServer.id}/users/${u.userId}`, {
         method: "DELETE",
@@ -1314,13 +1474,6 @@ document.getElementById("form-subuser").addEventListener("submit", async (e) => 
 
 /* ----- settings ----- */
 
-function fillSettings() {
-  document.getElementById("settings-name").value = currentServer.name;
-  document.getElementById("settings-desc").value = currentServer.description || "";
-  document.getElementById("settings-memory").value = currentServer.memoryMb;
-  document.getElementById("settings-disk").value = currentServer.diskQuotaMb;
-}
-
 document.getElementById("form-settings").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = document.getElementById("settings-error");
@@ -1329,7 +1482,7 @@ document.getElementById("form-settings").addEventListener("submit", async (e) =>
     name: document.getElementById("settings-name").value,
     description: document.getElementById("settings-desc").value,
   };
-  if (me?.role === "owner" || me?.role === "admin") {
+  if (isPanelAdmin() && canServer("settings.resources")) {
     body.memoryMb = Number(document.getElementById("settings-memory").value);
     body.diskQuotaMb = Number(document.getElementById("settings-disk").value);
   }

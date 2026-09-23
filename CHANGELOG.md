@@ -72,8 +72,13 @@ All notable changes to Renom are documented here. Format based on
   home with user management — in plain language.
 - Files API and blueprints catalog API are now served by the panel (routers existed but
   were never mounted); built-in blueprints seed idempotently at boot.
-
 ### Fixed
+
+- Permission-aware server detail: related collaborators can open server metadata with their
+  effective grants returned by the API, and the client only loads and exposes tabs/actions
+  allowed by those grants. Suspended servers remain existence-hidden from collaborators.
+- Admin user editing now supports display name, email, role, and quotas; role changes rotate
+  the target's sessions, and server transfer rejects self-transfer and suspended recipients.
 
 - Review batch (cubic PR #10/#11): setup-token gate against owner claiming; `.env`
   auto-loading so the installer-generated config takes effect; API-key scopes enforced on
