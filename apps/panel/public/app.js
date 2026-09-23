@@ -38,17 +38,15 @@ function setView(name) {
     setAdminSection(window.location.pathname.split("/")[2] || "users");
     void refreshUsers();
     void refreshAdminServers();
-    void refreshAdminBlueprints();
   }
   if (name === "api") void refreshApiKeys();
   if (name === "account") renderAccount();
 }
 
 function setAdminSection(section) {
-  const target = ["servers", "blueprints"].includes(section) ? section : "users";
+  const target = section === "servers" ? "servers" : "users";
   document.getElementById("admin-users-section").hidden = target !== "users";
   document.getElementById("admin-servers-section").hidden = target !== "servers";
-  document.getElementById("admin-blueprints-section").hidden = target !== "blueprints";
   document.querySelectorAll("[data-admin-section]").forEach((button) => {
     button.classList.toggle("active", button.dataset.adminSection === target);
   });
@@ -357,7 +355,7 @@ async function refreshServers() {
     const alloc = s.primaryAllocation
       ? ` · ${s.primaryAllocation.ip}:${s.primaryAllocation.port}`
       : "";
-    meta.textContent = `${s.blueprintSlug} · ${s.status} · ${s.memoryMb} MB RAM${alloc}`;
+    meta.textContent = `${s.blueprintSlug} · ${s.status}${alloc}`;
     li.append(link, meta);
     list.append(li);
   }
@@ -391,35 +389,12 @@ async function refreshAdminServers() {
       open.addEventListener("click", () => openServer(server.id));
       const meta = document.createElement("span");
       meta.className = "role";
-      meta.textContent = `${server.blueprintSlug} · ${server.status} · ${server.memoryMb} MB RAM`;
+      meta.textContent = `${server.blueprintSlug} · ${server.status}`;
       li.append(open, meta);
       list.append(li);
     }
     if (!data.nextCursor) return;
     cursor = data.nextCursor;
-  }
-}
-
-async function refreshAdminBlueprints() {
-  const list = document.getElementById("admin-blueprint-list");
-  const err = document.getElementById("admin-blueprints-error");
-  if (!list || !err) return;
-  err.hidden = true;
-  list.innerHTML = "";
-  const { status, data } = await api("/blueprints", { token: store.token });
-  if (status !== 200) {
-    fail(err, describeProblem(status, data));
-    return;
-  }
-  for (const blueprint of data.items) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = `${blueprint.name} · ${blueprint.slug}`;
-    const meta = document.createElement("span");
-    meta.className = "role";
-    meta.textContent = blueprint.maturity || "stable";
-    li.append(name, meta);
-    list.append(li);
   }
 }
 
