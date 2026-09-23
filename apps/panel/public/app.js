@@ -973,12 +973,15 @@ function leaveServer() {
 
 function canServerAny(required) {
   if (!currentServer) return false;
-  if (isPanelAdmin() || currentServer.ownerId === me?.id) return true;
-  const permissions = Array.isArray(currentServer.permissions) ? currentServer.permissions : [];
   const requiredList = Array.isArray(required) ? required : [required];
-  return (
-    permissions.includes("*") || requiredList.some((permission) => permissions.includes(permission))
-  );
+  if (Array.isArray(currentServer.permissions)) {
+    const permissions = currentServer.permissions;
+    return (
+      permissions.includes("*") ||
+      requiredList.some((permission) => permissions.includes(permission))
+    );
+  }
+  return isPanelAdmin() || currentServer.ownerId === me?.id;
 }
 
 function canServer(permission) {
