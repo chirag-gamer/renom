@@ -8,21 +8,23 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="app-sidebar" id="app-sidebar">
-        <div class="sidebar-brand"><strong>Renom</strong><span>Server management</span></div>
-        <nav class="sidebar-nav" aria-label="Main navigation">
-          <button type="button" data-view-link="home"><span>⌂</span> Servers</button>
-          <button type="button" data-view-link="admin" data-admin-only hidden>
-            <span>♙</span> Administration
-          </button>
-          <button type="button" data-view-link="account"><span>◉</span> Account</button>
-          <button type="button" data-view-link="api"><span>⌘</span> API keys</button>
+      <header class="app-topbar" id="app-topbar">
+        <a class="topbar-brand" href="/" data-route="home"
+          ><strong>Renom</strong><span>Server management</span></a
+        >
+        <nav class="topbar-nav" aria-label="Main navigation">
+          <a href="/" data-route="home">Servers</a>
+          <a href="/account" data-route="account">Account</a>
+          <a href="/api-keys" data-route="api">API keys</a>
         </nav>
-        <div class="sidebar-footer">
-          <div id="sidebar-user" class="sidebar-user"></div>
-          <button type="button" id="btn-sidebar-signout" class="sidebar-signout">Sign out</button>
+        <div class="topbar-actions">
+          <span id="topbar-user" class="sidebar-user"></span>
+          <a href="/admin" data-route="admin" data-admin-only hidden class="admin-link"
+            >Admin panel</a
+          >
+          <button type="button" id="btn-topbar-signout" class="sidebar-signout">Sign out</button>
         </div>
-      </aside>
+      </header>
       <main class="shell app-main">
         <header class="brand">
           <h1>Renom</h1>
@@ -107,8 +109,8 @@
           <div id="servers-wrap">
             <h3>Servers</h3>
             <ul id="server-list" class="server-list"></ul>
-            <p id="server-empty" class="note" hidden>No servers yet. Create the first one below.</p>
-            <h3>New server</h3>
+            <p id="server-empty" class="note" hidden>You do not have access to any servers.</p>
+            <h3 id="server-create-heading">New server</h3>
             <form id="form-server" class="inline-form">
               <input
                 name="name"
@@ -118,6 +120,9 @@
                 placeholder="Name, e.g. survival"
               />
               <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
+              <label class="admin-create-field" data-admin-only hidden
+                >Owner<select name="ownerUsername" id="owner-username"></select
+              ></label>
               <label class="admin-create-field" data-admin-only hidden
                 >Memory MB<input name="memoryMb" type="number" min="128" max="1048576" value="1024"
               /></label>
@@ -152,28 +157,42 @@
             </div>
           </div>
           <div id="admin-panel">
-            <h3>People with access</h3>
-            <ul id="user-list" class="user-list"></ul>
-            <h3>Add someone</h3>
-            <form id="form-user" class="inline-form">
-              <input name="username" required minlength="3" maxlength="32" placeholder="Username" />
-              <input
-                name="password"
-                type="password"
-                required
-                minlength="12"
-                placeholder="Password (12+ chars)"
-              />
-              <select name="role" aria-label="Role">
-                <option value="user">Player / user</option>
-                <option value="admin">Admin</option>
-              </select>
-              <button type="submit">Add account</button>
-            </form>
-            <p class="error" id="user-error" role="alert" hidden></p>
-            <h3>Servers</h3>
-            <ul id="admin-server-list" class="user-list"></ul>
-            <p class="error" id="admin-servers-error" role="alert" hidden></p>
+            <nav class="admin-tabs" aria-label="Administration sections">
+              <button type="button" data-admin-section="users">Users</button>
+              <button type="button" data-admin-section="servers">Servers</button>
+            </nav>
+            <div id="admin-users-section">
+              <h3>People with access</h3>
+              <ul id="user-list" class="user-list"></ul>
+              <h3>Add someone</h3>
+              <form id="form-user" class="inline-form">
+                <input
+                  name="username"
+                  required
+                  minlength="3"
+                  maxlength="32"
+                  placeholder="Username"
+                />
+                <input
+                  name="password"
+                  type="password"
+                  required
+                  minlength="12"
+                  placeholder="Password (12+ chars)"
+                />
+                <select name="role" aria-label="Role">
+                  <option value="user">Player / user</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button type="submit">Add account</button>
+              </form>
+              <p class="error" id="user-error" role="alert" hidden></p>
+            </div>
+            <div id="admin-servers-section" hidden>
+              <h3>Servers</h3>
+              <ul id="admin-server-list" class="user-list"></ul>
+              <p class="error" id="admin-servers-error" role="alert" hidden></p>
+            </div>
           </div>
         </section>
 

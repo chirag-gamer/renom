@@ -15,28 +15,87 @@ const views = {
 
 function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
-  document.getElementById("app-sidebar").hidden = name === "setup" || name === "login";
-  document.querySelectorAll("[data-view-link]").forEach((link) => {
+  const topbar = document.getElementById("app-topbar");
+  if (topbar) topbar.hidden = name === "setup" || name === "login";
+  document.querySelectorAll("[data-admin-section]").forEach((button) => {
+    button.addEventListener("click", () => {
+      history.pushState({}, "", `/admin/${button.dataset.adminSection}`);
+      setAdminSection(button.dataset.adminSection);
+    });
+  });
+  document.querySelectorAll("[data-route]").forEach((link) => {
     link.classList.toggle(
       "active",
-      link.dataset.viewLink === name || (name === "server" && link.dataset.viewLink === "home"),
+      link.dataset.route === name || (name === "server" && link.dataset.route === "home"),
     );
   });
 }
 
 function setView(name) {
   if (name === "admin" && me?.role !== "owner" && me?.role !== "admin") return;
-  if (name === "home") {
-    show("home");
-    return;
-  }
   show(name);
   if (name === "admin") {
+    setAdminSection(window.location.pathname.split("/")[2] || "users");
     void refreshUsers();
     void refreshAdminServers();
   }
   if (name === "api") void refreshApiKeys();
   if (name === "account") renderAccount();
+}
+
+function setAdminSection(section) {
+  const target = section === "servers" ? "servers" : "users";
+  document.getElementById("admin-users-section").hidden = target !== "users";
+  document.getElementById("admin-servers-section").hidden = target !== "servers";
+  document.querySelectorAll("[data-admin-section]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminSection === target);
+  });
+}
+
+function routePath(name) {
+  if (name === "account") return "/account";
+  if (name === "api") return "/api-keys";
+  if (name === "admin") return "/admin";
+  return "/";
+}
+
+async function navigate(path) {
+  if (window.location.pathname !== path) history.pushState({}, "", path);
+  await routeFromPath();
+}
+
+async function routeFromPath() {
+  const path = window.location.pathname;
+  if (path === "/login") {
+    show("login");
+    return;
+  }
+  if (path === "/register") {
+    show("login");
+    return;
+  }
+  const serverMatch = path.match(/^\/servers\/([^/]+)(?:\/([^/]+))?/);
+  if (serverMatch) {
+    await openServer(serverMatch[1], serverMatch[2] || "console", false);
+    return;
+  }
+  if (path.startsWith("/admin")) {
+    if (me?.role !== "owner" && me?.role !== "admin") {
+      await navigate("/");
+      return;
+    }
+    setView("admin");
+    return;
+  }
+  if (path === "/account") {
+    setView("account");
+    return;
+  }
+  if (path === "/api-keys") {
+    setView("api");
+    return;
+  }
+  setView("home");
 }
 
 function renderAccount() {
@@ -223,6 +282,8 @@ document.getElementById("form-login").addEventListener("submit", async (e) => {
     });
     if (status === 200) {
       store.token = data.token;
+      const destination = window.location.pathname === "/login" ? "/" : window.location.pathname;
+      history.replaceState({}, "", destination);
       await loadHome();
     } else if (status === 429) {
       fail(err, "Too many tries — give it a minute, then try again.");
@@ -248,14 +309,17 @@ async function loadHome() {
   me = data.user;
   document.getElementById("home-greeting").textContent =
     `Welcome back, ${me.displayName || me.username}.`;
-  document.getElementById("sidebar-user").textContent =
+  document.getElementById("topbar-user").textContent =
     `${me.displayName || me.username} · ${me.role}`;
   document.querySelectorAll("[data-admin-only]").forEach((link) => {
     link.hidden = me.role !== "owner" && me.role !== "admin";
   });
+  const canCreate = me.role === "owner" || me.role === "admin";
+  document.getElementById("server-create-heading").hidden = !canCreate;
+  document.getElementById("form-server").hidden = !canCreate;
   await Promise.all([refreshServers(), refreshBlueprints()]);
   if (me.role === "owner" || me.role === "admin") await refreshUsers();
-  setView("home");
+  await routeFromPath();
   return true;
 }
 
@@ -353,6 +417,7 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   if (me?.role === "owner" || me?.role === "admin") {
     body.memoryMb = Number(fd.get("memoryMb")) || 1024;
     body.diskQuotaMb = Number(fd.get("diskQuotaMb")) || 5120;
+    body.ownerUsername = fd.get("ownerUsername") || undefined;
   }
   const { status, data } = await api("/servers", {
     method: "POST",
@@ -377,7 +442,15 @@ async function refreshUsers() {
     const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
     const { status, data } = await api(`/users${qs}`, { token: store.token });
     if (status !== 200) return;
+    const ownerSelect = document.getElementById("owner-username");
+    if (ownerSelect) ownerSelect.innerHTML = "";
     for (const u of data.items) {
+      if (ownerSelect) {
+        const option = document.createElement("option");
+        option.value = u.username;
+        option.textContent = u.displayName || u.username;
+        ownerSelect.append(option);
+      }
       const li = document.createElement("li");
       const name = document.createElement("span");
       name.textContent = u.displayName || u.username;
@@ -486,13 +559,20 @@ function signOut() {
   leaveServer();
   store.token = null;
   me = null;
+  history.replaceState({}, "", "/login");
   show("login");
 }
 
 document.getElementById("btn-signout").addEventListener("click", signOut);
-document.getElementById("btn-sidebar-signout").addEventListener("click", signOut);
-document.querySelectorAll("[data-view-link]").forEach((link) => {
-  link.addEventListener("click", () => setView(link.dataset.viewLink));
+document.getElementById("btn-topbar-signout").addEventListener("click", signOut);
+document.querySelectorAll("[data-route]").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    void navigate(link.getAttribute("href") || routePath(link.dataset.route));
+  });
+});
+window.addEventListener("popstate", () => {
+  if (store.token) void routeFromPath();
 });
 
 async function refreshApiKeys() {
@@ -554,23 +634,24 @@ document.getElementById("form-api-key").addEventListener("submit", async (e) => 
 
 document.getElementById("btn-back").addEventListener("click", async () => {
   leaveServer();
-  await loadHome();
+  await navigate("/");
 });
 
-async function openServer(id) {
+async function openServer(id, tab = "console", updateUrl = true) {
   const { status, data } = await api(`/servers/${id}`, { token: store.token });
   if (status !== 200) {
     await loadHome();
     return;
   }
   currentServer = data.server;
+  if (updateUrl) history.pushState({}, "", `/servers/${id}/${tab}`);
   filesDir = "";
   // Never carry another server's file into this one: a save after switching
   // servers must not write stale contents to the new server.
   document.getElementById("file-editing").textContent = "nothing open";
   document.getElementById("file-content").value = "";
   renderServerHeader();
-  setTab("console");
+  setTab(tab, false);
   show("server");
   await Promise.all([
     refreshConsoleHistory(),
@@ -631,11 +712,8 @@ document.querySelectorAll(".tabs button").forEach((btn) => {
   btn.addEventListener("click", () => setTab(btn.dataset.tab));
 });
 
-function setTab(name) {
-  document
-    .querySelectorAll(".tabs button")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-  for (const t of [
+function setTab(name, updateUrl = true) {
+  const tabNames = [
     "console",
     "files",
     "backups",
@@ -645,7 +723,13 @@ function setTab(name) {
     "network",
     "users",
     "settings",
-  ]) {
+  ];
+  if (!tabNames.includes(name)) name = "console";
+  if (updateUrl && currentServer) history.pushState({}, "", `/servers/${currentServer.id}/${name}`);
+  document
+    .querySelectorAll(".tabs button")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  for (const t of tabNames) {
     document.getElementById(`tab-${t}`).hidden = t !== name;
   }
 }
