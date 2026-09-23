@@ -205,29 +205,9 @@ export function serversRouter(deps: ServersDeps): Router {
     try {
       const body = parseBody(patchServerSchema, req);
       const id = req.params.id ?? "";
-      // Renaming is rename-scoped; touching RAM/disk needs the resources
-      // permission on top, so a rename-only collaborator cannot spend quota.
       if (body.memoryMb !== undefined || body.diskQuotaMb !== undefined) {
-        const allowed = res.locals.effectivePermissions as string[];
-        if (!allowed.includes("*") && !allowed.includes("settings.resources")) {
-          throw new ForbiddenError("Resource changes need the settings.resources permission");
-        }
-      }
-      // Resource bumps obey quotas too, not just creation: a collaborator
-      // with rename rights must not grow a server past its owner's plan.
-      if (req.principal!.role !== "owner" && req.principal!.role !== "admin") {
-        const current = servers.byId(id);
-        if (current && (body.memoryMb !== undefined || body.diskQuotaMb !== undefined)) {
-          const ownerRow = users.byId(current.owner_id);
-          if (ownerRow) {
-            const usage = servers.resourceUsage(current.owner_id);
-            const ram = usage.memoryMb - current.memory_mb + (body.memoryMb ?? current.memory_mb);
-            const disk =
-              usage.diskMb - current.disk_quota_mb + (body.diskQuotaMb ?? current.disk_quota_mb);
-            if (ram > ownerRow.quota_ram_mb || disk > ownerRow.quota_disk_mb) {
-              throw new ConflictError("That exceeds the owner's resource quota");
-            }
-          }
+        if (req.principal!.role !== "owner" && req.principal!.role !== "admin") {
+          throw new ForbiddenError("Only panel administrators can edit server resources");
         }
       }
       const updated = servers.update(id, body);

@@ -19,6 +19,33 @@ export interface ConsoleLine {
 const HISTORY_LIMIT = 500;
 const LINE_MAX = 4096;
 
+function resolveJavaBinary(version?: string): string | null {
+  const executable = process.platform === "win32" ? "java.exe" : "java";
+  const roots = version
+    ? [process.env[`JAVA_HOME_${version}`]].filter((value): value is string => Boolean(value))
+    : [process.env.JAVA_HOME].filter((value): value is string => Boolean(value));
+  for (const root of roots) {
+    const candidate = join(root, "bin", executable);
+    if (existsSync(candidate)) return candidate;
+  }
+  if (version) {
+    const suffixes = process.platform === "win32" ? ["", "-jdk", "-jre"] : ["", "-jdk", "-jre"];
+    const rootsByVersion = [
+      process.env.JAVA_HOME,
+      `/usr/lib/jvm/java-${version}`,
+      `/opt/java/openjdk-${version}`,
+    ];
+    for (const root of rootsByVersion) {
+      if (!root) continue;
+      for (const suffix of suffixes) {
+        const candidate = join(root, `bin${suffix}`, executable);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  }
+  if (!version) return executable;
+  return null;
+}
 interface LiveProcess {
   /** Null when this slot only holds history + listeners (never started, or finished). */
   proc: ChildProcess | null;
@@ -103,6 +130,15 @@ export class LocalProcessEngine {
     const [rawCmd, ...args] = argv;
     if (!rawCmd) throw new EngineError("Blueprint has an empty start command");
     let cmd = rawCmd;
+    if (rawCmd === "java") {
+      const javaBinary = resolveJavaBinary(vars["javaVersion"]);
+      if (!javaBinary) {
+        throw new EngineError(
+          `Java ${vars["javaVersion"] ?? "runtime"} is not installed on this host. Install it before starting this server.`,
+        );
+      }
+      cmd = javaBinary;
+    }
     // Cross-OS binaries: `bedrock_server` on Linux is `bedrock_server.exe`
     // next to it on Windows. Prefer the exact name, fall back to .exe there.
     // (Checked against the server root, where installs place binaries.)

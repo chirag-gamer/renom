@@ -151,6 +151,18 @@ describe("subusers", () => {
       });
     expect(grant.status).toBe(201);
 
+    const servers = await request(app)
+      .get("/api/v3/servers")
+      .set("authorization", `Bearer ${aliceToken}`);
+    expect(servers.status).toBe(200);
+    expect(servers.body.items.map((item: { id: string }) => item.id)).toContain(serverId);
+
+    const resources = await request(app)
+      .patch(`/api/v3/servers/${serverId}`)
+      .set("authorization", `Bearer ${aliceToken}`)
+      .send({ memoryMb: 4096 });
+    expect(resources.status).toBe(403);
+
     const start = await request(app)
       .post(`/api/v3/servers/${serverId}/power`)
       .set("authorization", `Bearer ${aliceToken}`)

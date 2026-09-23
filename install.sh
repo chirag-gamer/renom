@@ -58,13 +58,30 @@ banner() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+install_java() {
+  have java && return 0
+  info "Java not found; installing OpenJDK 21 for Minecraft servers..."
+  if have apt-get; then
+    sudo apt-get update && sudo apt-get install -y openjdk-21-jre-headless
+  elif have dnf; then
+    sudo dnf install -y java-21-openjdk-headless
+  elif have pacman; then
+    sudo pacman -Sy --noconfirm jre-openjdk
+  elif have apk; then
+    sudo apk add openjdk21-jre
+  else
+    die "Java is required for Minecraft servers. Install Java 17+ and re-run."
+  fi
+  have java || die "Java installation completed but java is still unavailable."
+  ok "Java $(java -version 2>&1 | head -n 1) installed."
+}
+
 install_basics() {
   local missing=""
   for tool in curl git tar awk; do
     have "$tool" || missing="$missing $tool"
   done
-  # Java runs Minecraft servers; warn (don't force) when absent.
-  have java || warn "Java not found — Minecraft servers need it. Install a JRE (17+) to boot them."
+  install_java
   if [ -z "$missing" ]; then return 0; fi
   info "Installing basics:$missing ..."
   if have apt-get; then
@@ -123,6 +140,38 @@ open_firewall() {
   fi
   warn "Could not open TCP $port automatically — allow it in your firewall manually."
   return 0
+}
+
+install_background_service() {
+  have systemctl || return 0
+  if ! systemctl is-system-running >/dev/null 2>&1; then return 0; fi
+  local service="/etc/systemd/system/renom.service"
+  local node_bin
+  node_bin="$(command -v node)" || die "Node.js is required for the background service."
+  local root_dir
+  root_dir="$(pwd)"
+  info "Installing the Renom background service..."
+  sudo tee "$service" >/dev/null <<EOF
+[Unit]
+Description=Renom game server panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$(id -un)
+WorkingDirectory=$root_dir
+EnvironmentFile=$root_dir/.env
+ExecStart=$node_bin $root_dir/apps/panel/dist/server/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now-renom.service
+  ok "Renom is running in the background as ${service}."
 }
 
 # ---------------------------------------------------------------- main
@@ -199,6 +248,7 @@ info "Installing dependencies (this takes a minute)..."
 npm install --no-audit --no-fund || die "npm install failed."
 info "Building..."
 npm run build || die "Build failed."
+install_background_service
 say ""
 
 # --- admin account, only when the panel has no users yet.
