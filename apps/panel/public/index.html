@@ -110,38 +110,7 @@
             <h3>Servers</h3>
             <ul id="server-list" class="server-list"></ul>
             <p id="server-empty" class="note" hidden>You do not have access to any servers.</p>
-            <h3 id="server-create-heading">New server</h3>
-            <form id="form-server" class="inline-form">
-              <input
-                name="name"
-                required
-                minlength="1"
-                maxlength="64"
-                placeholder="Name, e.g. survival"
-              />
-              <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
-              <label class="admin-create-field" data-admin-only hidden
-                >Owner<select name="ownerUsername" id="owner-username"></select
-              ></label>
-              <label class="admin-create-field" data-admin-only hidden
-                >Memory MB<input name="memoryMb" type="number" min="128" max="1048576" value="1024"
-              /></label>
-              <label class="admin-create-field" data-admin-only hidden
-                >Disk MB<input
-                  name="diskQuotaMb"
-                  type="number"
-                  min="256"
-                  max="10485760"
-                  value="5120"
-              /></label>
-              <button type="submit">Create</button>
-            </form>
-            <label class="check"
-              ><input type="checkbox" id="eula-check" /> I accept the Minecraft EULA
-              <span class="hint"
-                >(minecraft.net/eula — tick this for Minecraft servers)</span
-              ></label
-            >
+            <p class="note">Server creation and assignment are available in the Admin panel.</p>
             <p class="error" id="server-error" role="alert" hidden></p>
           </div>
 
@@ -189,71 +158,184 @@
               <p class="error" id="user-error" role="alert" hidden></p>
             </div>
             <div id="admin-servers-section" hidden>
-              <h3>Servers</h3>
+              <div class="section-header">
+                <h3>Servers</h3>
+                <button type="button" id="btn-admin-create-server">Create server</button>
+              </div>
               <ul id="admin-server-list" class="user-list"></ul>
               <p class="error" id="admin-servers-error" role="alert" hidden></p>
             </div>
           </div>
         </section>
 
-        <dialog id="user-editor" class="user-editor">
-          <div class="dialog-header">
-            <h3 id="user-editor-title">Edit user</h3>
-            <button type="button" id="btn-user-editor-close" class="secondary">Close</button>
-          </div>
-          <form id="form-user-edit">
-            <p id="user-editor-username" class="note"></p>
-            <label
-              >Display name<input name="displayName" id="user-editor-display-name" maxlength="64" />
-            </label>
-            <label>Email<input name="email" id="user-editor-email" type="email" /></label>
-            <label
-              >Role
-              <select name="role" id="user-editor-role">
-                <option value="user">Player / user</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
+        <section id="view-user-detail" class="card wide" hidden>
+          <p>
+            <button type="button" id="btn-user-detail-back" class="secondary">← All users</button>
+          </p>
+          <p class="eyebrow">User management</p>
+          <h2 id="user-detail-heading">User</h2>
+          <p id="user-detail-meta" class="note"></p>
+          <form id="form-user-detail">
+            <div class="form-grid">
+              <label
+                >Username<input
+                  name="username"
+                  id="user-detail-username"
+                  required
+                  minlength="3"
+                  maxlength="32"
+                />
+              </label>
+              <label
+                >Display name<input name="displayName" id="user-detail-display-name" maxlength="64"
+              /></label>
+              <label>Email<input name="email" id="user-detail-email" type="email" /></label>
+              <label
+                >Tier
+                <select name="role" id="user-detail-role">
+                  <option value="user">Player / user</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <label
+                >Status
+                <select name="status" id="user-detail-status">
+                  <option value="active">Active</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </label>
+              <label
+                >New password
+                <input
+                  name="password"
+                  id="user-detail-password"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="12"
+                  placeholder="Leave blank to keep current password"
+                />
+              </label>
+            </div>
             <fieldset>
               <legend>Quotas</legend>
-              <label
-                >Max servers<input
-                  name="quotaMaxServers"
-                  id="user-editor-max-servers"
-                  type="number"
-                  min="0"
-                  max="1000"
-                />
-              </label>
-              <label
-                >RAM MB<input
-                  name="quotaRamMb"
-                  id="user-editor-ram"
-                  type="number"
-                  min="0"
-                  max="1048576"
-                />
-              </label>
-              <label
-                >Disk MB<input
-                  name="quotaDiskMb"
-                  id="user-editor-disk"
-                  type="number"
-                  min="0"
-                  max="10485760"
-                />
-              </label>
+              <div class="form-grid">
+                <label
+                  >Max servers<input
+                    name="quotaMaxServers"
+                    id="user-detail-max-servers"
+                    type="number"
+                    min="0"
+                    max="1000"
+                  />
+                </label>
+                <label
+                  >RAM MB<input
+                    name="quotaRamMb"
+                    id="user-detail-ram"
+                    type="number"
+                    min="0"
+                    max="1048576"
+                  />
+                </label>
+                <label
+                  >Disk MB<input
+                    name="quotaDiskMb"
+                    id="user-detail-disk"
+                    type="number"
+                    min="0"
+                    max="10485760"
+                  />
+                </label>
+              </div>
             </fieldset>
-            <p><button type="submit">Save user</button></p>
-            <p class="error" id="user-editor-error" role="alert" hidden></p>
+            <p><button type="submit" id="user-detail-save">Save user</button></p>
+            <p class="error" id="user-detail-error" role="alert" hidden></p>
           </form>
-        </dialog>
+          <h3>Owned servers</h3>
+          <ul id="user-owned-servers" class="user-list"></ul>
+          <p>
+            <button type="button" id="btn-user-detail-delete" class="danger">Delete user</button>
+          </p>
+        </section>
 
         <section id="view-account" class="card" hidden>
           <p class="eyebrow">Account</p>
           <h2>Your account</h2>
-          <p class="note">Account settings are managed by the panel administrator.</p>
           <div id="account-summary"></div>
+          <form id="form-account" class="account-form">
+            <label
+              >Display name<input name="displayName" id="account-display-name" maxlength="64" />
+            </label>
+            <label>Email<input name="email" id="account-email" type="email" /></label>
+            <label
+              >New password
+              <input
+                name="password"
+                id="account-password"
+                type="password"
+                autocomplete="new-password"
+                minlength="12"
+                placeholder="Leave blank to keep current password"
+              />
+            </label>
+            <p><button type="submit">Save account</button></p>
+            <p class="error" id="account-error" role="alert" hidden></p>
+          </form>
+        </section>
+
+        <section id="view-server-create" class="card wide" hidden>
+          <p>
+            <button type="button" id="btn-server-create-back" class="secondary">
+              ← Admin servers
+            </button>
+          </p>
+          <p class="eyebrow">Administration / Servers</p>
+          <h2>Create server</h2>
+          <p class="note">Choose the owner and resources before creating the server.</p>
+          <form id="form-server" class="server-create-form">
+            <div class="form-grid">
+              <label
+                >Server name
+                <input
+                  name="name"
+                  required
+                  minlength="1"
+                  maxlength="64"
+                  placeholder="e.g. survival"
+                />
+              </label>
+              <label
+                >Description
+                <textarea
+                  name="description"
+                  maxlength="500"
+                  placeholder="Optional server description"
+                ></textarea>
+              </label>
+              <label
+                >Owner
+                <select name="ownerUsername" id="owner-username" required></select>
+              </label>
+              <label
+                >Blueprint
+                <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
+              </label>
+              <label
+                >Memory MB
+                <input name="memoryMb" type="number" min="128" max="1048576" value="1024" />
+              </label>
+              <label
+                >Disk MB
+                <input name="diskQuotaMb" type="number" min="256" max="10485760" value="5120" />
+              </label>
+            </div>
+            <label class="check"
+              ><input type="checkbox" id="eula-check" /> I accept the Minecraft EULA
+              <span class="hint">(minecraft.net/eula — required for Minecraft servers)</span>
+            </label>
+            <p><button type="submit">Create server</button></p>
+            <p class="error" id="server-error" role="alert" hidden></p>
+          </form>
         </section>
 
         <section id="view-api" class="card" hidden>

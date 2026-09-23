@@ -87,6 +87,8 @@ All notable changes to Renom are documented here. Format based on
   console history, and revoked keys or rotated user credentials disconnect live sockets.
 - Unauthorized deep-link tabs normalize to the first permitted server tab, and successful server
   deletion returns to the home route before refreshing the server list.
+- Added dedicated account self-service, admin user detail pages, and an admin server-creation page;
+  the main server list no longer contains server creation, and admin server rows show their owner.
 
 - Review batch (cubic PR #10/#11): setup-token gate against owner claiming; `.env`
   auto-loading so the installer-generated config takes effect; API-key scopes enforced on

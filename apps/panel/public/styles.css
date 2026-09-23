@@ -407,6 +407,35 @@ textarea:focus {
   color: var(--accent-strong);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.section-header h3 {
+  margin-bottom: 8px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 16px;
+}
+.account-form,
+.server-create-form {
+  max-width: 760px;
+  margin-top: 24px;
+}
+.server-create-form fieldset,
+#form-user-detail fieldset {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.user-list li .linklike {
+  flex: 1;
+}
 .permission-form {
   max-width: 720px;
 }

@@ -176,7 +176,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
     },
     registerRoutes: (expressApp) => {
       apiRouters.push(
-        usersRouter(users, audit, auth, gatewayProxy),
+        usersRouter(users, servers, audit, auth, gatewayProxy),
         apiKeysRouter(apiKeys, audit, auth, gatewayProxy),
         serversRouter({
           db,
