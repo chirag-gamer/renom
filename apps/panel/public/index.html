@@ -9,19 +9,31 @@
   <body>
     <div class="app-shell">
       <header class="app-topbar" id="app-topbar">
-        <a class="topbar-brand" href="/" data-route="home"
-          ><strong>Renom</strong><span>Server management</span></a
-        >
-        <nav class="topbar-nav" aria-label="Main navigation">
-          <a href="/" data-route="home">Servers</a>
-          <a href="/account" data-route="account">Account</a>
-          <a href="/api-keys" data-route="api">API keys</a>
+        <div class="sidebar-heading">
+          <a class="topbar-brand" href="/" data-route="home" aria-label="Renom servers">
+            <strong>RENOM</strong><span>Game server panel</span>
+          </a>
+          <button
+            type="button"
+            id="sidebar-toggle"
+            class="sidebar-toggle"
+            aria-label="Toggle navigation"
+            aria-expanded="false"
+            aria-controls="main-navigation"
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
+        </div>
+        <nav class="topbar-nav" id="main-navigation" aria-label="Main navigation">
+          <a href="/" data-route="home"><span aria-hidden="true">▦</span> Servers</a>
+          <a href="/account" data-route="account"><span aria-hidden="true">◉</span> Account</a>
+          <a href="/api-keys" data-route="api"><span aria-hidden="true">⌘</span> API keys</a>
+          <a href="/admin" data-route="admin" data-admin-only hidden
+            ><span aria-hidden="true">⚙</span> Admin</a
+          >
         </nav>
         <div class="topbar-actions">
           <span id="topbar-user" class="sidebar-user"></span>
-          <a href="/admin" data-route="admin" data-admin-only hidden class="admin-link"
-            >Admin panel</a
-          >
           <button type="button" id="btn-topbar-signout" class="sidebar-signout">Sign out</button>
         </div>
       </header>
@@ -102,15 +114,27 @@
           </p>
         </section>
 
-        <section id="view-home" class="card" hidden>
-          <h2 id="home-greeting">You're in.</h2>
-          <p id="home-sub">These are the game servers on this machine.</p>
+        <section id="view-home" class="dashboard" hidden>
+          <header class="dashboard-header">
+            <div>
+              <p class="eyebrow">Server management</p>
+              <h2 id="home-greeting">Your servers</h2>
+              <p id="home-sub" class="note">Choose a server to open its console and controls.</p>
+            </div>
+            <div class="dashboard-status" aria-label="Server list status">
+              <span class="status-dot status-dot--online" aria-hidden="true"></span>
+              <span>Available servers</span>
+            </div>
+          </header>
 
           <div id="servers-wrap">
-            <h3>Servers</h3>
-            <ul id="server-list" class="server-list"></ul>
-            <p id="server-empty" class="note" hidden>You do not have access to any servers.</p>
-            <p class="note">Server creation and assignment are available in the Admin panel.</p>
+            <ul id="server-list" class="server-list" aria-label="Your servers"></ul>
+            <p id="server-empty" class="empty-state" hidden>
+              You do not have access to any servers.
+            </p>
+            <p class="note dashboard-note">
+              Server creation and assignment are available in the Admin panel.
+            </p>
             <p class="error" id="server-list-error" role="alert" hidden></p>
           </div>
 
