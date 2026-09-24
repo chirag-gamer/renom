@@ -189,6 +189,14 @@ EOF
   ok "Renom is running in the background as ${service}."
 }
 
+# The updater calls this mode after a pull so newly-required Java runtimes are
+# present before a Minecraft server is started. It is deliberately limited to
+# dependency provisioning: no prompts, config writes, service changes, or npm.
+if [ "${1:-}" = "--ensure-java" ]; then
+  install_java
+  exit 0
+fi
+
 # ---------------------------------------------------------------- main
 
 banner

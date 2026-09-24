@@ -20,6 +20,9 @@ function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
   const topbar = document.getElementById("app-topbar");
   if (topbar) topbar.hidden = name === "setup" || name === "login";
+  document
+    .querySelector(".app-shell")
+    ?.classList.toggle("is-authenticated", topbar?.hidden === false);
   document.querySelectorAll("[data-route]").forEach((link) => {
     link.classList.toggle(
       "active",
@@ -29,6 +32,8 @@ function show(name) {
         (name === "server" && link.dataset.route === "home"),
     );
   });
+  document.querySelector(".app-shell")?.classList.remove("navigation-open");
+  document.getElementById("sidebar-toggle")?.setAttribute("aria-expanded", "false");
 }
 
 function setView(name, detailId = "") {
@@ -131,6 +136,7 @@ async function routeFromPath() {
     setView("api");
     return;
   }
+  await refreshServers();
   setView("home");
 }
 
@@ -388,9 +394,21 @@ async function loadHome() {
   document.querySelectorAll("[data-admin-only]").forEach((link) => {
     link.hidden = me.role !== "owner" && me.role !== "admin";
   });
-  await Promise.all([refreshServers(), refreshBlueprints()]);
+  await refreshBlueprints();
   await routeFromPath();
   return true;
+}
+
+function serverAccent(id) {
+  const accents = ["#9a4022", "#006767", "#625d5a", "#ba5737", "#89726b", "#004f4f"];
+  let value = 0;
+  for (let index = 0; index < id.length; index += 1)
+    value = (value * 31 + id.charCodeAt(index)) >>> 0;
+  return accents[value % accents.length];
+}
+
+function readableStatus(server) {
+  return (server.runtimeState || server.status || "offline").replaceAll("_", " ");
 }
 
 async function refreshServers() {
@@ -409,22 +427,77 @@ async function refreshServers() {
     empty.hidden = false;
     return;
   }
-  empty.hidden = true;
-  for (const s of data.items) {
-    const li = document.createElement("li");
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "linklike";
-    link.textContent = s.name;
-    link.addEventListener("click", () => openServer(s.id));
-    const meta = document.createElement("span");
-    meta.className = "role";
-    const alloc = s.primaryAllocation
-      ? ` · ${s.primaryAllocation.ip}:${s.primaryAllocation.port}`
-      : "";
-    meta.textContent = `${s.blueprintSlug} · ${s.status}${alloc}`;
-    li.append(link, meta);
-    list.append(li);
+  for (const server of data.items) {
+    const item = document.createElement("li");
+    item.className = "server-card";
+    item.style.setProperty("--server-accent", serverAccent(server.id));
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "server-card-open";
+    open.setAttribute("aria-label", `Open ${server.name}`);
+    open.addEventListener("click", () => void navigate(`/servers/${server.id}/console`));
+
+    const heading = document.createElement("div");
+    heading.className = "server-card-heading";
+    const identity = document.createElement("div");
+    identity.className = "server-identity";
+    const mark = document.createElement("span");
+    mark.className = "server-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = server.name.slice(0, 1).toUpperCase();
+    const title = document.createElement("strong");
+    title.textContent = server.name;
+    identity.append(mark, title);
+
+    const state = document.createElement("span");
+    const stateName = readableStatus(server);
+    state.className = `server-state server-state--${stateName.replaceAll(" ", "-")}`;
+    const dot = document.createElement("span");
+    dot.className = "status-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const stateLabel = document.createElement("span");
+    stateLabel.textContent = stateName;
+    state.append(dot, stateLabel);
+    heading.append(identity, state);
+
+    if (server.description) {
+      const description = document.createElement("p");
+      description.className = "server-description";
+      description.textContent = server.description;
+      open.append(heading, description);
+    } else {
+      open.append(heading);
+    }
+
+    const details = document.createElement("dl");
+    details.className = "server-details";
+    const metadata = [
+      ["Software", server.blueprintSlug],
+      [
+        "Address",
+        server.primaryAllocation
+          ? `${server.primaryAllocation.ip}:${server.primaryAllocation.port}`
+          : "Not assigned",
+      ],
+      ["Memory", `${server.memoryMb} MB`],
+      ["Disk", `${server.diskQuotaMb} MB`],
+    ];
+    for (const [label, value] of metadata) {
+      const group = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const definition = document.createElement("dd");
+      definition.textContent = value;
+      group.append(term, definition);
+      details.append(group);
+    }
+    const action = document.createElement("span");
+    action.className = "server-card-action";
+    action.textContent = "Open server →";
+    open.append(details, action);
+    item.append(open);
+    list.append(item);
   }
 }
 
@@ -853,8 +926,12 @@ function signOut() {
   show("login");
 }
 
-document.getElementById("btn-signout").addEventListener("click", signOut);
 document.getElementById("btn-topbar-signout").addEventListener("click", signOut);
+document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
+  const shell = document.querySelector(".app-shell");
+  const isOpen = shell?.classList.toggle("navigation-open") ?? false;
+  document.getElementById("sidebar-toggle")?.setAttribute("aria-expanded", String(isOpen));
+});
 document.querySelectorAll("[data-route]").forEach((link) => {
   link.addEventListener("click", (event) => {
     event.preventDefault();
@@ -1092,9 +1169,11 @@ function setTab(name, updateUrl = true) {
     const method = updateUrl ? "pushState" : "replaceState";
     history[method]({}, "", `/servers/${currentServer.id}/${name}`);
   }
+  const activeTab = document.querySelector(`.tabs button[data-tab="${name}"]`);
   document
     .querySelectorAll(".tabs button")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    .forEach((button) => button.classList.toggle("active", button === activeTab));
+  activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
   for (const t of tabNames) {
     document.getElementById(`tab-${t}`).hidden = t !== name;
   }

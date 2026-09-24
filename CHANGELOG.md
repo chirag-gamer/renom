@@ -5,6 +5,14 @@ All notable changes to Renom are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+
+- Restored the approved warm-paper Renom design system across authenticated navigation, server cards,
+  and server tabs. The dashboard now uses the 1200px centered layout, paper surfaces, terracotta actions,
+  and teal health states rather than a separate dark theme.
+- Panel updates now provision required Java runtimes before rebuilding, using the same idempotent installer
+  logic as a fresh install.
+
 ### Added
 
 - `renom.sh` console dashboard: install / update / delete from one script, including a

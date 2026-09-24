@@ -79,6 +79,8 @@ do_update() {
   branch="$(git rev-parse --abbrev-ref HEAD)"
   info "Updating on branch $branch ..."
   git pull --ff-only || die "Pull failed — resolve local changes first, then re-run."
+  info "Ensuring Java runtimes required by Minecraft are installed..."
+  bash ./install.sh --ensure-java || die "Java runtime provisioning failed."
   info "Reinstalling dependencies and rebuilding..."
   npm install --no-audit --no-fund || die "npm install failed."
   npm run build || die "Build failed."
