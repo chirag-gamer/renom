@@ -118,18 +118,24 @@ install_java_version() {
   fi
   if [ "$required" != required ] && ! java_package_available "$package"; then return 0; fi
   info "Installing OpenJDK $major..."
+  # `set -e` aborts on a failed package command before any warning can run, so
+  # optional runtimes handle their own failure and required ones still die.
+  local installed=1
   if have apt-get; then
-    sudo apt-get update && sudo apt-get install -y "$package"
+    sudo apt-get update && sudo apt-get install -y "$package" || installed=0
   elif have dnf; then
-    sudo dnf install -y "$package"
+    sudo dnf install -y "$package" || installed=0
   elif have pacman; then
-    sudo pacman -Sy --noconfirm "$package"
+    sudo pacman -Sy --noconfirm "$package" || installed=0
   elif have apk; then
-    sudo apk add "$package"
+    sudo apk add "$package" || installed=0
+  fi
+  if [ "$installed" -eq 0 ] && [ "$required" = required ]; then
+    die "OpenJDK $major installation failed; Java $major is required for Minecraft servers."
   fi
   if ! java_version_installed "$major"; then
-    if [ "$required" = required ]; then die "OpenJDK $major installation did not provide a usable runtime."; fi
-    warn "OpenJDK $major installation did not provide a usable runtime; skipping optional runtime."
+    if [ "$required" = required ]; then die "OpenJDK $major installation completed but the runtime is still unavailable."; fi
+    warn "OpenJDK $major is unavailable here; skipping this optional runtime."
   fi
 }
 

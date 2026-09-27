@@ -1195,20 +1195,27 @@ document.querySelectorAll("#srv-power button").forEach((btn) => {
       return;
     }
     btn.disabled = true;
-    const { status, data } = await api(`/servers/${currentServer.id}/power`, {
-      method: "POST",
-      token: store.token,
-      body: { action: btn.dataset.power },
-    });
-    if (status !== 200) {
-      fail(err, describeProblem(status, data));
+    try {
+      const { status, data } = await api(`/servers/${currentServer.id}/power`, {
+        method: "POST",
+        token: store.token,
+        body: { action: btn.dataset.power },
+      });
+      if (status !== 200) {
+        fail(err, describeProblem(status, data));
+        return;
+      }
+      const detail = await api(`/servers/${currentServer.id}`, { token: store.token });
+      if (detail.status === 200) {
+        currentServer = detail.data.server;
+        renderServerHeader();
+      } else {
+        // The action landed but state is unknown: say so rather than leaving a
+        // dead button and a stale header.
+        fail(err, "Action completed, but the server state could not be refreshed.");
+      }
+    } finally {
       applyPowerState();
-      return;
-    }
-    const detail = await api(`/servers/${currentServer.id}`, { token: store.token });
-    if (detail.status === 200) {
-      currentServer = detail.data.server;
-      renderServerHeader();
     }
   });
 });
@@ -1248,6 +1255,11 @@ function setTab(name, updateUrl = true) {
 
 /* ----- console ----- */
 
+// The REST history and the gateway's join replay overlap, and both carry the
+// engine's monotonic `seq`. Rendering anything at or below the highest sequence
+// already on screen keeps one line per event instead of duplicating the tail.
+let consoleSeq = 0;
+
 function appendLine(text) {
   const log = document.getElementById("console-log");
   log.textContent += (log.textContent ? "\n" : "") + text;
@@ -1256,16 +1268,30 @@ function appendLine(text) {
   log.scrollTop = log.scrollHeight;
 }
 
-async function refreshConsoleHistory() {
+function appendConsoleLine(line) {
+  if (typeof line?.seq === "number") {
+    if (line.seq <= consoleSeq) return;
+    consoleSeq = line.seq;
+  }
+  appendLine(line?.text ?? String(line));
+}
+
+function resetConsoleHistory(lines) {
   document.getElementById("console-log").textContent = "";
+  consoleSeq = 0;
+  for (const line of lines) appendConsoleLine(line);
+}
+
+async function refreshConsoleHistory() {
   const { status, data } = await api(`/servers/${currentServer.id}/console/history?limit=200`, {
     token: store.token,
   });
   if (status !== 200) {
+    resetConsoleHistory([]);
     appendLine("(You don't have permission to see this server's console.)");
     return;
   }
-  for (const l of data.lines) appendLine(l.text);
+  resetConsoleHistory(data.lines);
 }
 
 function joinConsoleSocket() {
@@ -1286,12 +1312,12 @@ function joinConsoleSocket() {
   socket.on("connect_error", () => {
     note.textContent = "Couldn't reach the live console — refresh to see new output.";
   });
-  // The gateway replays recent history on join; without this the stream starts
-  // cold and the first lines after a reload are lost.
+  // A join replay can still be the first thing we see (REST history denied, or
+  // lines emitted between the REST read and the join); dedupe keeps it honest.
   socket.on("console:history", (msg) => {
-    for (const line of msg?.lines ?? []) appendLine(line.text);
+    for (const line of msg?.lines ?? []) appendConsoleLine(line);
   });
-  socket.on("console:line", (msg) => appendLine(msg.line.text));
+  socket.on("console:line", (msg) => appendConsoleLine(msg.line));
   socket.on("console:revoked", () => {
     note.textContent = "Your access to this console changed — ask the owner if you need it back.";
   });

@@ -10,9 +10,10 @@ All notable changes to Renom are documented here. Format based on
 - Restored the approved warm-paper Renom design system across authenticated navigation, server cards,
   and server tabs. The dashboard now uses the 1200px centered layout, paper surfaces, terracotta actions,
   and teal health states rather than a separate dark theme.
-- Panel updates now provision required Java runtimes before rebuilding. Provisioning is idempotent: already
-  installed runtimes and versions absent from the configured package sources are skipped, so updates do not
-  repeat failed installs.
+- Panel updates now provision required Java runtimes before rebuilding. Provisioning skips runtimes that
+  are already installed, and best-effort runtimes (Java 25 and 17) are skipped when the package manager
+  cannot supply or install them, so a single failure never aborts an update. Required Java 21 must be
+  present for the panel to build.
 - Dashboard status now reports the real server-list state (loading, empty, failed, or server count), sign-out
   works from both the header and the dashboard, and navigation no longer overwrites a newer route.
 - Server console: live-connection state is now reported (connected, closed, unreachable, suspended),
