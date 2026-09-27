@@ -221,7 +221,12 @@ install_background_service() {
   node_bin="$(command -v node)" || die "Node.js is required for the background service."
   local root_dir
   root_dir="$(pwd)"
-  if [[ "$root_dir$node_bin" == *$'\r'* || "$root_dir$node_bin" == *$'\n'* || "$root_dir$node_bin" == *$'\0'* || "$root_dir$node_bin" == *\\ ]]; then
+  # A NUL byte cannot live in a bash string (it truncates), so there is nothing
+  # to test for; `$'\0'` would expand to the empty string and match every path.
+  # CR, LF, and a literal backslash (a systemd unit escape) are real hazards.
+  # The backslash glob is single-quoted: an unquoted `\\` in [[ ]] does not
+  # match a literal backslash.
+  if [[ "$root_dir$node_bin" == *$'\r'* || "$root_dir$node_bin" == *$'\n'* || "$root_dir$node_bin" == *'\'* ]]; then
     die "Installation paths contain unsupported control characters."
   fi
   info "Installing the Renom background service..."
