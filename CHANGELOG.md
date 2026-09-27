@@ -15,6 +15,9 @@ All notable changes to Renom are documented here. Format based on
   repeat failed installs.
 - Dashboard status now reports the real server-list state (loading, empty, failed, or server count), sign-out
   works from both the header and the dashboard, and navigation no longer overwrites a newer route.
+- Server console: live-connection state is now reported (connected, closed, unreachable, suspended),
+  recent history is replayed when the stream joins, and power buttons reflect the real server state
+  (Start only when offline, Stop and Kill only when running) with a confirmation before a forced kill.
 
 ### Added
 

@@ -1094,11 +1094,6 @@ function applyServerPermissions() {
     button.hidden = !canServer(serverPowerPermissions[button.dataset.power]);
   });
   document.getElementById("form-console").hidden = !canServer("control.console");
-  const consoleNote = document.getElementById("console-note");
-  consoleNote.hidden = false;
-  consoleNote.textContent = canServer("websocket.connect")
-    ? "Live output appears here while the server runs."
-    : "Live updates unavailable — refresh to see new output.";
   document.getElementById("form-file-read").hidden = !canServer("file.read");
   document.getElementById("btn-file-save").hidden = !canServer("file.update");
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
@@ -1116,6 +1111,8 @@ function applyServerPermissions() {
   const canEditResources = isPanelAdmin() && canServer("settings.resources");
   document.getElementById("settings-memory").closest("label").hidden = !canEditResources;
   document.getElementById("settings-disk").closest("label").hidden = !canEditResources;
+  document.getElementById("console-note").hidden = false;
+  applyConsoleNote();
 }
 
 function availableServerTabs() {
@@ -1135,16 +1132,69 @@ function renderServerHeader() {
   const alloc = s.primaryAllocation
     ? `${s.primaryAllocation.ip}:${s.primaryAllocation.port}`
     : "no address yet";
-  const runtime =
-    s.runtimeState && s.runtimeState !== "offline" ? ` · running (${s.runtimeState})` : "";
+  const runtime = s.runtimeState ? ` · ${readableStatus(s)}` : "";
   document.getElementById("srv-meta").textContent =
     `${s.blueprintSlug} · ${s.status}${runtime} · ${alloc}`;
+  applyPowerState();
+  applyConsoleNote();
+}
+
+// The note is state, not a one-time string: it must stop promising live output
+// when the process is gone, and must admit when the stream is only history.
+function applyConsoleNote() {
+  const note = document.getElementById("console-note");
+  if (!currentServer) return;
+  if (!canServer("websocket.connect")) {
+    note.textContent = "Live updates unavailable — refresh to see new output.";
+    return;
+  }
+  if (currentServer.status === "suspended") {
+    note.textContent = "This server is suspended.";
+    return;
+  }
+  const state = currentServer.runtimeState || "offline";
+  if (state === "offline") {
+    note.textContent = "Server stopped — start it to stream live output.";
+    return;
+  }
+  if (state === "running") {
+    note.textContent = "Live output appears here while the server runs.";
+    return;
+  }
+  note.textContent = `Server is ${state}…`;
+}
+
+// Pterodactyl pattern (PowerButtons.tsx): never offer an action the current
+// state cannot honor. Offline servers cannot be stopped or killed; running
+// ones cannot be started again.
+function applyPowerState() {
+  if (!currentServer) return;
+  const state = currentServer.runtimeState || "offline";
+  const notReady = currentServer.status !== "ready";
+  const set = (action, disabled, label) => {
+    const button = document.querySelector(`#srv-power [data-power="${action}"]`);
+    if (!button) return;
+    button.disabled = disabled;
+    if (label) button.textContent = label;
+  };
+  set("start", state !== "offline" || notReady);
+  set("stop", state === "offline");
+  set("restart", state === "offline" || notReady);
+  set("kill", state === "offline", state === "stopping" ? "Kill" : "Kill");
 }
 
 document.querySelectorAll("#srv-power button").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const err = document.getElementById("srv-error");
     err.hidden = true;
+    // Forcibly stopping a running process can corrupt server data.
+    if (
+      btn.dataset.power === "kill" &&
+      !window.confirm("Force stop this process? Data may be lost.")
+    ) {
+      return;
+    }
+    btn.disabled = true;
     const { status, data } = await api(`/servers/${currentServer.id}/power`, {
       method: "POST",
       token: store.token,
@@ -1152,6 +1202,7 @@ document.querySelectorAll("#srv-power button").forEach((btn) => {
     });
     if (status !== 200) {
       fail(err, describeProblem(status, data));
+      applyPowerState();
       return;
     }
     const detail = await api(`/servers/${currentServer.id}`, { token: store.token });
@@ -1219,20 +1270,34 @@ async function refreshConsoleHistory() {
 
 function joinConsoleSocket() {
   if (socket) socket.close();
+  const note = document.getElementById("console-note");
   if (typeof window.io !== "function") {
-    document.getElementById("console-note").textContent =
-      "Live updates unavailable — refresh to see new output.";
+    note.textContent = "Live updates unavailable — refresh to see new output.";
     return;
   }
   socket = window.io({ path: "/socket.io/", auth: { token: store.token } });
+  socket.on("connect", () => {
+    // Transport is up; the note must reflect the server again, not "connected".
+    applyConsoleNote();
+  });
+  socket.on("disconnect", () => {
+    note.textContent = "Live connection closed — refresh to see new output.";
+  });
+  socket.on("connect_error", () => {
+    note.textContent = "Couldn't reach the live console — refresh to see new output.";
+  });
+  // The gateway replays recent history on join; without this the stream starts
+  // cold and the first lines after a reload are lost.
+  socket.on("console:history", (msg) => {
+    for (const line of msg?.lines ?? []) appendLine(line.text);
+  });
   socket.on("console:line", (msg) => appendLine(msg.line.text));
   socket.on("console:revoked", () => {
-    document.getElementById("console-note").textContent =
-      "Your access to this console changed — ask the owner if you need it back.";
+    note.textContent = "Your access to this console changed — ask the owner if you need it back.";
   });
   socket.emit("console:join", currentServer.id, (res) => {
     if (!res || !res.ok) {
-      document.getElementById("console-note").textContent =
+      note.textContent =
         res && res.reason === "suspended"
           ? "This server is suspended."
           : "Live updates unavailable.";
