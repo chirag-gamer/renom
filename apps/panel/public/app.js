@@ -20,6 +20,9 @@ function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
   const topbar = document.getElementById("app-topbar");
   if (topbar) topbar.hidden = name === "setup" || name === "login";
+  document
+    .querySelector(".app-shell")
+    ?.classList.toggle("is-authenticated", topbar?.hidden === false);
   document.querySelectorAll("[data-route]").forEach((link) => {
     link.classList.toggle(
       "active",
@@ -29,6 +32,8 @@ function show(name) {
         (name === "server" && link.dataset.route === "home"),
     );
   });
+  document.querySelector(".app-shell")?.classList.remove("navigation-open");
+  document.getElementById("sidebar-toggle")?.setAttribute("aria-expanded", "false");
 }
 
 function setView(name, detailId = "") {
@@ -86,6 +91,9 @@ async function routeFromPath() {
   }
   const serverMatch = path.match(/^\/servers\/([^/]+)(?:\/([^/]+))?/);
   if (serverMatch) {
+    // Leaving here skipped the leaveServer() below, so a direct jump from one
+    // server to another kept the old socket streaming into the new view.
+    if (currentServer && currentServer.id !== serverMatch[1]) leaveServer();
     await openServer(serverMatch[1], serverMatch[2] || "console", false);
     return;
   }
@@ -131,6 +139,8 @@ async function routeFromPath() {
     setView("api");
     return;
   }
+  await refreshServers();
+  if (window.location.pathname !== path) return;
   setView("home");
 }
 
@@ -388,9 +398,28 @@ async function loadHome() {
   document.querySelectorAll("[data-admin-only]").forEach((link) => {
     link.hidden = me.role !== "owner" && me.role !== "admin";
   });
-  await Promise.all([refreshServers(), refreshBlueprints()]);
+  await refreshBlueprints();
   await routeFromPath();
   return true;
+}
+
+function serverAccent(id) {
+  const accents = ["#9a4022", "#006767", "#625d5a", "#ba5737", "#89726b", "#004f4f"];
+  let value = 0;
+  for (let index = 0; index < id.length; index += 1)
+    value = (value * 31 + id.charCodeAt(index)) >>> 0;
+  return accents[value % accents.length];
+}
+
+function readableStatus(server) {
+  return (server.runtimeState || server.status || "offline").replaceAll("_", " ");
+}
+
+function setServerListStatus(state, label) {
+  const dot = document.getElementById("server-list-status-dot");
+  const text = document.getElementById("server-list-status-label");
+  dot.classList.toggle("status-dot--online", state === "available");
+  text.textContent = label;
 }
 
 async function refreshServers() {
@@ -398,33 +427,95 @@ async function refreshServers() {
   const empty = document.getElementById("server-empty");
   const err = document.getElementById("server-list-error");
   empty.hidden = true;
+  setServerListStatus("loading", "Loading servers");
   const { status, data } = await api("/servers?limit=100", { token: store.token });
   list.innerHTML = "";
   if (status !== 200) {
+    setServerListStatus("error", "Could not load servers");
     fail(err, describeProblem(status, data));
     return;
   }
   err.hidden = true;
   if (data.items.length === 0) {
+    setServerListStatus("empty", "No servers shown");
     empty.hidden = false;
     return;
   }
-  empty.hidden = true;
-  for (const s of data.items) {
-    const li = document.createElement("li");
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "linklike";
-    link.textContent = s.name;
-    link.addEventListener("click", () => openServer(s.id));
-    const meta = document.createElement("span");
-    meta.className = "role";
-    const alloc = s.primaryAllocation
-      ? ` · ${s.primaryAllocation.ip}:${s.primaryAllocation.port}`
-      : "";
-    meta.textContent = `${s.blueprintSlug} · ${s.status}${alloc}`;
-    li.append(link, meta);
-    list.append(li);
+  setServerListStatus(
+    "available",
+    `${data.items.length} server${data.items.length === 1 ? "" : "s"} shown`,
+  );
+  for (const server of data.items) {
+    const item = document.createElement("li");
+    item.className = "server-card";
+    item.style.setProperty("--server-accent", serverAccent(server.id));
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "server-card-open";
+    open.setAttribute("aria-label", `Open ${server.name}`);
+    open.addEventListener("click", () => void navigate(`/servers/${server.id}/console`));
+
+    const heading = document.createElement("div");
+    heading.className = "server-card-heading";
+    const identity = document.createElement("div");
+    identity.className = "server-identity";
+    const mark = document.createElement("span");
+    mark.className = "server-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = server.name.slice(0, 1).toUpperCase();
+    const title = document.createElement("strong");
+    title.textContent = server.name;
+    identity.append(mark, title);
+
+    const state = document.createElement("span");
+    const stateName = readableStatus(server);
+    state.className = `server-state server-state--${stateName.replaceAll(" ", "-")}`;
+    const dot = document.createElement("span");
+    dot.className = "status-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const stateLabel = document.createElement("span");
+    stateLabel.textContent = stateName;
+    state.append(dot, stateLabel);
+    heading.append(identity, state);
+
+    if (server.description) {
+      const description = document.createElement("p");
+      description.className = "server-description";
+      description.textContent = server.description;
+      open.append(heading, description);
+    } else {
+      open.append(heading);
+    }
+
+    const details = document.createElement("dl");
+    details.className = "server-details";
+    const metadata = [
+      ["Software", server.blueprintSlug],
+      [
+        "Address",
+        server.primaryAllocation
+          ? `${server.primaryAllocation.ip}:${server.primaryAllocation.port}`
+          : "Not assigned",
+      ],
+      ["Memory", `${server.memoryMb} MB`],
+      ["Disk", `${server.diskQuotaMb} MB`],
+    ];
+    for (const [label, value] of metadata) {
+      const group = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const definition = document.createElement("dd");
+      definition.textContent = value;
+      group.append(term, definition);
+      details.append(group);
+    }
+    const action = document.createElement("span");
+    action.className = "server-card-action";
+    action.textContent = "Open server →";
+    open.append(details, action);
+    item.append(open);
+    list.append(item);
   }
 }
 
@@ -855,6 +946,11 @@ function signOut() {
 
 document.getElementById("btn-signout").addEventListener("click", signOut);
 document.getElementById("btn-topbar-signout").addEventListener("click", signOut);
+document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
+  const shell = document.querySelector(".app-shell");
+  const isOpen = shell?.classList.toggle("navigation-open") ?? false;
+  document.getElementById("sidebar-toggle")?.setAttribute("aria-expanded", String(isOpen));
+});
 document.querySelectorAll("[data-route]").forEach((link) => {
   link.addEventListener("click", (event) => {
     event.preventDefault();
@@ -928,7 +1024,11 @@ document.getElementById("btn-back").addEventListener("click", async () => {
 });
 
 async function openServer(id, tab = "console", updateUrl = true) {
+  // Claim the generation before awaiting: the newest navigation owns the view,
+  // not whichever detail request happens to answer first.
+  const generation = ++serverGeneration;
   const { status, data } = await api(`/servers/${id}`, { token: store.token });
+  if (generation !== serverGeneration) return;
   if (status !== 200) {
     await navigate("/");
     return;
@@ -945,13 +1045,15 @@ async function openServer(id, tab = "console", updateUrl = true) {
   setTab(tab, false);
   show("server");
   const tasks = [];
-  if (canServer("control.console")) tasks.push(refreshConsoleHistory());
-  if (canServer("file.read")) tasks.push(refreshFiles());
-  if (canServer("backup.read")) tasks.push(refreshBackups());
-  if (canServer("schedule.read")) tasks.push(refreshSchedules());
-  if (canServer("startup.read")) tasks.push(refreshAddons(), refreshVariables());
-  if (canServer("allocation.read")) tasks.push(refreshNetwork());
-  if (canServer("user.read")) tasks.push(refreshSubusers());
+  if (canServer("control.console")) tasks.push(refreshConsoleHistory(generation));
+  if (canServer("file.read")) tasks.push(refreshFiles(generation));
+  if (canServer("backup.read")) tasks.push(refreshBackups(generation));
+  if (canServer("schedule.read")) tasks.push(refreshSchedules(generation));
+  if (canServer("startup.read")) {
+    tasks.push(refreshAddons(generation), refreshVariables(generation));
+  }
+  if (canServer("allocation.read")) tasks.push(refreshNetwork(generation));
+  if (canServer("user.read")) tasks.push(refreshSubusers(generation));
   if (
     canServer("settings.rename") ||
     canServer("settings.reinstall") ||
@@ -960,10 +1062,21 @@ async function openServer(id, tab = "console", updateUrl = true) {
     tasks.push(Promise.resolve(fillSettings()));
   }
   await Promise.all(tasks);
+  if (generation !== serverGeneration) return;
   if (canServer("websocket.connect")) joinConsoleSocket();
 }
 
+// A superseded load must not paint. Every server-scoped fetch checks this the
+// moment its response lands, before touching the DOM.
+function isStaleLoad(generation) {
+  return generation !== undefined && generation !== serverGeneration;
+}
+
 function leaveServer() {
+  // Bump the generation so in-flight loads and socket callbacks for the server
+  // being abandoned can recognize themselves as stale and do nothing.
+  serverGeneration += 1;
+  consoleSeq = 0;
   if (socket) {
     socket.close();
     socket = null;
@@ -1001,11 +1114,6 @@ function applyServerPermissions() {
     button.hidden = !canServer(serverPowerPermissions[button.dataset.power]);
   });
   document.getElementById("form-console").hidden = !canServer("control.console");
-  const consoleNote = document.getElementById("console-note");
-  consoleNote.hidden = false;
-  consoleNote.textContent = canServer("websocket.connect")
-    ? "Live output appears here while the server runs."
-    : "Live updates unavailable — refresh to see new output.";
   document.getElementById("form-file-read").hidden = !canServer("file.read");
   document.getElementById("btn-file-save").hidden = !canServer("file.update");
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
@@ -1023,6 +1131,8 @@ function applyServerPermissions() {
   const canEditResources = isPanelAdmin() && canServer("settings.resources");
   document.getElementById("settings-memory").closest("label").hidden = !canEditResources;
   document.getElementById("settings-disk").closest("label").hidden = !canEditResources;
+  document.getElementById("console-note").hidden = false;
+  applyConsoleNote();
 }
 
 function availableServerTabs() {
@@ -1042,29 +1152,90 @@ function renderServerHeader() {
   const alloc = s.primaryAllocation
     ? `${s.primaryAllocation.ip}:${s.primaryAllocation.port}`
     : "no address yet";
-  const runtime =
-    s.runtimeState && s.runtimeState !== "offline" ? ` · running (${s.runtimeState})` : "";
+  const runtime = s.runtimeState ? ` · ${readableStatus(s)}` : "";
   document.getElementById("srv-meta").textContent =
     `${s.blueprintSlug} · ${s.status}${runtime} · ${alloc}`;
+  applyPowerState();
+  applyConsoleNote();
+}
+
+// The note is state, not a one-time string: it must stop promising live output
+// when the process is gone, and must admit when the stream is only history.
+function applyConsoleNote() {
+  const note = document.getElementById("console-note");
+  if (!currentServer) return;
+  if (!canServer("websocket.connect")) {
+    note.textContent = "Live updates unavailable — refresh to see new output.";
+    return;
+  }
+  if (currentServer.status === "suspended") {
+    note.textContent = "This server is suspended.";
+    return;
+  }
+  const state = currentServer.runtimeState || "offline";
+  if (state === "offline") {
+    note.textContent = "Server stopped — start it to stream live output.";
+    return;
+  }
+  if (state === "running") {
+    note.textContent = "Live output appears here while the server runs.";
+    return;
+  }
+  note.textContent = `Server is ${state}…`;
+}
+
+// Pterodactyl pattern (PowerButtons.tsx): never offer an action the current
+// state cannot honor. Offline servers cannot be stopped or killed; running
+// ones cannot be started again.
+function applyPowerState() {
+  if (!currentServer) return;
+  const state = currentServer.runtimeState || "offline";
+  const notReady = currentServer.status !== "ready";
+  const set = (action, disabled, label) => {
+    const button = document.querySelector(`#srv-power [data-power="${action}"]`);
+    if (!button) return;
+    button.disabled = disabled;
+    if (label) button.textContent = label;
+  };
+  set("start", state !== "offline" || notReady);
+  set("stop", state === "offline");
+  set("restart", state === "offline" || notReady);
+  set("kill", state === "offline", state === "stopping" ? "Kill" : "Kill");
 }
 
 document.querySelectorAll("#srv-power button").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const err = document.getElementById("srv-error");
     err.hidden = true;
-    const { status, data } = await api(`/servers/${currentServer.id}/power`, {
-      method: "POST",
-      token: store.token,
-      body: { action: btn.dataset.power },
-    });
-    if (status !== 200) {
-      fail(err, describeProblem(status, data));
+    // Forcibly stopping a running process can corrupt server data.
+    if (
+      btn.dataset.power === "kill" &&
+      !window.confirm("Force stop this process? Data may be lost.")
+    ) {
       return;
     }
-    const detail = await api(`/servers/${currentServer.id}`, { token: store.token });
-    if (detail.status === 200) {
-      currentServer = detail.data.server;
-      renderServerHeader();
+    btn.disabled = true;
+    try {
+      const { status, data } = await api(`/servers/${currentServer.id}/power`, {
+        method: "POST",
+        token: store.token,
+        body: { action: btn.dataset.power },
+      });
+      if (status !== 200) {
+        fail(err, describeProblem(status, data));
+        return;
+      }
+      const detail = await api(`/servers/${currentServer.id}`, { token: store.token });
+      if (detail.status === 200) {
+        currentServer = detail.data.server;
+        renderServerHeader();
+      } else {
+        // The action landed but state is unknown: say so rather than leaving a
+        // dead button and a stale header.
+        fail(err, "Action completed, but the server state could not be refreshed.");
+      }
+    } finally {
+      applyPowerState();
     }
   });
 });
@@ -1092,15 +1263,23 @@ function setTab(name, updateUrl = true) {
     const method = updateUrl ? "pushState" : "replaceState";
     history[method]({}, "", `/servers/${currentServer.id}/${name}`);
   }
+  const activeTab = document.querySelector(`.tabs button[data-tab="${name}"]`);
   document
     .querySelectorAll(".tabs button")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    .forEach((button) => button.classList.toggle("active", button === activeTab));
+  activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
   for (const t of tabNames) {
     document.getElementById(`tab-${t}`).hidden = t !== name;
   }
 }
 
 /* ----- console ----- */
+
+// The REST history and the gateway's join replay overlap, and both carry the
+// engine's monotonic `seq`. That counter is per server, so it is reset on every
+// server switch (see leaveServer) and never compared across servers.
+let consoleSeq = 0;
+let serverGeneration = 0;
 
 function appendLine(text) {
   const log = document.getElementById("console-log");
@@ -1110,34 +1289,75 @@ function appendLine(text) {
   log.scrollTop = log.scrollHeight;
 }
 
-async function refreshConsoleHistory() {
+function appendConsoleLine(line, generation) {
+  // Events from an abandoned socket or a superseded load are dropped entirely.
+  if (generation !== undefined && generation !== serverGeneration) return;
+  if (typeof line?.seq === "number") {
+    if (line.seq <= consoleSeq) return;
+    consoleSeq = line.seq;
+  }
+  appendLine(line?.text ?? String(line));
+}
+
+function resetConsoleHistory(lines) {
   document.getElementById("console-log").textContent = "";
-  const { status, data } = await api(`/servers/${currentServer.id}/console/history?limit=200`, {
+  consoleSeq = 0;
+  for (const line of lines) appendConsoleLine(line);
+}
+
+async function refreshConsoleHistory(generation) {
+  const id = currentServer.id;
+  const { status, data } = await api(`/servers/${id}/console/history?limit=200`, {
     token: store.token,
   });
+  if (generation !== serverGeneration || currentServer?.id !== id) return;
   if (status !== 200) {
+    resetConsoleHistory([]);
     appendLine("(You don't have permission to see this server's console.)");
     return;
   }
-  for (const l of data.lines) appendLine(l.text);
+  resetConsoleHistory(data.lines);
 }
 
 function joinConsoleSocket() {
   if (socket) socket.close();
+  const note = document.getElementById("console-note");
   if (typeof window.io !== "function") {
-    document.getElementById("console-note").textContent =
-      "Live updates unavailable — refresh to see new output.";
+    note.textContent = "Live updates unavailable — refresh to see new output.";
     return;
   }
+  const generation = serverGeneration;
+  const serverId = currentServer.id;
   socket = window.io({ path: "/socket.io/", auth: { token: store.token } });
-  socket.on("console:line", (msg) => appendLine(msg.line.text));
-  socket.on("console:revoked", () => {
-    document.getElementById("console-note").textContent =
-      "Your access to this console changed — ask the owner if you need it back.";
+  socket.on("connect", () => {
+    // Transport is up; the note must reflect the server again, not "connected".
+    if (generation === serverGeneration) applyConsoleNote();
   });
-  socket.emit("console:join", currentServer.id, (res) => {
+  socket.on("disconnect", () => {
+    if (generation === serverGeneration) {
+      note.textContent = "Live connection closed — refresh to see new output.";
+    }
+  });
+  socket.on("connect_error", () => {
+    if (generation === serverGeneration) {
+      note.textContent = "Couldn't reach the live console — refresh to see new output.";
+    }
+  });
+  // A join replay can still be the first thing we see (REST history denied, or
+  // lines emitted between the REST read and the join); dedupe keeps it honest.
+  socket.on("console:history", (msg) => {
+    for (const line of msg?.lines ?? []) appendConsoleLine(line, generation);
+  });
+  socket.on("console:line", (msg) => appendConsoleLine(msg.line, generation));
+  socket.on("console:revoked", () => {
+    if (generation === serverGeneration) {
+      note.textContent = "Your access to this console changed — ask the owner if you need it back.";
+    }
+  });
+  socket.emit("console:join", serverId, (res) => {
+    if (generation !== serverGeneration) return;
     if (!res || !res.ok) {
-      document.getElementById("console-note").textContent =
+      note.textContent =
         res && res.reason === "suspended"
           ? "This server is suspended."
           : "Live updates unavailable.";
@@ -1169,7 +1389,7 @@ document.getElementById("form-console").addEventListener("submit", async (e) => 
 
 /* ----- files ----- */
 
-async function refreshFiles() {
+async function refreshFiles(generation) {
   const list = document.getElementById("file-list");
   const err = document.getElementById("files-error");
   err.hidden = true;
@@ -1178,6 +1398,7 @@ async function refreshFiles() {
     `/servers/${currentServer.id}/files?path=${encodeURIComponent(filesDir)}`,
     { token: store.token },
   );
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to browse these files.");
     return;
@@ -1296,7 +1517,7 @@ document.getElementById("btn-file-save").addEventListener("click", async () => {
 
 /* ----- backups ----- */
 
-async function refreshBackups() {
+async function refreshBackups(generation) {
   const list = document.getElementById("backup-list");
   const err = document.getElementById("backups-error");
   err.hidden = true;
@@ -1304,6 +1525,7 @@ async function refreshBackups() {
   const { status, data } = await api(`/servers/${currentServer.id}/backups`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see backups.");
     return;
@@ -1372,7 +1594,7 @@ document.getElementById("btn-backup").addEventListener("click", async () => {
 
 /* ----- schedules ----- */
 
-async function refreshSchedules() {
+async function refreshSchedules(generation) {
   const list = document.getElementById("schedule-list");
   const err = document.getElementById("schedules-error");
   err.hidden = true;
@@ -1380,6 +1602,7 @@ async function refreshSchedules() {
   const { status, data } = await api(`/servers/${currentServer.id}/schedules`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see schedules.");
     return;
@@ -1458,12 +1681,13 @@ function describeProblem(status, data) {
 
 /* ----- addons ----- */
 
-async function refreshAddons() {
+async function refreshAddons(generation) {
   const list = document.getElementById("addon-list");
   const err = document.getElementById("addons-error");
   err.hidden = true;
   list.innerHTML = "";
   const { status, data } = await api(`/servers/${currentServer.id}/addons`, { token: store.token });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see addons.");
     return;
@@ -1521,7 +1745,7 @@ document.getElementById("form-addon").addEventListener("submit", async (e) => {
 
 /* ----- startup variables ----- */
 
-async function refreshVariables() {
+async function refreshVariables(generation) {
   const wrap = document.getElementById("variable-fields");
   const err = document.getElementById("startup-error");
   err.hidden = true;
@@ -1529,6 +1753,7 @@ async function refreshVariables() {
   const { status, data } = await api(`/servers/${currentServer.id}/variables`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see startup settings.");
     return;
@@ -1571,7 +1796,7 @@ document.getElementById("form-variables").addEventListener("submit", async (e) =
 
 /* ----- network: allocations + tunnel ----- */
 
-async function refreshNetwork() {
+async function refreshNetwork(generation) {
   const list = document.getElementById("alloc-list");
   const err = document.getElementById("network-error");
   err.hidden = true;
@@ -1579,6 +1804,7 @@ async function refreshNetwork() {
   const { status, data } = await api(`/servers/${currentServer.id}/allocations`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see network settings.");
     return;
@@ -1591,6 +1817,7 @@ async function refreshNetwork() {
     list.append(li);
   }
   const t = await api(`/servers/${currentServer.id}/tunnel`, { token: store.token });
+  if (isStaleLoad(generation)) return;
   const info = document.getElementById("tunnel-info");
   if (t.status === 200 && t.data.endpoint) {
     info.textContent = t.data.address
@@ -1620,12 +1847,13 @@ document.getElementById("form-tunnel").addEventListener("submit", async (e) => {
 
 /* ----- users: collaborators ----- */
 
-async function refreshSubusers() {
+async function refreshSubusers(generation) {
   const list = document.getElementById("subuser-list");
   const err = document.getElementById("subusers-error");
   err.hidden = true;
   list.innerHTML = "";
   const { status, data } = await api(`/servers/${currentServer.id}/users`, { token: store.token });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see collaborators.");
     return;
