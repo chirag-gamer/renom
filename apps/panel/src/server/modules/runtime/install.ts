@@ -609,12 +609,81 @@ export async function installModrinthProjects(
   }
 }
 
-function modrinthPlatform(slug: string): { loaders: string[]; dir: string } | null {
-  if (slug === "fabric") return { loaders: ["fabric"], dir: "mods" };
-  if (slug === "forge") return { loaders: ["forge"], dir: "mods" };
+/** One search hit, narrowed to what the panel needs to render and install. */
+export interface ModrinthHit {
+  projectId: string;
+  title: string;
+  description: string;
+  author: string;
+  downloads: number;
+}
+
+/**
+ * Search Modrinth for projects this server can actually load.
+ *
+ * The `facets` parameter is Modrinth's filter language: each inner array is
+ * OR'd, and separate arrays are AND'd. That is what hides projects the server
+ * cannot run — a Fabric server never sees Paper plugins, and a server on
+ * 1.20.1 never sees a 1.21-only mod. Checked against
+ * https://docs.modrinth.com/api/operations/searchprojects/
+ */
+export async function searchModrinthProjects(
+  fetchImpl: typeof fetch,
+  platform: { loaders: string[]; projectType: "mod" | "plugin" },
+  mcVersion: string,
+  query: string,
+  limit = 20,
+): Promise<ModrinthHit[]> {
+  const facets = [
+    platform.loaders.map((loader) => `categories:${loader}`),
+    [`versions:${mcVersion}`],
+    [`project_type:${platform.projectType}`],
+  ];
+  const params = new URLSearchParams({
+    query,
+    facets: JSON.stringify(facets),
+    index: "downloads",
+    limit: String(Math.min(Math.max(limit, 1), 50)),
+  });
+  const data = (await fetchJson(
+    fetchImpl,
+    `https://api.modrinth.com/v2/search?${params.toString()}`,
+  )) as {
+    hits: Array<{
+      project_id: string;
+      title: string;
+      description: string;
+      author: string;
+      downloads: number;
+    }>;
+  };
+  return (data.hits ?? []).map((hit) => ({
+    projectId: hit.project_id,
+    title: hit.title,
+    description: hit.description,
+    author: hit.author,
+    downloads: hit.downloads,
+  }));
+}
+
+/**
+ * Loader set and target folder for a blueprint. `projectType` drives the
+ * Modrinth search facet; `dir` is where the jar lands. Vanilla, Bedrock, and
+ * the generic runtimes have no mod platform and return null so the UI can hide
+ * the Addons tab entirely instead of offering something that cannot work.
+ */
+export function modrinthPlatform(
+  slug: string,
+): { loaders: string[]; dir: string; projectType: "mod" | "plugin" } | null {
+  if (slug === "fabric") return { loaders: ["fabric"], dir: "mods", projectType: "mod" };
+  if (slug === "forge") return { loaders: ["forge"], dir: "mods", projectType: "mod" };
   if (slug === "paper" || slug === "purpur")
-    return { loaders: ["paper", "purpur", "spigot", "bukkit"], dir: "plugins" };
-  if (slug === "velocity") return { loaders: ["velocity"], dir: "plugins" };
+    return {
+      loaders: ["paper", "purpur", "spigot", "bukkit"],
+      dir: "plugins",
+      projectType: "plugin",
+    };
+  if (slug === "velocity") return { loaders: ["velocity"], dir: "plugins", projectType: "plugin" };
   return null;
 }
 

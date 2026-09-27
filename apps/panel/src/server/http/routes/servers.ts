@@ -24,6 +24,7 @@ import {
   NotFoundError,
 } from "../../shared/errors.js";
 import { runInstallOps } from "../../modules/runtime/install.js";
+import { claimEndpointName, installPlugin } from "../../modules/tunnels/minekube.js";
 import {
   createServerSchema,
   patchServerSchema,
@@ -32,6 +33,9 @@ import {
 } from "@renom/contracts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+
+/** One core's worth of CPU. Unprivileged creators always get this. */
+const DEFAULT_CPU_WEIGHT = 100;
 
 export interface ServersDeps {
   db: Database;
@@ -128,6 +132,10 @@ export function serversRouter(deps: ServersDeps): Router {
         imageRef: doc.image,
         memoryMb: body.memoryMb,
         diskQuotaMb: body.diskQuotaMb,
+        // CPU is a panel resource, not a user plan: only an administrator may
+        // choose it. The PATCH route enforces the same rule, and honouring it
+        // here for anyone else would let a plain account mint a 10-core server.
+        cpuWeight: privileged ? body.cpuWeight : DEFAULT_CPU_WEIGHT,
       });
       const serverDir = join(dataDir, "servers", created.id);
       try {
@@ -179,6 +187,44 @@ export function serversRouter(deps: ServersDeps): Router {
             });
           });
       }
+
+      // Minekube Connect is installed by default for Java servers and proxies so
+      // a fresh server is reachable without a public IP. The name is claimed
+      // through the same reservation path the manual route uses, so it cannot
+      // collide with a name another server already advertises. Best-effort: a
+      // failed tunnel must never fail server creation.
+      const category = deps.db
+        .prepare("SELECT category FROM blueprints WHERE id = ?")
+        .get(bp.id) as { category: string } | undefined;
+      const isJava = category?.category === "minecraft-java" || category?.category === "proxy";
+      if (isJava && process.env.NODE_ENV !== "test") {
+        void (async () => {
+          try {
+            const endpoint = claimEndpointName(deps.db, created.id);
+            await installPlugin(serverDir);
+            const setVar = deps.db.prepare(
+              `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+               ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+            );
+            setVar.run(created.id, "tunnel.provider", "minekube");
+            setVar.run(created.id, "tunnel.endpoint", endpoint);
+            audit.record({
+              event: "server.tunnel.enable",
+              actorUserId: p.userId,
+              actorIp: req.ip,
+              requestId: req.requestId,
+              serverId: created.id,
+              target: { provider: "minekube", endpoint },
+            });
+          } catch (err) {
+            audit.record({
+              event: "server.tunnel.enable_failed",
+              serverId: created.id,
+              target: { error: err instanceof Error ? err.message : String(err) },
+            });
+          }
+        })();
+      }
       const fresh = servers.byId(created.id)!;
       // The install state rides along explicitly: clients poll
       // GET /servers/:id until status leaves "installing".
@@ -216,14 +262,18 @@ export function serversRouter(deps: ServersDeps): Router {
     try {
       const body = parseBody(patchServerSchema, req);
       const id = req.params.id ?? "";
-      if (body.memoryMb !== undefined || body.diskQuotaMb !== undefined) {
+      if (
+        body.memoryMb !== undefined ||
+        body.diskQuotaMb !== undefined ||
+        body.cpuWeight !== undefined
+      ) {
         const permissions = res.locals.effectivePermissions as string[];
         if (
           (req.principal!.role !== "owner" && req.principal!.role !== "admin") ||
           (!permissions.includes("*") && !permissions.includes("settings.resources"))
         ) {
           throw new ForbiddenError(
-            "Only panel administrators with settings.resources can edit resources",
+            "Only panel administrators with settings.resources can edit CPU, memory, and disk limits",
           );
         }
       }

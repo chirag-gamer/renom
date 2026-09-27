@@ -32,6 +32,7 @@ const created = ctx.servers.create({
   imageRef: doc.image,
   memoryMb: 1024,
   diskQuotaMb: 5120,
+  cpuWeight: 100,
 });
 const serverDir = join(dir, "servers", created.id);
 const alloc = ctx.servers.primaryAllocation(created.id)!;

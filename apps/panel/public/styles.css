@@ -297,6 +297,16 @@ button:disabled {
   padding: 8px 0;
   border-bottom: 1px dashed var(--border);
 }
+/* Per-file actions sit at the row's end, spaced so Rename/Move/Delete read as
+   three controls rather than one run of text. */
+.file-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 14px;
+}
+.file-actions button {
+  white-space: nowrap;
+}
 .server-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

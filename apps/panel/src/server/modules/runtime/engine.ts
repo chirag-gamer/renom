@@ -83,6 +83,16 @@ function resolveJavaBinary(version: string | undefined, mcVersion?: string): str
   }
   return resolveJavaBinaryVersion(version);
 }
+/**
+ * CPU weight (100 = one core) to a JVM processor count. Fractional limits
+ * round up, and a missing or zero weight falls back to one core rather than
+ * leaving the server unbounded.
+ */
+export function cpuCores(weight: number | null | undefined): number {
+  if (typeof weight !== "number" || weight <= 0) return 1;
+  return Math.max(1, Math.ceil(weight / 100));
+}
+
 interface LiveProcess {
   /** Null when this slot only holds history + listeners (never started, or finished). */
   proc: ChildProcess | null;
@@ -164,9 +174,10 @@ export class LocalProcessEngine {
     // Panel-namespaced keys (tunnel.*) ride outside blueprint variables.
     for (const [k, v] of this.namespacedVariables(serverId)) vars[k] = v;
     const argv = (doc.run?.command ?? []).map((arg) => substitute(arg, vars));
-    const [rawCmd, ...args] = argv;
+    const [rawCmd, ...restArgs] = argv;
     if (!rawCmd) throw new EngineError("Blueprint has an empty start command");
     let cmd = rawCmd;
+    const args = [...restArgs];
     if (rawCmd === "java") {
       const javaBinary = resolveJavaBinary(vars["javaVersion"], vars["mcVersion"]);
       if (!javaBinary) {
@@ -175,6 +186,12 @@ export class LocalProcessEngine {
         );
       }
       cmd = javaBinary;
+      // CPU limit enforcement. This engine runs bare processes (ADR-0004, no
+      // Docker/cgroups), so a kernel quota is not available. The JVM-level
+      // cap is the real, portable lever: it fixes the processor count the JVM
+      // sizes its thread pools against, which is what actually bounds CPU use.
+      // Fractional limits round up: 100% = 1 core, 200% = 2.
+      args.unshift(`-XX:ActiveProcessorCount=${cpuCores(server.cpu_weight)}`);
     }
     // Cross-OS binaries: `bedrock_server` on Linux is `bedrock_server.exe`
     // next to it on Windows. Prefer the exact name, fall back to .exe there.

@@ -155,6 +155,47 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(write.status).toBe(403);
   });
 
+  it("a plain user cannot choose CPU weight at creation or on edit", async () => {
+    // Creation: the field is accepted by the schema but must be ignored, or a
+    // non-admin could mint a 10-core server and walk straight past the PATCH
+    // guard that protects the same field.
+    // A plain user with room under their quota, so the only thing standing
+    // between them and cpuWeight:1000 is the authorization rule itself.
+    ctx.users.create({ username: "cpuuser", password: "cpuuser-password", role: "user" });
+    const login = await request(app)
+      .post("/api/v3/auth/login")
+      .send({ username: "cpuuser", password: "cpuuser-password" });
+    const cpuToken = login.body.token as string;
+    const created = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${cpuToken}`)
+      .send({
+        name: "cpu-grab",
+        blueprintSlug: "generic-nodejs",
+        memoryMb: 128,
+        diskQuotaMb: 256,
+        cpuWeight: 1000,
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.server.cpuWeight).toBe(100);
+
+    // Edit: explicitly refused.
+    const patched = await request(app)
+      .patch(`/api/v3/servers/${created.body.server.id}`)
+      .set("authorization", `Bearer ${cpuToken}`)
+      .send({ cpuWeight: 1000 });
+    expect(patched.status).toBe(403);
+  });
+
+  it("an owner may set CPU weight on an existing server", async () => {
+    const res = await request(app)
+      .patch(`/api/v3/servers/${aliceServerId}`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ cpuWeight: 300 });
+    expect(res.status).toBe(200);
+    expect(res.body.server.cpuWeight).toBe(300);
+  });
+
   it("alice renames her server; blueprint stays immutable", async () => {
     const res = await request(app)
       .patch(`/api/v3/servers/${aliceServerId}`)

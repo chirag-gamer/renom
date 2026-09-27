@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { downloadFile, guardedFetch } from "../runtime/install.js";
@@ -62,8 +63,124 @@ export function scanHistoryForAddress(lines: Array<{ text: string }>): string | 
   return found;
 }
 
+// Connect's grammar: 4-8 letters, then 4 digits, joined by single dashes —
+// e.g. `vivid-lagoon-9784`. Validating against the real shape (rather than any
+// lowercase string) means a stored endpoint can actually come up, instead of
+// failing silently in the connector log on first boot.
 export function endpointValid(endpoint: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{1,62}$/.test(endpoint);
+  return /^[a-z][a-z]{3,7}(?:-[a-z][a-z]{3,7})?-\d{4}$/.test(endpoint);
+}
+
+/**
+ * Reserve an endpoint name for one server.
+ *
+ * The value is the server's public join address, so two servers claiming one
+ * name means one of them silently never connects (the connector rejects a
+ * name held by another token). Callers that mint their own name should retry
+ * until this returns a free one.
+ */
+export function endpointTaken(
+  db: { prepare: (sql: string) => { get: (...args: unknown[]) => unknown } },
+  endpoint: string,
+  ownerId: string,
+): boolean {
+  const row = db
+    .prepare(
+      "SELECT server_id FROM server_variables WHERE key = 'tunnel.endpoint' AND value = ? AND server_id != ?",
+    )
+    .get(endpoint, ownerId) as { server_id: string } | undefined;
+  return row !== undefined;
+}
+
+/** A free endpoint name, minting again on the (vanishingly rare) collision. */
+export function claimEndpointName(
+  db: { prepare: (sql: string) => { get: (...args: unknown[]) => unknown } },
+  serverId: string,
+): string {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = generateEndpointName();
+    if (!endpointTaken(db, candidate, serverId)) return candidate;
+  }
+  throw new Error("could not find a free tunnel endpoint name");
+}
+
+// Connect's own vocabulary: 4-8 letters, then 4 digits, with a small
+// word-pair prefix so the generated name reads like a place rather than noise.
+const ADJECTIVES = [
+  "amber",
+  "brisk",
+  "calm",
+  "dusky",
+  "eager",
+  "frost",
+  "gentle",
+  "hardy",
+  "ivory",
+  "jolly",
+  "keen",
+  "lucid",
+  "mellow",
+  "noble",
+  "open",
+  "prime",
+  "quiet",
+  "rapid",
+  "steady",
+  "tidal",
+  "umber",
+  "vivid",
+  "warm",
+  "zesty",
+];
+const NOUNS = [
+  "atlas",
+  "brook",
+  "cedar",
+  "delta",
+  "ember",
+  "fjord",
+  "grove",
+  "haven",
+  "inlet",
+  "junction",
+  "kettle",
+  "lagoon",
+  "meadow",
+  "nimbus",
+  "orchard",
+  "prairie",
+  "quarry",
+  "ridge",
+  "summit",
+  "tundra",
+  "upland",
+  "valley",
+  "willow",
+  "zenith",
+];
+
+function pick<T>(items: T[]): T {
+  return items[randomInt(items.length)]!;
+}
+
+function randomInt(max: number): number {
+  // crypto, not Math.random: this name is the server's public identity.
+  return randomBytes(4).readUInt32BE(0) % max;
+}
+
+/**
+ * A Connect endpoint name the panel can own.
+ *
+ * The Minekube connector is documented to use a temporary random name when
+ * none is configured (connect.minekube.com/guide/connectors/plugin), so
+ * generating one here means the server is reachable without the owner
+ * inventing a name and without colliding with an endpoint another
+ * organization already owns — the 401 in the connector log happens when a
+ * name is taken by a different token.
+ */
+export function generateEndpointName(): string {
+  const suffix = String(randomInt(10_000)).padStart(4, "0");
+  return `${pick(ADJECTIVES)}-${pick(NOUNS)}-${suffix}`;
 }
 
 /** Download the plugin jar into <serverDir>/plugins (offline servers only, by route guard). */

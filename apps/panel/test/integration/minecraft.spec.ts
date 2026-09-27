@@ -199,11 +199,16 @@ describe("minekube address scraping", () => {
     ).toBe("one.play.minekube.net");
   });
 
-  it("validates endpoint names", () => {
-    expect(endpointValid("my-server-1")).toBe(true);
+  it("validates endpoint names against the Connect grammar", () => {
+    // 4-8 letters, then four digits, optionally joined by a second word.
+    expect(endpointValid("vivid-lagoon-9784")).toBe(true);
+    expect(endpointValid("amber-9784")).toBe(true);
     expect(endpointValid("UPPER")).toBe(false);
     expect(endpointValid("a")).toBe(false);
     expect(endpointValid("has space")).toBe(false);
+    // Rejected by the connector, so rejected here too.
+    expect(endpointValid("my-server-1")).toBe(false);
+    expect(endpointValid("9lives-9784")).toBe(false);
   });
 
   it("installs the tunnel plugin checksum-verified", async () => {

@@ -495,7 +495,7 @@ async function refreshServers() {
       [
         "Address",
         server.primaryAllocation
-          ? `${server.primaryAllocation.ip}:${server.primaryAllocation.port}`
+          ? `${server.hostIp}:${server.primaryAllocation.port}`
           : "Not assigned",
       ],
       ["Memory", `${server.memoryMb} MB`],
@@ -1038,8 +1038,8 @@ async function openServer(id, tab = "console", updateUrl = true) {
   filesDir = "";
   // Never carry another server's file into this one: a save after switching
   // servers must not write stale contents to the new server.
-  document.getElementById("file-editing").textContent = "nothing open";
-  document.getElementById("file-content").value = "";
+  document.getElementById("file-dialog-path").textContent = "";
+  document.getElementById("file-dialog-content").value = "";
   renderServerHeader();
   applyServerPermissions();
   setTab(tab, false);
@@ -1054,6 +1054,7 @@ async function openServer(id, tab = "console", updateUrl = true) {
   }
   if (canServer("allocation.read")) tasks.push(refreshNetwork(generation));
   if (canServer("user.read")) tasks.push(refreshSubusers(generation));
+  tasks.push(refreshAddonCapability(generation));
   if (
     canServer("settings.rename") ||
     canServer("settings.reinstall") ||
@@ -1115,7 +1116,6 @@ function applyServerPermissions() {
   });
   document.getElementById("form-console").hidden = !canServer("control.console");
   document.getElementById("form-file-read").hidden = !canServer("file.read");
-  document.getElementById("btn-file-save").hidden = !canServer("file.update");
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
   document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
   document.getElementById("btn-backup").hidden = !canServer("backup.create");
@@ -1129,6 +1129,7 @@ function applyServerPermissions() {
   document.getElementById("btn-delete-server").hidden =
     !canServer("settings.delete") || !isPanelAdmin();
   const canEditResources = isPanelAdmin() && canServer("settings.resources");
+  document.getElementById("settings-cpu").closest("label").hidden = !canEditResources;
   document.getElementById("settings-memory").closest("label").hidden = !canEditResources;
   document.getElementById("settings-disk").closest("label").hidden = !canEditResources;
   document.getElementById("console-note").hidden = false;
@@ -1142,6 +1143,7 @@ function availableServerTabs() {
 function fillSettings() {
   document.getElementById("settings-name").value = currentServer.name;
   document.getElementById("settings-desc").value = currentServer.description || "";
+  document.getElementById("settings-cpu").value = currentServer.cpuWeight;
   document.getElementById("settings-memory").value = currentServer.memoryMb;
   document.getElementById("settings-disk").value = currentServer.diskQuotaMb;
 }
@@ -1149,9 +1151,9 @@ function fillSettings() {
 function renderServerHeader() {
   const s = currentServer;
   document.getElementById("srv-name").textContent = s.name;
-  const alloc = s.primaryAllocation
-    ? `${s.primaryAllocation.ip}:${s.primaryAllocation.port}`
-    : "no address yet";
+  // 0.0.0.0 is the bind wildcard, not an address anyone can dial; the API
+  // resolves the host's real outbound IP for players to use.
+  const alloc = s.primaryAllocation ? `${s.hostIp}:${s.primaryAllocation.port}` : "no address yet";
   const runtime = s.runtimeState ? ` · ${readableStatus(s)}` : "";
   document.getElementById("srv-meta").textContent =
     `${s.blueprintSlug} · ${s.status}${runtime} · ${alloc}`;
@@ -1438,10 +1440,95 @@ async function refreshFiles(generation) {
     const meta = document.createElement("span");
     meta.className = "role";
     meta.textContent = item.isDir ? "" : `${item.size} bytes`;
-    li.append(btn, meta);
+    const actions = document.createElement("span");
+    actions.className = "file-actions";
+    const addAction = (label, permission, handler, danger) => {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = danger ? "linklike danger-text" : "linklike";
+      action.textContent = label;
+      action.hidden = !canServer(permission);
+      action.addEventListener("click", handler);
+      actions.append(action);
+    };
+    const relative = filesDir ? `${filesDir}/${item.name}` : item.name;
+    if (canServer("file.update")) {
+      addAction("Rename", "file.update", () => renameFileTo(relative, dirOf(relative)), false);
+      addAction("Move", "file.update", () => moveFileTo(relative), false);
+    }
+    if (canServer("file.delete")) {
+      addAction(
+        "Delete",
+        "file.delete",
+        async () => {
+          if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
+          const res = await api(`/servers/${currentServer.id}/files/delete`, {
+            method: "POST",
+            token: store.token,
+            body: { path: relative },
+          });
+          if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
+          else refreshFiles();
+        },
+        true,
+      );
+    }
+    li.append(btn, meta, actions);
     list.append(li);
   }
 }
+
+function basename(path) {
+  return path.split("/").filter(Boolean).pop() ?? path;
+}
+
+function dirOf(path) {
+  return path.split("/").filter(Boolean).slice(0, -1).join("/");
+}
+
+async function renameFileTo(path, currentDir) {
+  const name = window.prompt("New name:", basename(path));
+  if (!name || name === basename(path)) return;
+  await applyMove(path, currentDir, name);
+}
+
+async function moveFileTo(path) {
+  const destination = window.prompt("Move into which folder?", dirOf(path));
+  if (destination === null) return;
+  await applyMove(path, destination.replace(/^\/+|\/+$/g, ""), basename(path));
+}
+
+async function applyMove(from, toDir, name) {
+  const err = document.getElementById("files-error");
+  const to = toDir ? `${toDir}/${name}` : name;
+  if (to === from) return;
+  const res = await api(`/servers/${currentServer.id}/files/rename`, {
+    method: "POST",
+    token: store.token,
+    body: { from, to },
+  });
+  if (res.status !== 204) {
+    fail(err, describeProblem(res.status, res.data));
+    return;
+  }
+  filesDir = toDir;
+  refreshFiles();
+}
+
+document.getElementById("btn-file-mkdir")?.addEventListener("click", async () => {
+  const err = document.getElementById("files-error");
+  err.hidden = true;
+  const name = window.prompt("New folder name:");
+  if (!name) return;
+  const path = filesDir ? `${filesDir}/${name}` : name;
+  const res = await api(`/servers/${currentServer.id}/files/mkdir`, {
+    method: "POST",
+    token: store.token,
+    body: { path },
+  });
+  if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
+  else refreshFiles();
+});
 
 async function openFile(path) {
   const err = document.getElementById("files-error");
@@ -1454,8 +1541,6 @@ async function openFile(path) {
     fail(err, describeProblem(status, data));
     return;
   }
-  document.getElementById("file-editing").textContent = path;
-  document.getElementById("file-content").value = data.content;
   document.getElementById("file-dialog-path").textContent = path;
   document.getElementById("file-dialog-content").value = data.content;
   const dialog = document.getElementById("file-editor");
@@ -1481,9 +1566,6 @@ document.getElementById("btn-file-dialog-save").addEventListener("click", async 
   });
   if (status !== 204) fail(err, describeProblem(status, data));
   else {
-    document.getElementById("file-editing").textContent = path;
-    document.getElementById("file-content").value =
-      document.getElementById("file-dialog-content").value;
     err.hidden = true;
   }
 });
@@ -1492,27 +1574,6 @@ document.getElementById("form-file-read").addEventListener("submit", (e) => {
   e.preventDefault();
   const path = new FormData(e.target).get("path");
   if (path) openFile(String(path));
-});
-
-document.getElementById("btn-file-save").addEventListener("click", async () => {
-  const err = document.getElementById("files-error");
-  err.hidden = true;
-  const path = document.getElementById("file-editing").textContent;
-  if (!path || path === "nothing open") {
-    fail(err, "Open a file first, then save it.");
-    return;
-  }
-  const content = document.getElementById("file-content").value;
-  const { status, data } = await api(`/servers/${currentServer.id}/files/content`, {
-    method: "PUT",
-    token: store.token,
-    body: { path, content },
-  });
-  if (status !== 204) fail(err, describeProblem(status, data));
-  else {
-    err.hidden = true;
-    await refreshFiles();
-  }
 });
 
 /* ----- backups ----- */
@@ -1723,6 +1784,88 @@ async function refreshAddons(generation) {
   }
 }
 
+// What this server can load at all. Vanilla, Bedrock, and the generic
+// runtimes have no mod or plugin platform, so the Addons tab is hidden
+// rather than offering something that cannot work.
+async function refreshAddonCapability(generation) {
+  const results = document.getElementById("addon-search-results");
+  const note = document.getElementById("addon-search-note");
+  const { status, data } = await api(`/servers/${currentServer.id}/addons/capability`, {
+    token: store.token,
+  });
+  if (isStaleLoad(generation)) return;
+  const tab = document.querySelector('#server-tabs [data-tab="addons"]');
+  const supported = status === 200 && data.supported;
+  if (tab) tab.hidden = !supported || !canServer("startup.read");
+  if (!supported) return;
+  document.getElementById("addon-kind").textContent =
+    data.projectType === "mod" ? "mods" : "plugins";
+  results.innerHTML = "";
+  if (data.mcVersion) {
+    note.hidden = true;
+  } else {
+    note.hidden = false;
+    note.textContent =
+      'Set an exact Minecraft version on the Startup tab first — "latest" cannot resolve addon files.';
+  }
+}
+
+document.getElementById("form-addon-search").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("addons-error");
+  const results = document.getElementById("addon-search-results");
+  const note = document.getElementById("addon-search-note");
+  err.hidden = true;
+  results.innerHTML = "";
+  const query = String(new FormData(e.target).get("q") || "").trim();
+  if (!query) {
+    note.hidden = false;
+    note.textContent = "Type something to search Modrinth.";
+    return;
+  }
+  const { status, data } = await api(
+    `/servers/${currentServer.id}/addons/search?q=${encodeURIComponent(query)}`,
+    { token: store.token },
+  );
+  if (status !== 200) {
+    note.hidden = false;
+    note.textContent = describeProblem(status, data);
+    return;
+  }
+  note.hidden = true;
+  if (data.hits.length === 0) {
+    const empty = document.createElement("li");
+    empty.textContent = `Nothing on Modrinth matches "${query}" for ${data.mcVersion}.`;
+    results.append(empty);
+    return;
+  }
+  for (const hit of data.hits) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${hit.title} — ${hit.description}`;
+    const meta = document.createElement("span");
+    meta.className = "role";
+    meta.textContent = `${hit.author} · ${Math.round(hit.downloads / 1000)}k downloads`;
+    const install = document.createElement("button");
+    install.type = "button";
+    install.className = "linklike";
+    install.textContent = "Install";
+    install.hidden = !canServer("startup.update");
+    install.addEventListener("click", async () => {
+      install.disabled = true;
+      const res = await api(`/servers/${currentServer.id}/addons`, {
+        method: "POST",
+        token: store.token,
+        body: { projects: [hit.projectId] },
+      });
+      if (res.status !== 201) fail(err, describeProblem(res.status, res.data));
+      else refreshAddons();
+    });
+    li.append(name, meta, install);
+    results.append(li);
+  }
+});
+
 document.getElementById("form-addon").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = document.getElementById("addons-error");
@@ -1812,7 +1955,7 @@ async function refreshNetwork(generation) {
   for (const a of data.allocations) {
     const li = document.createElement("li");
     const name = document.createElement("span");
-    name.textContent = `${a.ip}:${a.port}`;
+    name.textContent = `${currentServer.hostIp}:${a.port}`;
     li.append(name);
     list.append(li);
   }
@@ -1832,11 +1975,12 @@ document.getElementById("form-tunnel").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = document.getElementById("network-error");
   err.hidden = true;
-  const endpoint = new FormData(e.target).get("endpoint");
+  const endpoint = String(new FormData(e.target).get("endpoint") || "").trim();
   const { status, data } = await api(`/servers/${currentServer.id}/tunnel`, {
     method: "POST",
     token: store.token,
-    body: { endpoint },
+    // Blank means "mint a random endpoint name" — see the server route.
+    body: endpoint ? { endpoint } : {},
   });
   if (status !== 201) fail(err, describeProblem(status, data));
   else {
@@ -1914,6 +2058,7 @@ document.getElementById("form-settings").addEventListener("submit", async (e) =>
     description: document.getElementById("settings-desc").value,
   };
   if (isPanelAdmin() && canServer("settings.resources")) {
+    body.cpuWeight = Number(document.getElementById("settings-cpu").value);
     body.memoryMb = Number(document.getElementById("settings-memory").value);
     body.diskQuotaMb = Number(document.getElementById("settings-disk").value);
   }

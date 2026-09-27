@@ -28,7 +28,7 @@ import { addonsRouter } from "./http/routes/addons.js";
 import { attachConsoleGateway, type ConsoleGateway } from "./http/console-gateway.js";
 import { FilesService } from "./modules/files/service.js";
 import { BlueprintRegistry } from "./modules/blueprints/registry.js";
-import { ServersRepo } from "./modules/servers/repo.js";
+import { ServersRepo, primeNodePublicIps } from "./modules/servers/repo.js";
 import { LocalProcessEngine } from "./modules/runtime/engine.js";
 import { BackupsService } from "./modules/backups/service.js";
 import { Scheduler } from "./modules/schedules/runner.js";
@@ -110,6 +110,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   // Idempotent: only seeds slugs missing from the table (safe on every boot).
   blueprints.seedBuiltins();
   const servers = new ServersRepo(db);
+  primeNodePublicIps(db);
   const engine = new LocalProcessEngine(db, servers, blueprints, dataDir);
   const backups = new BackupsService(db, servers, blueprints, engine, dataDir, audit);
   const scheduler = new Scheduler(db, servers, engine, backups, audit);

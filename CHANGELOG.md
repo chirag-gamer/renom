@@ -19,6 +19,17 @@ All notable changes to Renom are documented here. Format based on
 - Server console: live-connection state is now reported (connected, closed, unreachable, suspended),
   recent history is replayed when the stream joins, and power buttons reflect the real server state
   (Start only when offline, Stop and Kill only when running) with a confirmation before a forced kill.
+- File manager: the inline editor and its duplicate Save button are gone. Editing happens only in the
+  dialog, and every row gained Rename, Move, and Delete backed by the existing confined file routes.
+- Addons: search Modrinth from the panel. Results are filtered by the server's loader and exact
+  Minecraft version, so a Fabric server never sees Paper plugins. The tab is hidden for software with
+  no mod platform (Vanilla, Bedrock, and the generic runtimes) rather than offering something unusable.
+- Minekube Connect is installed by default when a Java server or proxy is created, with a reserved
+  random endpoint name. The manual route mints one too when the name is left blank, and a supplied
+  name that another server already advertises is refused.
+- Addresses: servers now show the host's real outbound IP instead of the `0.0.0.0` bind wildcard.
+- Resource limits: administrators can set CPU, memory, and disk on a server. CPU is enforced on Java
+  servers as the JVM processor count, and only an administrator may change any of the three.
 
 ### Added
 

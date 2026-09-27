@@ -447,26 +447,27 @@
           </div>
 
           <div id="tab-files" hidden>
+            <div class="page-header">
+              <div>
+                <p class="eyebrow">File manager</p>
+                <p class="note">
+                  Browse, edit, rename, move, and delete. Editing opens a dialog — the list stays
+                  readable.
+                </p>
+              </div>
+              <div class="btn-row">
+                <button type="button" id="btn-file-mkdir" class="secondary">New folder</button>
+                <button type="button" id="btn-open-props" class="secondary">
+                  Open server.properties
+                </button>
+              </div>
+            </div>
             <p class="note" id="files-path">/</p>
-            <p>
-              <button type="button" id="btn-open-props" class="secondary">
-                Open server.properties
-              </button>
-            </p>
             <ul id="file-list" class="file-list"></ul>
             <form id="form-file-read" class="inline-form">
               <input name="path" placeholder="File to open, e.g. server.properties" />
               <button type="submit" class="secondary">Open</button>
             </form>
-            <label
-              >Editing: <span id="file-editing" class="note">nothing open</span>
-              <textarea
-                id="file-content"
-                rows="10"
-                placeholder="File contents appear here"
-              ></textarea>
-            </label>
-            <p><button type="button" id="btn-file-save">Save file</button></p>
             <p class="error" id="files-error" role="alert" hidden></p>
           </div>
 
@@ -504,16 +505,34 @@
           </div>
 
           <div id="tab-addons" hidden>
-            <p>Mods and plugins from Modrinth. They activate on the next start.</p>
+            <div class="page-header">
+              <div>
+                <p class="eyebrow">Addons</p>
+                <p class="note">
+                  Search Modrinth for <strong id="addon-kind">mods and plugins</strong>. Results are
+                  filtered to this server's software and exact Minecraft version, so nothing
+                  incompatible is offered. They activate on the next start.
+                </p>
+              </div>
+              <form id="form-addon-search" class="inline-form">
+                <input
+                  name="q"
+                  id="addon-search-input"
+                  placeholder="Search Modrinth, e.g. performance"
+                  maxlength="64"
+                  autocomplete="off"
+                />
+                <button type="submit">Search</button>
+              </form>
+            </div>
+            <ul id="addon-search-results" class="user-list"></ul>
+            <p class="note" id="addon-search-note" hidden></p>
+            <h3>Installed</h3>
             <ul id="addon-list" class="user-list"></ul>
-            <form id="form-addon" class="inline-form">
+            <form id="form-addon" class="inline-form" hidden>
               <input name="projects" required placeholder="Project ids, e.g. lithium, phosphor" />
               <button type="submit">Install from Modrinth</button>
             </form>
-            <p class="note">
-              Set an exact Minecraft version on the Startup tab first — “latest” can't resolve
-              files.
-            </p>
             <p class="error" id="addons-error" role="alert" hidden></p>
           </div>
 
@@ -534,11 +553,18 @@
             <h3>Public tunnel <span class="chip">optional</span></h3>
             <p id="tunnel-info" class="note">No tunnel. Players join you by your IP and port.</p>
             <form id="form-tunnel" class="inline-form">
-              <input name="endpoint" placeholder="Endpoint name, e.g. my-server-1" />
+              <input
+                name="endpoint"
+                placeholder="Leave blank for a random name"
+                maxlength="63"
+                pattern="[a-z0-9][a-z0-9-]*"
+              />
               <button type="submit">Enable Minekube tunnel</button>
             </form>
             <p class="note">
               Installs the Minekube Connect plugin and shows the public address here after boot.
+              Leave the name blank and the panel mints a random one, so you never collide with an
+              endpoint another organization already owns.
             </p>
             <p class="error" id="network-error" role="alert" hidden></p>
           </div>
@@ -569,6 +595,20 @@
               <label
                 >Description
                 <input name="description" id="settings-desc" maxlength="500" />
+              </label>
+              <label data-admin-only hidden
+                >CPU limit (%, 100 = one core)
+                <input
+                  name="cpuWeight"
+                  id="settings-cpu"
+                  type="number"
+                  min="10"
+                  max="1000"
+                  step="10"
+                />
+                <span class="hint">
+                  Applied to Java servers as the JVM processor count. Overallocation is allowed.
+                </span>
               </label>
               <label data-admin-only hidden
                 >Memory limit (MB)
