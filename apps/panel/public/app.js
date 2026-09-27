@@ -91,6 +91,9 @@ async function routeFromPath() {
   }
   const serverMatch = path.match(/^\/servers\/([^/]+)(?:\/([^/]+))?/);
   if (serverMatch) {
+    // Leaving here skipped the leaveServer() below, so a direct jump from one
+    // server to another kept the old socket streaming into the new view.
+    if (currentServer && currentServer.id !== serverMatch[1]) leaveServer();
     await openServer(serverMatch[1], serverMatch[2] || "console", false);
     return;
   }
@@ -1026,6 +1029,9 @@ async function openServer(id, tab = "console", updateUrl = true) {
     await navigate("/");
     return;
   }
+  // Every load carries the generation it was started for; a slower earlier
+  // request must never overwrite the server the user is actually looking at.
+  const generation = ++serverGeneration;
   currentServer = data.server;
   if (updateUrl) history.pushState({}, "", `/servers/${id}/${tab}`);
   filesDir = "";
@@ -1038,7 +1044,7 @@ async function openServer(id, tab = "console", updateUrl = true) {
   setTab(tab, false);
   show("server");
   const tasks = [];
-  if (canServer("control.console")) tasks.push(refreshConsoleHistory());
+  if (canServer("control.console")) tasks.push(refreshConsoleHistory(generation));
   if (canServer("file.read")) tasks.push(refreshFiles());
   if (canServer("backup.read")) tasks.push(refreshBackups());
   if (canServer("schedule.read")) tasks.push(refreshSchedules());
@@ -1053,10 +1059,15 @@ async function openServer(id, tab = "console", updateUrl = true) {
     tasks.push(Promise.resolve(fillSettings()));
   }
   await Promise.all(tasks);
+  if (generation !== serverGeneration) return;
   if (canServer("websocket.connect")) joinConsoleSocket();
 }
 
 function leaveServer() {
+  // Bump the generation so in-flight loads and socket callbacks for the server
+  // being abandoned can recognize themselves as stale and do nothing.
+  serverGeneration += 1;
+  consoleSeq = 0;
   if (socket) {
     socket.close();
     socket = null;
@@ -1256,9 +1267,10 @@ function setTab(name, updateUrl = true) {
 /* ----- console ----- */
 
 // The REST history and the gateway's join replay overlap, and both carry the
-// engine's monotonic `seq`. Rendering anything at or below the highest sequence
-// already on screen keeps one line per event instead of duplicating the tail.
+// engine's monotonic `seq`. That counter is per server, so it is reset on every
+// server switch (see leaveServer) and never compared across servers.
 let consoleSeq = 0;
+let serverGeneration = 0;
 
 function appendLine(text) {
   const log = document.getElementById("console-log");
@@ -1268,7 +1280,9 @@ function appendLine(text) {
   log.scrollTop = log.scrollHeight;
 }
 
-function appendConsoleLine(line) {
+function appendConsoleLine(line, generation) {
+  // Events from an abandoned socket or a superseded load are dropped entirely.
+  if (generation !== undefined && generation !== serverGeneration) return;
   if (typeof line?.seq === "number") {
     if (line.seq <= consoleSeq) return;
     consoleSeq = line.seq;
@@ -1282,10 +1296,12 @@ function resetConsoleHistory(lines) {
   for (const line of lines) appendConsoleLine(line);
 }
 
-async function refreshConsoleHistory() {
-  const { status, data } = await api(`/servers/${currentServer.id}/console/history?limit=200`, {
+async function refreshConsoleHistory(generation) {
+  const id = currentServer.id;
+  const { status, data } = await api(`/servers/${id}/console/history?limit=200`, {
     token: store.token,
   });
+  if (generation !== serverGeneration || currentServer?.id !== id) return;
   if (status !== 200) {
     resetConsoleHistory([]);
     appendLine("(You don't have permission to see this server's console.)");
@@ -1301,27 +1317,36 @@ function joinConsoleSocket() {
     note.textContent = "Live updates unavailable — refresh to see new output.";
     return;
   }
+  const generation = serverGeneration;
+  const serverId = currentServer.id;
   socket = window.io({ path: "/socket.io/", auth: { token: store.token } });
   socket.on("connect", () => {
     // Transport is up; the note must reflect the server again, not "connected".
-    applyConsoleNote();
+    if (generation === serverGeneration) applyConsoleNote();
   });
   socket.on("disconnect", () => {
-    note.textContent = "Live connection closed — refresh to see new output.";
+    if (generation === serverGeneration) {
+      note.textContent = "Live connection closed — refresh to see new output.";
+    }
   });
   socket.on("connect_error", () => {
-    note.textContent = "Couldn't reach the live console — refresh to see new output.";
+    if (generation === serverGeneration) {
+      note.textContent = "Couldn't reach the live console — refresh to see new output.";
+    }
   });
   // A join replay can still be the first thing we see (REST history denied, or
   // lines emitted between the REST read and the join); dedupe keeps it honest.
   socket.on("console:history", (msg) => {
-    for (const line of msg?.lines ?? []) appendConsoleLine(line);
+    for (const line of msg?.lines ?? []) appendConsoleLine(line, generation);
   });
-  socket.on("console:line", (msg) => appendConsoleLine(msg.line));
+  socket.on("console:line", (msg) => appendConsoleLine(msg.line, generation));
   socket.on("console:revoked", () => {
-    note.textContent = "Your access to this console changed — ask the owner if you need it back.";
+    if (generation === serverGeneration) {
+      note.textContent = "Your access to this console changed — ask the owner if you need it back.";
+    }
   });
-  socket.emit("console:join", currentServer.id, (res) => {
+  socket.emit("console:join", serverId, (res) => {
+    if (generation !== serverGeneration) return;
     if (!res || !res.ok) {
       note.textContent =
         res && res.reason === "suspended"
