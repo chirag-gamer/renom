@@ -58,34 +58,87 @@ banner() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+java_binary_major() {
+  "$1" -version 2>&1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p' | head -n 1
+}
+
 java_major() {
   have java || return 1
-  java -version 2>&1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p' | head -n 1
+  java_binary_major java
+}
+
+java_version_installed() {
+  local major="$1" candidate
+  if [ "$(java_major 2>/dev/null || true)" = "$major" ]; then return 0; fi
+  for candidate in \
+    "/usr/lib/jvm/java-${major}-openjdk-amd64/bin/java" \
+    "/usr/lib/jvm/java-${major}-openjdk-arm64/bin/java" \
+    "/usr/lib/jvm/java-${major}-openjdk/bin/java" \
+    "/usr/lib/jvm/temurin-${major}-jdk-amd64/bin/java" \
+    "/opt/java/openjdk-${major}/bin/java"; do
+    if [ -x "$candidate" ] && [ "$(java_binary_major "$candidate" 2>/dev/null || true)" = "$major" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+java_package_name() {
+  local major="$1"
+  if have apt-get; then printf 'openjdk-%s-jre-headless' "$major"
+  elif have dnf; then printf 'java-%s-openjdk-headless' "$major"
+  elif have pacman; then printf 'jre%s-openjdk-headless' "$major"
+  elif have apk; then printf 'openjdk%s-jre' "$major"
+  fi
+}
+
+java_package_available() {
+  local package="$1"
+  if have apt-get; then
+    ! have apt-cache || apt-cache show "$package" >/dev/null 2>&1
+  elif have dnf; then
+    dnf -q list --available "$package" >/dev/null 2>&1
+  elif have pacman; then
+    pacman -Si "$package" >/dev/null 2>&1
+  elif have apk; then
+    apk info -a "$package" >/dev/null 2>&1
+  else
+    return 1
+  fi
 }
 
 install_java_version() {
-  local major="$1"
-  if [ "$(java_major 2>/dev/null || true)" = "$major" ]; then return 0; fi
+  local major="$1" required="$2" package
+  java_version_installed "$major" && return 0
+  package="$(java_package_name "$major")"
+  if [ -z "$package" ]; then
+    if [ "$required" = required ]; then die "Java $major is required for Minecraft servers. Install it and re-run."; fi
+    warn "OpenJDK $major cannot be installed automatically on this system; skipping optional runtime."
+    return 0
+  fi
+  if [ "$required" != required ] && ! java_package_available "$package"; then return 0; fi
   info "Installing OpenJDK $major..."
   if have apt-get; then
-    sudo apt-get update && sudo apt-get install -y "openjdk-${major}-jre-headless"
+    sudo apt-get update && sudo apt-get install -y "$package"
   elif have dnf; then
-    sudo dnf install -y "java-${major}-openjdk-headless"
+    sudo dnf install -y "$package"
   elif have pacman; then
-    sudo pacman -Sy --noconfirm "jre${major}-openjdk-headless"
+    sudo pacman -Sy --noconfirm "$package"
   elif have apk; then
-    sudo apk add "openjdk${major}-jre"
-  else
-    die "Java $major is required for Minecraft servers. Install it and re-run."
+    sudo apk add "$package"
+  fi
+  if ! java_version_installed "$major"; then
+    if [ "$required" = required ]; then die "OpenJDK $major installation did not provide a usable runtime."; fi
+    warn "OpenJDK $major installation did not provide a usable runtime; skipping optional runtime."
   fi
 }
 
 install_java() {
-  install_java_version 21
-  install_java_version 25 || warn "OpenJDK 25 is unavailable; select an installed Java version per server."
-  install_java_version 17 || warn "OpenJDK 17 is unavailable; select an installed Java version per server."
-  have java || die "Java installation completed but java is still unavailable."
-  ok "Java runtimes are available."
+  install_java_version 21 required
+  install_java_version 25 optional
+  install_java_version 17 optional
+  java_version_installed 21 || die "Java 21 installation completed but the runtime is still unavailable."
+  ok "Required Java runtime is available."
 }
 
 install_basics() {

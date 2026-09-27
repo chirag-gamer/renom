@@ -10,8 +10,11 @@ All notable changes to Renom are documented here. Format based on
 - Restored the approved warm-paper Renom design system across authenticated navigation, server cards,
   and server tabs. The dashboard now uses the 1200px centered layout, paper surfaces, terracotta actions,
   and teal health states rather than a separate dark theme.
-- Panel updates now provision required Java runtimes before rebuilding, using the same idempotent installer
-  logic as a fresh install.
+- Panel updates now provision required Java runtimes before rebuilding. Provisioning is idempotent: already
+  installed runtimes and versions absent from the configured package sources are skipped, so updates do not
+  repeat failed installs.
+- Dashboard status now reports the real server-list state (loading, empty, failed, or server count), sign-out
+  works from both the header and the dashboard, and navigation no longer overwrites a newer route.
 
 ### Added
 

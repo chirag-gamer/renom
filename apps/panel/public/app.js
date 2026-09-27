@@ -137,6 +137,7 @@ async function routeFromPath() {
     return;
   }
   await refreshServers();
+  if (window.location.pathname !== path) return;
   setView("home");
 }
 
@@ -411,22 +412,36 @@ function readableStatus(server) {
   return (server.runtimeState || server.status || "offline").replaceAll("_", " ");
 }
 
+function setServerListStatus(state, label) {
+  const dot = document.getElementById("server-list-status-dot");
+  const text = document.getElementById("server-list-status-label");
+  dot.classList.toggle("status-dot--online", state === "available");
+  text.textContent = label;
+}
+
 async function refreshServers() {
   const list = document.getElementById("server-list");
   const empty = document.getElementById("server-empty");
   const err = document.getElementById("server-list-error");
   empty.hidden = true;
+  setServerListStatus("loading", "Loading servers");
   const { status, data } = await api("/servers?limit=100", { token: store.token });
   list.innerHTML = "";
   if (status !== 200) {
+    setServerListStatus("error", "Could not load servers");
     fail(err, describeProblem(status, data));
     return;
   }
   err.hidden = true;
   if (data.items.length === 0) {
+    setServerListStatus("empty", "No servers shown");
     empty.hidden = false;
     return;
   }
+  setServerListStatus(
+    "available",
+    `${data.items.length} server${data.items.length === 1 ? "" : "s"} shown`,
+  );
   for (const server of data.items) {
     const item = document.createElement("li");
     item.className = "server-card";
@@ -926,6 +941,7 @@ function signOut() {
   show("login");
 }
 
+document.getElementById("btn-signout").addEventListener("click", signOut);
 document.getElementById("btn-topbar-signout").addEventListener("click", signOut);
 document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
   const shell = document.querySelector(".app-shell");

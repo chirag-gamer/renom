@@ -74,6 +74,7 @@ body {
   min-width: 168px;
   padding: 0;
   color: var(--text);
+  text-decoration: none;
 }
 .topbar-brand strong {
   font: 400 28px/1.1 var(--serif);
