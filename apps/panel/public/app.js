@@ -1024,14 +1024,15 @@ document.getElementById("btn-back").addEventListener("click", async () => {
 });
 
 async function openServer(id, tab = "console", updateUrl = true) {
+  // Claim the generation before awaiting: the newest navigation owns the view,
+  // not whichever detail request happens to answer first.
+  const generation = ++serverGeneration;
   const { status, data } = await api(`/servers/${id}`, { token: store.token });
+  if (generation !== serverGeneration) return;
   if (status !== 200) {
     await navigate("/");
     return;
   }
-  // Every load carries the generation it was started for; a slower earlier
-  // request must never overwrite the server the user is actually looking at.
-  const generation = ++serverGeneration;
   currentServer = data.server;
   if (updateUrl) history.pushState({}, "", `/servers/${id}/${tab}`);
   filesDir = "";
@@ -1045,12 +1046,14 @@ async function openServer(id, tab = "console", updateUrl = true) {
   show("server");
   const tasks = [];
   if (canServer("control.console")) tasks.push(refreshConsoleHistory(generation));
-  if (canServer("file.read")) tasks.push(refreshFiles());
-  if (canServer("backup.read")) tasks.push(refreshBackups());
-  if (canServer("schedule.read")) tasks.push(refreshSchedules());
-  if (canServer("startup.read")) tasks.push(refreshAddons(), refreshVariables());
-  if (canServer("allocation.read")) tasks.push(refreshNetwork());
-  if (canServer("user.read")) tasks.push(refreshSubusers());
+  if (canServer("file.read")) tasks.push(refreshFiles(generation));
+  if (canServer("backup.read")) tasks.push(refreshBackups(generation));
+  if (canServer("schedule.read")) tasks.push(refreshSchedules(generation));
+  if (canServer("startup.read")) {
+    tasks.push(refreshAddons(generation), refreshVariables(generation));
+  }
+  if (canServer("allocation.read")) tasks.push(refreshNetwork(generation));
+  if (canServer("user.read")) tasks.push(refreshSubusers(generation));
   if (
     canServer("settings.rename") ||
     canServer("settings.reinstall") ||
@@ -1061,6 +1064,12 @@ async function openServer(id, tab = "console", updateUrl = true) {
   await Promise.all(tasks);
   if (generation !== serverGeneration) return;
   if (canServer("websocket.connect")) joinConsoleSocket();
+}
+
+// A superseded load must not paint. Every server-scoped fetch checks this the
+// moment its response lands, before touching the DOM.
+function isStaleLoad(generation) {
+  return generation !== undefined && generation !== serverGeneration;
 }
 
 function leaveServer() {
@@ -1380,7 +1389,7 @@ document.getElementById("form-console").addEventListener("submit", async (e) => 
 
 /* ----- files ----- */
 
-async function refreshFiles() {
+async function refreshFiles(generation) {
   const list = document.getElementById("file-list");
   const err = document.getElementById("files-error");
   err.hidden = true;
@@ -1389,6 +1398,7 @@ async function refreshFiles() {
     `/servers/${currentServer.id}/files?path=${encodeURIComponent(filesDir)}`,
     { token: store.token },
   );
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to browse these files.");
     return;
@@ -1507,7 +1517,7 @@ document.getElementById("btn-file-save").addEventListener("click", async () => {
 
 /* ----- backups ----- */
 
-async function refreshBackups() {
+async function refreshBackups(generation) {
   const list = document.getElementById("backup-list");
   const err = document.getElementById("backups-error");
   err.hidden = true;
@@ -1515,6 +1525,7 @@ async function refreshBackups() {
   const { status, data } = await api(`/servers/${currentServer.id}/backups`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see backups.");
     return;
@@ -1583,7 +1594,7 @@ document.getElementById("btn-backup").addEventListener("click", async () => {
 
 /* ----- schedules ----- */
 
-async function refreshSchedules() {
+async function refreshSchedules(generation) {
   const list = document.getElementById("schedule-list");
   const err = document.getElementById("schedules-error");
   err.hidden = true;
@@ -1591,6 +1602,7 @@ async function refreshSchedules() {
   const { status, data } = await api(`/servers/${currentServer.id}/schedules`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see schedules.");
     return;
@@ -1669,12 +1681,13 @@ function describeProblem(status, data) {
 
 /* ----- addons ----- */
 
-async function refreshAddons() {
+async function refreshAddons(generation) {
   const list = document.getElementById("addon-list");
   const err = document.getElementById("addons-error");
   err.hidden = true;
   list.innerHTML = "";
   const { status, data } = await api(`/servers/${currentServer.id}/addons`, { token: store.token });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see addons.");
     return;
@@ -1732,7 +1745,7 @@ document.getElementById("form-addon").addEventListener("submit", async (e) => {
 
 /* ----- startup variables ----- */
 
-async function refreshVariables() {
+async function refreshVariables(generation) {
   const wrap = document.getElementById("variable-fields");
   const err = document.getElementById("startup-error");
   err.hidden = true;
@@ -1740,6 +1753,7 @@ async function refreshVariables() {
   const { status, data } = await api(`/servers/${currentServer.id}/variables`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see startup settings.");
     return;
@@ -1782,7 +1796,7 @@ document.getElementById("form-variables").addEventListener("submit", async (e) =
 
 /* ----- network: allocations + tunnel ----- */
 
-async function refreshNetwork() {
+async function refreshNetwork(generation) {
   const list = document.getElementById("alloc-list");
   const err = document.getElementById("network-error");
   err.hidden = true;
@@ -1790,6 +1804,7 @@ async function refreshNetwork() {
   const { status, data } = await api(`/servers/${currentServer.id}/allocations`, {
     token: store.token,
   });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see network settings.");
     return;
@@ -1802,6 +1817,7 @@ async function refreshNetwork() {
     list.append(li);
   }
   const t = await api(`/servers/${currentServer.id}/tunnel`, { token: store.token });
+  if (isStaleLoad(generation)) return;
   const info = document.getElementById("tunnel-info");
   if (t.status === 200 && t.data.endpoint) {
     info.textContent = t.data.address
@@ -1831,12 +1847,13 @@ document.getElementById("form-tunnel").addEventListener("submit", async (e) => {
 
 /* ----- users: collaborators ----- */
 
-async function refreshSubusers() {
+async function refreshSubusers(generation) {
   const list = document.getElementById("subuser-list");
   const err = document.getElementById("subusers-error");
   err.hidden = true;
   list.innerHTML = "";
   const { status, data } = await api(`/servers/${currentServer.id}/users`, { token: store.token });
+  if (isStaleLoad(generation)) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see collaborators.");
     return;
