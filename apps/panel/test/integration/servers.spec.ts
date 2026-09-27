@@ -177,7 +177,8 @@ describe("servers CRUD + ownership + quotas", () => {
         cpuWeight: 1000,
       });
     expect(created.status).toBe(201);
-    expect(created.body.server.cpuWeight).toBe(100);
+    // Ignored, not honoured: a plain account always gets unlimited.
+    expect(created.body.server.cpuWeight).toBe(0);
 
     // Edit: explicitly refused.
     const patched = await request(app)

@@ -10,11 +10,18 @@ describe("cpu limit to JVM processor count", () => {
     expect(cpuCores(1000)).toBe(10);
   });
 
-  it("never returns zero, and never leaves a server unbounded", () => {
-    expect(cpuCores(0)).toBe(1);
-    expect(cpuCores(-5)).toBe(1);
-    expect(cpuCores(null)).toBe(1);
-    expect(cpuCores(undefined)).toBe(1);
+  it("treats an absent or non-positive weight as unlimited, never as one core", () => {
+    // 0 is the default for a fresh server: capping it to a single core would
+    // silently throttle every new server, so unlimited must return null (no
+    // -XX:ActiveProcessorCount flag at all).
+    expect(cpuCores(0)).toBeNull();
+    expect(cpuCores(null)).toBeNull();
+    expect(cpuCores(undefined)).toBeNull();
+    expect(cpuCores(-5)).toBeNull();
+  });
+
+  it("never caps a limited server below one core", () => {
+    expect(cpuCores(1)).toBe(1);
     expect(cpuCores(10)).toBe(1);
   });
 });

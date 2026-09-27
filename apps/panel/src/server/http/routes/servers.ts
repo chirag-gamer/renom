@@ -35,7 +35,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /** One core's worth of CPU. Unprivileged creators always get this. */
-const DEFAULT_CPU_WEIGHT = 100;
+/** Unlimited CPU: a fresh server keeps every core the host has. */
+const DEFAULT_CPU_WEIGHT = 0;
 
 export interface ServersDeps {
   db: Database;
@@ -66,7 +67,7 @@ export function serversRouter(deps: ServersDeps): Router {
         cursor: q.cursor,
       });
       res.json({
-        items: rows.map((s) => toPublicServer(s, servers.primaryAllocation(s.id))),
+        items: rows.map((s) => toPublicServer(s, servers.primaryAllocation(s.id), servers.hostIpFor(s.node_id))),
         nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
       });
     } catch (e) {
@@ -229,7 +230,7 @@ export function serversRouter(deps: ServersDeps): Router {
       // The install state rides along explicitly: clients poll
       // GET /servers/:id until status leaves "installing".
       res.status(201).json({
-        server: toPublicServer(fresh, servers.primaryAllocation(fresh.id)),
+        server: toPublicServer(fresh, servers.primaryAllocation(fresh.id), servers.hostIpFor(fresh.node_id)),
         install: { state: fresh.status },
       });
     } catch (e) {
@@ -251,7 +252,7 @@ export function serversRouter(deps: ServersDeps): Router {
       }
       res.json({
         server: {
-          ...toPublicServer(s, servers.primaryAllocation(s.id)),
+          ...toPublicServer(s, servers.primaryAllocation(s.id), servers.hostIpFor(s.node_id)),
           permissions: res.locals.effectivePermissions as string[],
         },
       });
@@ -287,7 +288,7 @@ export function serversRouter(deps: ServersDeps): Router {
         requestId: req.requestId,
         serverId: updated.id,
       });
-      res.json({ server: toPublicServer(updated, servers.primaryAllocation(updated.id)) });
+      res.json({ server: toPublicServer(updated, servers.primaryAllocation(updated.id), servers.hostIpFor(updated.node_id)) });
     } catch (e) {
       next(e);
     }

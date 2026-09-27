@@ -3,25 +3,6 @@ import { ulid } from "../../shared/ulid.js";
 import type { PublicServer } from "@renom/contracts";
 import { hostAddress } from "../net/host-address.js";
 
-/**
- * Node `public_ip` overrides, read once at boot so rendering a server never
- * touches the network stack. `0.0.0.0` in the allocations table is the bind
- * wildcard, never a player-facing address.
- */
-let nodePublicIps: Record<string, string> = {};
-
-export function primeNodePublicIps(db: Database): void {
-  const next: Record<string, string> = {};
-  for (const row of db.prepare("SELECT id, public_ip FROM nodes").all() as Array<{
-    id: string;
-    public_ip: string | null;
-  }>) {
-    const ip = row.public_ip?.trim();
-    if (ip && ip !== "0.0.0.0" && ip !== "::") next[row.id] = ip;
-  }
-  nodePublicIps = next;
-}
-
 export interface ServerRow {
   id: string;
   name: string;
@@ -123,7 +104,8 @@ export class ServersRepo {
     imageRef: string;
     memoryMb: number;
     diskQuotaMb: number;
-    cpuWeight: number;
+    /** Percentage of one core; 0 or omitted means unlimited. */
+    cpuWeight?: number;
     now?: number;
   }): ServerRow {
     const now = input.now ?? Date.now();
@@ -156,7 +138,8 @@ export class ServersRepo {
       imageRef: string;
       memoryMb: number;
       diskQuotaMb: number;
-      cpuWeight: number;
+      /** Percentage of one core; 0 or omitted means unlimited. */
+      cpuWeight?: number;
     },
     now: number,
   ): ServerRow {
@@ -175,7 +158,7 @@ export class ServersRepo {
         input.versionTag,
         input.imageRef,
         input.memoryMb,
-        input.cpuWeight,
+        input.cpuWeight ?? 0,
         input.diskQuotaMb,
         now,
         now,
@@ -311,11 +294,28 @@ export class ServersRepo {
       .get(serverId) as { ip: string; port: number } | undefined;
     return row ?? null;
   }
+
+  /**
+   * The address players actually dial: the node's configured `public_ip` when
+   * it has one, otherwise the host's own outbound address. Read per call so a
+   * change to `nodes.public_ip` takes effect without a restart.
+   */
+  hostIpFor(nodeId: string): string {
+    const row = this.db
+      .prepare("SELECT public_ip FROM nodes WHERE id = ?")
+      .get(nodeId) as { public_ip: string | null } | undefined;
+    const configured = row?.public_ip?.trim();
+    if (configured && configured !== "0.0.0.0" && configured !== "::") {
+      return hostAddress(configured);
+    }
+    return hostAddress();
+  }
 }
 
 export function toPublicServer(
   s: ServerRow,
   alloc: { ip: string; port: number } | null,
+  hostIp?: string,
 ): PublicServer {
   return {
     id: s.id,
@@ -329,7 +329,9 @@ export function toPublicServer(
     memoryMb: s.memory_mb,
     diskQuotaMb: s.disk_quota_mb,
     cpuWeight: s.cpu_weight,
-    hostIp: hostAddress(nodePublicIps[s.node_id]),
+    // `0.0.0.0` in the allocations table is the bind wildcard, never
+    // something a player can dial, so the API answers with the host address.
+    hostIp: hostIp ?? hostAddress(),
     primaryAllocation: alloc,
     createdAt: s.created_at,
     updatedAt: s.updated_at,

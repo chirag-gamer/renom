@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { createWriteStream, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable, Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -224,10 +232,21 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
         // The PHP archive carries its own top-level `bin/` — extract at root.
         await extractArchive(join(ctx.dir, "php-runtime" + pmmp.phpExt), ctx.dir, ".", 0, true);
         rmSync(join(ctx.dir, "php-runtime" + pmmp.phpExt), { force: true });
+        // A zip carries no permission bits, so on Linux the interpreter would
+        // extract non-executable and every start would fail with EACCES.
+        const phpBinary = confine(ctx.dir, "bin/php/php");
+        if (existsSync(phpBinary)) chmodSync(phpBinary, 0o755);
         break;
       }
       case "fetch-endstone": {
-        await pipInstall(fetchImpl, ctx.dir, "endstone", sub(ctx.vars, op.version ?? ""));
+        // The engine derives the venv interpreter from the server directory,
+        // so nothing absolute needs persisting here.
+        await pipInstall(
+          fetchImpl,
+          ctx.dir,
+          "endstone",
+          sub(ctx.vars, op.version ?? ""),
+        );
         break;
       }
       case "modrinth-install": {
@@ -420,35 +439,61 @@ function assetDigest(digest: string | undefined): string | undefined {
 }
 
 /**
- * Endstone (`pip install endstone`, then `python -m endstone`, verified
- * against endstone 0.11.11: the module entrypoint starts the server and
- * manages its own Bedrock binaries). Tries `python` then `python3`, since
- * bare hosts disagree on the name. Needs Python 3.10+.
+ * Python package install, isolated per server.
+ *
+ * A bare `pip install` into the system interpreter fails on every current
+ * Debian and Ubuntu (PEP 668 "externally-managed-environment"), which is why
+ * Endstone reported `install_failed`. A virtualenv inside the server directory
+ * is the blessed fix: it satisfies PEP 668, keeps each server independent, and
+ * leaves the host interpreter untouched.
+ *
+ * Returns the venv's Python path so the blueprint can launch it instead of the
+ * system one.
  */
 async function pipInstall(
   fetchImpl: typeof fetch,
   serverDir: string,
   pkg: string,
   version?: string,
-): Promise<void> {
+): Promise<string> {
   void fetchImpl;
-  void serverDir;
   const execFileAsync = promisify(execFileCb);
+  const venvDir = join(serverDir, ".renom", "venv");
+  const isWindows = process.platform === "win32";
+  const venvPython = isWindows
+    ? join(venvDir, "Scripts", "python.exe")
+    : join(venvDir, "bin", "python");
   const spec = version && version !== "" && version !== "latest" ? `${pkg}==${version}` : pkg;
-  let lastErr: unknown = new Error("no python found");
-  for (const python of ["python", "python3"]) {
+
+  const candidates = ["python3", "python"];
+  const tried: string[] = [];
+  for (const python of candidates) {
+    // Create the venv only if it is missing, so re-installs are cheap.
+    if (!existsSync(venvPython)) {
+      try {
+        await execFileAsync(python, ["-m", "venv", venvDir], {
+          timeout: 5 * 60_000,
+          windowsHide: true,
+        });
+      } catch (err) {
+        tried.push(`${python} -m venv: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+    }
     try {
-      await execFileAsync(python, ["-m", "pip", "install", spec], {
-        timeout: 10 * 60_000,
-        windowsHide: true,
-      });
-      return;
+      // `--disable-pip-version-check` keeps the install hermetic and quiet.
+      await execFileAsync(
+        venvPython,
+        ["-m", "pip", "install", "--disable-pip-version-check", spec],
+        { timeout: 15 * 60_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+      );
+      return venvPython;
     } catch (err) {
-      lastErr = err;
+      tried.push(`${spec}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   throw new EngineError(
-    `pip install ${spec} failed (needs Python 3.10+ as python/python3): ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+    `Could not install ${spec} into a per-server virtualenv (needs Python 3.10+ as python3/python). Tried: ${tried.join(" | ")}`,
   );
 }
 

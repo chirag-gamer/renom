@@ -30,6 +30,21 @@ All notable changes to Renom are documented here. Format based on
 - Addresses: servers now show the host's real outbound IP instead of the `0.0.0.0` bind wildcard.
 - Resource limits: administrators can set CPU, memory, and disk on a server. CPU is enforced on Java
   servers as the JVM processor count, and only an administrator may change any of the three.
+  CPU is unlimited by default (`0`, the same convention Pterodactyl uses), so a new server is never
+  silently pinned to a single core; a positive value is a percentage of one core.
+
+### Fixed
+
+- Endstone reported `install_failed` on every current Debian and Ubuntu: the installer ran a bare
+  `pip install` into the system interpreter, which PEP 668 refuses. Endstone now installs into a
+  per-server virtualenv under `.renom/venv`, and the engine launches that interpreter, so the server
+  boots with the package it needs. Verified: Endstone installs, boots, downloads and verifies the
+  Bedrock server, and stops cleanly.
+- PocketMine's bundled PHP interpreter is made executable after extraction, so a zip-sourced
+  archive no longer leaves it non-executable and failing to start with EACCES.
+- Server addresses no longer show the `0.0.0.0` bind wildcard. The host address is resolved per
+  request from the node's configured `public_ip` (or the host's own outbound address), so a change
+  to `nodes.public_ip` applies without restarting the panel.
 
 ### Added
 

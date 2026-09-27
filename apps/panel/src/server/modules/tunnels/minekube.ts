@@ -104,8 +104,8 @@ export function claimEndpointName(
   throw new Error("could not find a free tunnel endpoint name");
 }
 
-// Connect's own vocabulary: 4-8 letters, then 4 digits, with a small
-// word-pair prefix so the generated name reads like a place rather than noise.
+// Small word pairs, so a generated name reads like a place. The shape is
+// `<adj>-<noun>-NNNN`: two words, then the four digits Connect requires.
 const ADJECTIVES = [
   "amber",
   "brisk",

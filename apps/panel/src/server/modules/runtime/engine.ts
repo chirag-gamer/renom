@@ -84,12 +84,14 @@ function resolveJavaBinary(version: string | undefined, mcVersion?: string): str
   return resolveJavaBinaryVersion(version);
 }
 /**
- * CPU weight (100 = one core) to a JVM processor count. Fractional limits
- * round up, and a missing or zero weight falls back to one core rather than
- * leaving the server unbounded.
+ * CPU weight to a JVM processor count, or null when the server is unlimited.
+ *
+ * 0 means "no limit" (Pterodactyl's convention, and this panel's default) so
+ * a fresh server keeps every core the host has. A positive weight is a
+ * percentage of one core and rounds up, so 100 is one core, 300 is three.
  */
-export function cpuCores(weight: number | null | undefined): number {
-  if (typeof weight !== "number" || weight <= 0) return 1;
+export function cpuCores(weight: number | null | undefined): number | null {
+  if (typeof weight !== "number" || weight <= 0) return null;
   return Math.max(1, Math.ceil(weight / 100));
 }
 
@@ -189,9 +191,10 @@ export class LocalProcessEngine {
       // CPU limit enforcement. This engine runs bare processes (ADR-0004, no
       // Docker/cgroups), so a kernel quota is not available. The JVM-level
       // cap is the real, portable lever: it fixes the processor count the JVM
-      // sizes its thread pools against, which is what actually bounds CPU use.
-      // Fractional limits round up: 100% = 1 core, 200% = 2.
-      args.unshift(`-XX:ActiveProcessorCount=${cpuCores(server.cpu_weight)}`);
+      // sizes its thread pools against, which is what bounds CPU use. An
+      // unlimited server (weight 0) gets no flag at all, so it keeps every core.
+      const cores = cpuCores(server.cpu_weight);
+      if (cores !== null) args.unshift(`-XX:ActiveProcessorCount=${cores}`);
     }
     // Cross-OS binaries: `bedrock_server` on Linux is `bedrock_server.exe`
     // next to it on Windows. Prefer the exact name, fall back to .exe there.
@@ -203,6 +206,27 @@ export class LocalProcessEngine {
         if (existsSync(join(dir, withExe))) cmd = withExe;
       } catch {
         // keep the original name; spawn reports the real error
+      }
+    }
+
+    // Bare hosts disagree on the Python name: prefer `python3`, take `python`.
+    // A blueprint that installed its own virtualenv (Endstone) is launched
+    // with that interpreter instead — the system Python has no endstone. The
+    // path is derived from the server directory rather than stored, so it
+    // survives a data-dir move.
+    if (cmd === "python") {
+      const venvPython = join(
+        dir,
+        ".renom",
+        "venv",
+        process.platform === "win32" ? "Scripts" : "bin",
+        process.platform === "win32" ? "python.exe" : "python",
+      );
+      if (existsSync(venvPython)) {
+        cmd = venvPython;
+      } else {
+        const probe = spawnSync("python3", ["--version"], { stdio: "ignore", windowsHide: true });
+        if (probe.status !== 0) cmd = "python";
       }
     }
 
@@ -235,11 +259,6 @@ export class LocalProcessEngine {
       for (const cb of slot.listeners) cb(line);
     };
 
-    // Bare hosts disagree on the Python name: prefer `python`, take `python3`.
-    if (cmd === "python") {
-      const probe = spawnSync("python", ["--version"], { stdio: "ignore", windowsHide: true });
-      if (probe.status !== 0) cmd = "python3";
-    }
     let proc: ChildProcess;
     // Tunnel opt-in: the Minekube endpoint travels by environment (documented
     // precedence over the plugin's config file), never baked into argv.
