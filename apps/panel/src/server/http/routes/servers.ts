@@ -77,7 +77,9 @@ export function serversRouter(deps: ServersDeps): Router {
         cursor: q.cursor,
       });
       res.json({
-        items: rows.map((s) => toPublicServer(s, servers.primaryAllocation(s.id), servers.hostIpFor(s.node_id))),
+        items: rows.map((s) =>
+          toPublicServer(s, servers.primaryAllocation(s.id), servers.hostIpFor(s.node_id)),
+        ),
         nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
       });
     } catch (e) {
@@ -194,7 +196,9 @@ export function serversRouter(deps: ServersDeps): Router {
             installVars["allocation.ip"] = alloc.ip;
             installVars["allocation.port"] = String(alloc.port);
           }
-          pending.push(runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars }));
+          pending.push(
+            runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars }),
+          );
         }
 
         if (wantsTunnel) {
@@ -202,39 +206,56 @@ export function serversRouter(deps: ServersDeps): Router {
             `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
              ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
           );
-          // Reserve the name before the download so a concurrent create cannot
-          // claim the same endpoint.
+          // The partial unique index (migration 0004) is the real arbiter: the
+          // pre-check in claimEndpointName loses a race, this insert does not.
           const endpoint = claimEndpointName(deps.db, created.id);
           setVar.run(created.id, "tunnel.provider", "minekube");
-          setVar.run(created.id, "tunnel.endpoint", endpoint);
-          pending.push(
-            installPlugin(serverDir)
-              .then(() => {
-                audit.record({
-                  event: "server.tunnel.enable",
-                  actorUserId: p.userId,
-                  actorIp: req.ip,
-                  requestId: req.requestId,
-                  serverId: created.id,
-                  target: { provider: "minekube", endpoint },
-                });
-              })
-              .catch((err: unknown) => {
-                // Best-effort: a failed tunnel must never fail server
-                // creation, but the half-claimed name is released so it is
-                // not stranded and never advertised.
-                deps.db
-                  .prepare(
-                    "DELETE FROM server_variables WHERE server_id = ? AND key IN ('tunnel.provider','tunnel.endpoint')",
-                  )
-                  .run(created.id);
-                audit.record({
-                  event: "server.tunnel.enable_failed",
-                  serverId: created.id,
-                  target: { error: err instanceof Error ? err.message : String(err) },
-                });
-              }),
-          );
+          let reserved = true;
+          try {
+            setVar.run(created.id, "tunnel.endpoint", endpoint);
+          } catch {
+            reserved = false;
+            deps.db
+              .prepare(
+                "DELETE FROM server_variables WHERE server_id = ? AND key = 'tunnel.provider'",
+              )
+              .run(created.id);
+            audit.record({
+              event: "server.tunnel.enable_failed",
+              serverId: created.id,
+              target: { error: "could not reserve a free endpoint name" },
+            });
+          }
+          if (reserved) {
+            pending.push(
+              installPlugin(serverDir)
+                .then(() => {
+                  audit.record({
+                    event: "server.tunnel.enable",
+                    actorUserId: p.userId,
+                    actorIp: req.ip,
+                    requestId: req.requestId,
+                    serverId: created.id,
+                    target: { provider: "minekube", endpoint },
+                  });
+                })
+                .catch((err: unknown) => {
+                  // Best-effort: a failed tunnel must never fail server
+                  // creation, but the half-claimed name is released so it is
+                  // not stranded and never advertised.
+                  deps.db
+                    .prepare(
+                      "DELETE FROM server_variables WHERE server_id = ? AND key IN ('tunnel.provider','tunnel.endpoint')",
+                    )
+                    .run(created.id);
+                  audit.record({
+                    event: "server.tunnel.enable_failed",
+                    serverId: created.id,
+                    target: { error: err instanceof Error ? err.message : String(err) },
+                  });
+                }),
+            );
+          }
         }
 
         servers.setStatus(created.id, "installing");
@@ -256,7 +277,11 @@ export function serversRouter(deps: ServersDeps): Router {
       // The install state rides along explicitly: clients poll
       // GET /servers/:id until status leaves "installing".
       res.status(201).json({
-        server: toPublicServer(fresh, servers.primaryAllocation(fresh.id), servers.hostIpFor(fresh.node_id)),
+        server: toPublicServer(
+          fresh,
+          servers.primaryAllocation(fresh.id),
+          servers.hostIpFor(fresh.node_id),
+        ),
         install: { state: fresh.status },
       });
     } catch (e) {
@@ -314,7 +339,13 @@ export function serversRouter(deps: ServersDeps): Router {
         requestId: req.requestId,
         serverId: updated.id,
       });
-      res.json({ server: toPublicServer(updated, servers.primaryAllocation(updated.id), servers.hostIpFor(updated.node_id)) });
+      res.json({
+        server: toPublicServer(
+          updated,
+          servers.primaryAllocation(updated.id),
+          servers.hostIpFor(updated.node_id),
+        ),
+      });
     } catch (e) {
       next(e);
     }

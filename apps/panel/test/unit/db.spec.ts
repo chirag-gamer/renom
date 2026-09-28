@@ -28,13 +28,50 @@ describe("database layer", () => {
       "schema-v1",
       "blueprint-maturity",
       "schedule-lock-expiry",
+      "tunnel-endpoint-unique",
     ]);
 
     db.close();
     const again = openAndMigrate(file);
     const rows2 = again.prepare("SELECT COUNT(*) AS n FROM _migrations").get() as { n: number };
-    expect(Number(rows2.n)).toBe(3);
+    expect(Number(rows2.n)).toBe(4);
     again.close();
+  });
+
+  it("enforces one tunnel endpoint name across servers", () => {
+    const db = openAndMigrate(tempDb());
+    try {
+      // `servers.node_id` defaults to 'local' and is a foreign key, so the
+      // fixture needs the node row the real boot seeds.
+      db.prepare(
+        "INSERT INTO nodes (id,name,data_root,backup_root,status,created_at) VALUES ('local','Local','/d','/b','online',0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u1','alice','owner',0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO blueprints (id,slug,name,category,source,created_at,updated_at) VALUES ('b1','paper','Paper','minecraft-java','builtin',0,0)",
+      ).run();
+      for (const id of ["srv-a", "srv-b"]) {
+        db.prepare(
+          `INSERT INTO servers (id,name,owner_id,blueprint_id,blueprint_version_tag,image_ref,memory_mb,disk_quota_mb,created_at,updated_at)
+           VALUES (?,?,'u1','b1','v1','img',1024,1024,0,0)`,
+        ).run(id, id);
+      }
+      const setVar = db.prepare(
+        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+      );
+      // `maxMemory` is stored for every server, so a unique index over the
+      // whole table would break here — only the endpoint value must be unique.
+      setVar.run("srv-a", "maxMemory", "2048");
+      setVar.run("srv-b", "maxMemory", "4096");
+      setVar.run("srv-a", "tunnel.endpoint", "vivid-lagoon-9784");
+      expect(() => setVar.run("srv-b", "tunnel.endpoint", "vivid-lagoon-9784")).toThrow();
+      setVar.run("srv-b", "tunnel.endpoint", "amber-meadow-1234");
+    } finally {
+      db.close();
+    }
   });
 
   it("creates core tables with enforced foreign keys", () => {
