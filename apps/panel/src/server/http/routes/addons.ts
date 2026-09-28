@@ -12,10 +12,18 @@ import {
   assertNotSuspendedForMutation,
   assertSuspendedReadable,
 } from "../middleware/authz.js";
-import { parseBody } from "../../shared/validate.js";
-import { BadRequestError, NotFoundError } from "../../shared/errors.js";
-import { installModrinthProjects } from "../../modules/runtime/install.js";
+import { parseBody, parseQuery } from "../../shared/validate.js";
+import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
+import {
+  installModrinthProjects,
+  modrinthPlatform,
+  searchModrinthProjects,
+} from "../../modules/runtime/install.js";
 import { storedVariables } from "./servers.js";
+
+const searchQuery = z.object({
+  q: z.string().max(64).default(""),
+});
 
 const addonsSchema = z.object({
   projects: z.array(z.string().min(1).max(64)).min(1).max(10),
@@ -41,6 +49,66 @@ export function addonsRouter(deps: AddonsDeps): Router {
   const router = Router();
   router.use(requireAuth(auth));
   const guard = (perm: string) => requireServerPermission(perm, db);
+
+  /** The server's exact Minecraft version, or null when it is unresolved. */
+  const mcVersionOf = (id: string): string | null => {
+    const row = db
+      .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")
+      .get(id) as { value: string } | undefined;
+    const version = row?.value?.trim();
+    return version && version !== "latest" ? version : null;
+  };
+
+  const platformOf = (id: string) => {
+    const server = servers.byId(id);
+    if (!server) throw new NotFoundError("Not found");
+    return modrinthPlatform(server.blueprint_slug);
+  };
+
+  // What the client needs to decide whether to show the Addons tab at all.
+  router.get("/servers/:id/addons/capability", guard("startup.read"), (req, res, next) => {
+    try {
+      assertSuspendedReadable(req, res);
+      const id = req.params.id ?? "";
+      const platform = platformOf(id);
+      res.json({
+        supported: platform !== null,
+        folder: platform?.dir ?? null,
+        projectType: platform?.projectType ?? null,
+        mcVersion: mcVersionOf(id),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Search is filtered to this server's loader and exact Minecraft version, so
+  // a Fabric server never sees Paper plugins and a 1.20.1 server never sees a
+  // 1.21-only project.
+  router.get("/servers/:id/addons/search", guard("startup.read"), (req, res, next) => {
+    (async () => {
+      assertSuspendedReadable(req, res);
+      const id = req.params.id ?? "";
+      const platform = platformOf(id);
+      if (!platform) {
+        throw new ConflictError("This server software has no mod or plugin platform");
+      }
+      const mcVersion = mcVersionOf(id);
+      if (!mcVersion) {
+        throw new BadRequestError(
+          "Set an exact Minecraft version on the Startup tab first — “latest” can't resolve addon files",
+        );
+      }
+      const q = parseQuery(searchQuery, req);
+      const hits = await searchModrinthProjects(
+        fetch,
+        { loaders: platform.loaders, projectType: platform.projectType },
+        mcVersion,
+        q.q,
+      );
+      res.json({ hits, mcVersion, folder: platform.dir });
+    })().catch(next);
+  });
 
   const dirFor = (serverId: string, folder: string): string | null => {
     if (!(ADDON_DIRS as readonly string[]).includes(folder)) return null;

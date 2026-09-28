@@ -19,6 +19,35 @@ All notable changes to Renom are documented here. Format based on
 - Server console: live-connection state is now reported (connected, closed, unreachable, suspended),
   recent history is replayed when the stream joins, and power buttons reflect the real server state
   (Start only when offline, Stop and Kill only when running) with a confirmation before a forced kill.
+- File manager: the inline editor and its duplicate Save button are gone. Editing happens only in the
+  dialog, and every row gained Rename, Move, and Delete backed by the existing confined file routes.
+- Addons: search Modrinth from the panel. Results are filtered by the server's loader and exact
+  Minecraft version, so a Fabric server never sees Paper plugins. The tab is hidden for software with
+  no mod platform (Vanilla, Bedrock, and the generic runtimes) rather than offering something unusable.
+- Minekube Connect is installed by default when a Java server or proxy is created, with a reserved
+  random endpoint name. The manual route mints one too when the name is left blank, and a supplied
+  name that another server already advertises is refused.
+- Addresses: servers now show the host's real outbound IP instead of the `0.0.0.0` bind wildcard.
+- Resource limits: administrators can set CPU, memory, and disk on a server, and only an
+  administrator may change any of the three. CPU is **unlimited** by default (`0`, the same
+  convention Pterodactyl uses) so a new server is never silently pinned to a single core. A positive
+  value is a percentage of one core that rounds up to whole JVM-visible processors (100 = 1 core,
+  300 = 3) and is applied to Java servers as `-XX:ActiveProcessorCount`. **This sizes JVM thread
+  pools; it is not a kernel CPU quota** and does not cap time spent by native or plugin threads. A
+  hard quota needs cgroups or a container, which this engine does not have.
+
+### Fixed
+
+- Endstone reported `install_failed` on every current Debian and Ubuntu: the installer ran a bare
+  `pip install` into the system interpreter, which PEP 668 refuses. Endstone now installs into a
+  per-server virtualenv under `.renom/venv`, and the engine launches that interpreter, so the server
+  boots with the package it needs. Verified: Endstone installs, boots, downloads and verifies the
+  Bedrock server, and stops cleanly.
+- PocketMine's bundled PHP interpreter is made executable after extraction, so a zip-sourced
+  archive no longer leaves it non-executable and failing to start with EACCES.
+- Server addresses no longer show the `0.0.0.0` bind wildcard. The host address is resolved per
+  request from the node's configured `public_ip` (or the host's own outbound address), so a change
+  to `nodes.public_ip` applies without restarting the panel.
 
 ### Added
 

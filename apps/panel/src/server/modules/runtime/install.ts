@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { createWriteStream, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable, Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -224,9 +232,15 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
         // The PHP archive carries its own top-level `bin/` — extract at root.
         await extractArchive(join(ctx.dir, "php-runtime" + pmmp.phpExt), ctx.dir, ".", 0, true);
         rmSync(join(ctx.dir, "php-runtime" + pmmp.phpExt), { force: true });
+        // A zip carries no permission bits, so on Linux the interpreter would
+        // extract non-executable and every start would fail with EACCES.
+        const phpBinary = confine(ctx.dir, "bin/php/php");
+        if (existsSync(phpBinary)) chmodSync(phpBinary, 0o755);
         break;
       }
       case "fetch-endstone": {
+        // The engine derives the venv interpreter from the server directory,
+        // so nothing absolute needs persisting here.
         await pipInstall(fetchImpl, ctx.dir, "endstone", sub(ctx.vars, op.version ?? ""));
         break;
       }
@@ -420,35 +434,70 @@ function assetDigest(digest: string | undefined): string | undefined {
 }
 
 /**
- * Endstone (`pip install endstone`, then `python -m endstone`, verified
- * against endstone 0.11.11: the module entrypoint starts the server and
- * manages its own Bedrock binaries). Tries `python` then `python3`, since
- * bare hosts disagree on the name. Needs Python 3.10+.
+ * Python package install, isolated per server.
+ *
+ * A bare `pip install` into the system interpreter fails on every current
+ * Debian and Ubuntu (PEP 668 "externally-managed-environment"), which is why
+ * Endstone reported `install_failed`. A virtualenv inside the server directory
+ * is the blessed fix: it satisfies PEP 668, keeps each server independent, and
+ * leaves the host interpreter untouched.
+ *
+ * Returns the venv's Python path so the blueprint can launch it instead of the
+ * system one.
  */
 async function pipInstall(
   fetchImpl: typeof fetch,
   serverDir: string,
   pkg: string,
   version?: string,
-): Promise<void> {
+): Promise<string> {
   void fetchImpl;
-  void serverDir;
   const execFileAsync = promisify(execFileCb);
+  const venvDir = join(serverDir, ".renom", "venv");
+  const isWindows = process.platform === "win32";
   const spec = version && version !== "" && version !== "latest" ? `${pkg}==${version}` : pkg;
-  let lastErr: unknown = new Error("no python found");
-  for (const python of ["python", "python3"]) {
+
+  // A venv belongs to the interpreter that made it. If `python3` exists but
+  // is too old for the package, its venv would be reused by the `python`
+  // candidate and fail again, so each candidate builds its own venv.
+  const candidates: Array<{ exe: string; dir: string }> = [
+    { exe: "python3", dir: join(venvDir, "py3") },
+    { exe: "python", dir: join(venvDir, "py") },
+  ];
+  const tried: string[] = [];
+  for (const candidate of candidates) {
+    const interpreter = join(candidate.dir, isWindows ? "Scripts" : "bin", "python");
+    if (!existsSync(interpreter)) {
+      try {
+        await execFileAsync(candidate.exe, ["-m", "venv", candidate.dir], {
+          timeout: 5 * 60_000,
+          windowsHide: true,
+        });
+      } catch (err) {
+        tried.push(`${candidate.exe} -m venv: ${err instanceof Error ? err.message : String(err)}`);
+        // A half-made venv is worse than none: the engine picks the first
+        // interpreter it finds, so leaving a broken one behind would make it
+        // launch a venv that never got the package.
+        rmSync(candidate.dir, { recursive: true, force: true });
+        continue;
+      }
+    }
     try {
-      await execFileAsync(python, ["-m", "pip", "install", spec], {
-        timeout: 10 * 60_000,
-        windowsHide: true,
-      });
-      return;
+      await execFileAsync(
+        interpreter,
+        ["-m", "pip", "install", "--disable-pip-version-check", spec],
+        { timeout: 15 * 60_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+      );
+      return interpreter;
     } catch (err) {
-      lastErr = err;
+      tried.push(`${candidate.exe} (${spec}): ${err instanceof Error ? err.message : String(err)}`);
+      // Drop the failed venv so the next candidate's success is what the
+      // engine finds, and a retry starts from a clean state.
+      rmSync(candidate.dir, { recursive: true, force: true });
     }
   }
   throw new EngineError(
-    `pip install ${spec} failed (needs Python 3.10+ as python/python3): ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+    `Could not install ${spec} into a per-server virtualenv (needs Python 3.10+ as python3/python). Tried: ${tried.join(" | ")}`,
   );
 }
 
@@ -609,12 +658,81 @@ export async function installModrinthProjects(
   }
 }
 
-function modrinthPlatform(slug: string): { loaders: string[]; dir: string } | null {
-  if (slug === "fabric") return { loaders: ["fabric"], dir: "mods" };
-  if (slug === "forge") return { loaders: ["forge"], dir: "mods" };
+/** One search hit, narrowed to what the panel needs to render and install. */
+export interface ModrinthHit {
+  projectId: string;
+  title: string;
+  description: string;
+  author: string;
+  downloads: number;
+}
+
+/**
+ * Search Modrinth for projects this server can actually load.
+ *
+ * The `facets` parameter is Modrinth's filter language: each inner array is
+ * OR'd, and separate arrays are AND'd. That is what hides projects the server
+ * cannot run — a Fabric server never sees Paper plugins, and a server on
+ * 1.20.1 never sees a 1.21-only mod. Checked against
+ * https://docs.modrinth.com/api/operations/searchprojects/
+ */
+export async function searchModrinthProjects(
+  fetchImpl: typeof fetch,
+  platform: { loaders: string[]; projectType: "mod" | "plugin" },
+  mcVersion: string,
+  query: string,
+  limit = 20,
+): Promise<ModrinthHit[]> {
+  const facets = [
+    platform.loaders.map((loader) => `categories:${loader}`),
+    [`versions:${mcVersion}`],
+    [`project_type:${platform.projectType}`],
+  ];
+  const params = new URLSearchParams({
+    query,
+    facets: JSON.stringify(facets),
+    index: "downloads",
+    limit: String(Math.min(Math.max(limit, 1), 50)),
+  });
+  const data = (await fetchJson(
+    fetchImpl,
+    `https://api.modrinth.com/v2/search?${params.toString()}`,
+  )) as {
+    hits: Array<{
+      project_id: string;
+      title: string;
+      description: string;
+      author: string;
+      downloads: number;
+    }>;
+  };
+  return (data.hits ?? []).map((hit) => ({
+    projectId: hit.project_id,
+    title: hit.title,
+    description: hit.description,
+    author: hit.author,
+    downloads: hit.downloads,
+  }));
+}
+
+/**
+ * Loader set and target folder for a blueprint. `projectType` drives the
+ * Modrinth search facet; `dir` is where the jar lands. Vanilla, Bedrock, and
+ * the generic runtimes have no mod platform and return null so the UI can hide
+ * the Addons tab entirely instead of offering something that cannot work.
+ */
+export function modrinthPlatform(
+  slug: string,
+): { loaders: string[]; dir: string; projectType: "mod" | "plugin" } | null {
+  if (slug === "fabric") return { loaders: ["fabric"], dir: "mods", projectType: "mod" };
+  if (slug === "forge") return { loaders: ["forge"], dir: "mods", projectType: "mod" };
   if (slug === "paper" || slug === "purpur")
-    return { loaders: ["paper", "purpur", "spigot", "bukkit"], dir: "plugins" };
-  if (slug === "velocity") return { loaders: ["velocity"], dir: "plugins" };
+    return {
+      loaders: ["paper", "purpur", "spigot", "bukkit"],
+      dir: "plugins",
+      projectType: "plugin",
+    };
+  if (slug === "velocity") return { loaders: ["velocity"], dir: "plugins", projectType: "plugin" };
   return null;
 }
 

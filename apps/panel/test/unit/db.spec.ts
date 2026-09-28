@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openAndMigrate, openDatabase } from "../../src/server/infra/db/index.js";
+import { openAndMigrate, openDatabase, allMigrations } from "../../src/server/infra/db/index.js";
 import { runMigrations } from "../../src/server/infra/db/migrations.js";
 
 const dirs: string[] = [];
@@ -28,13 +28,97 @@ describe("database layer", () => {
       "schema-v1",
       "blueprint-maturity",
       "schedule-lock-expiry",
+      "tunnel-endpoint-unique",
     ]);
 
     db.close();
     const again = openAndMigrate(file);
     const rows2 = again.prepare("SELECT COUNT(*) AS n FROM _migrations").get() as { n: number };
-    expect(Number(rows2.n)).toBe(3);
+    expect(Number(rows2.n)).toBe(4);
     again.close();
+  });
+
+  it("enforces one tunnel endpoint name across servers", () => {
+    const db = openAndMigrate(tempDb());
+    try {
+      // `servers.node_id` defaults to 'local' and is a foreign key, so the
+      // fixture needs the node row the real boot seeds.
+      db.prepare(
+        "INSERT INTO nodes (id,name,data_root,backup_root,status,created_at) VALUES ('local','Local','/d','/b','online',0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u1','alice','owner',0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO blueprints (id,slug,name,category,source,created_at,updated_at) VALUES ('b1','paper','Paper','minecraft-java','builtin',0,0)",
+      ).run();
+      for (const id of ["srv-a", "srv-b"]) {
+        db.prepare(
+          `INSERT INTO servers (id,name,owner_id,blueprint_id,blueprint_version_tag,image_ref,memory_mb,disk_quota_mb,created_at,updated_at)
+           VALUES (?,?,'u1','b1','v1','img',1024,1024,0,0)`,
+        ).run(id, id);
+      }
+      const setVar = db.prepare(
+        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+      );
+      // `maxMemory` is stored for every server, so a unique index over the
+      // whole table would break here — only the endpoint value must be unique.
+      setVar.run("srv-a", "maxMemory", "2048");
+      setVar.run("srv-b", "maxMemory", "4096");
+      setVar.run("srv-a", "tunnel.endpoint", "vivid-lagoon-9784");
+      expect(() => setVar.run("srv-b", "tunnel.endpoint", "vivid-lagoon-9784")).toThrow();
+      setVar.run("srv-b", "tunnel.endpoint", "amber-meadow-1234");
+    } finally {
+      db.close();
+    }
+  });
+  it("survives pre-existing duplicate endpoints without bricking boot", () => {
+    // Reproduces an install that ran the old unreserved code: the same name
+    // stored on two servers. The migration must clean it up and still apply.
+    const file = tempDb();
+    const db = openDatabase(file);
+    runMigrations(db, allMigrations.slice(0, 3));
+    try {
+      db.prepare(
+        "INSERT INTO nodes (id,name,data_root,backup_root,status,created_at) VALUES ('local','Local','/d','/b','online',0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u1','alice','owner',0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO blueprints (id,slug,name,category,source,created_at,updated_at) VALUES ('b1','paper','Paper','minecraft-java','builtin',0,0)",
+      ).run();
+      // Claim order is deliberately the OPPOSITE of id order: srv-z claims
+      // the name first, and srv-a (lexicographically smaller) claims second.
+      // Correct cleanup keeps the first claim — srv-z — not the smaller id.
+      for (const id of ["srv-z", "srv-a"]) {
+        db.prepare(
+          `INSERT INTO servers (id,name,owner_id,blueprint_id,blueprint_version_tag,image_ref,memory_mb,disk_quota_mb,created_at,updated_at)
+           VALUES (?,?,'u1','b1','v1','img',1024,1024,0,0)`,
+        ).run(id, id);
+      }
+      for (const id of ["srv-z", "srv-a"]) {
+        db.prepare(
+          "INSERT INTO server_variables (server_id,key,value) VALUES (?,'tunnel.endpoint','vivid-lagoon-9784')",
+        ).run(id);
+      }
+    } finally {
+      db.close();
+    }
+    const upgraded = openAndMigrate(file);
+    try {
+      const left = upgraded
+        .prepare("SELECT server_id FROM server_variables WHERE key = 'tunnel.endpoint'")
+        .all() as Array<{ server_id: string }>;
+      expect(left.map((r) => r.server_id)).toEqual(["srv-z"]);
+      const applied = upgraded
+        .prepare("SELECT name FROM _migrations WHERE name = 'tunnel-endpoint-unique'")
+        .get();
+      expect(applied).toBeDefined();
+    } finally {
+      upgraded.close();
+    }
   });
 
   it("creates core tables with enforced foreign keys", () => {

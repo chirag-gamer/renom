@@ -113,6 +113,12 @@ export const createServerSchema = z.object({
   blueprintSlug: z.string().min(1).max(64),
   memoryMb: z.number().int().min(128).max(1_048_576).default(1024),
   diskQuotaMb: z.number().int().min(256).max(10_485_760).default(5120),
+  /**
+   * CPU weight as a percentage of one core. 0 means unlimited — the same
+   * convention Pterodactyl uses for `cpu`, and the default so a fresh server
+   * is never silently throttled to a single core.
+   */
+  cpuWeight: z.number().int().min(0).max(1000).default(0),
   /** Owner username; admins/owner only. Defaults to the caller. */
   ownerUsername: z.string().min(1).max(32).optional(),
   /** Required when the blueprint ships the `eula` feature (Mojang EULA). */
@@ -126,6 +132,8 @@ export const patchServerSchema = z.object({
   description: z.string().max(500).optional(),
   memoryMb: z.number().int().min(128).max(1_048_576).optional(),
   diskQuotaMb: z.number().int().min(256).max(10_485_760).optional(),
+  /** CPU weight as a percentage of one core; 0 means unlimited. */
+  cpuWeight: z.number().int().min(0).max(1000).optional(),
 });
 export type PatchServer = z.infer<typeof patchServerSchema>;
 
@@ -141,6 +149,9 @@ export const publicServerSchema = z.object({
   runtimeState: z.enum(runtimeStates).nullable(),
   memoryMb: z.number(),
   diskQuotaMb: z.number(),
+  cpuWeight: z.number(),
+  /** Host address players actually dial; `0.0.0.0` is the bind wildcard. */
+  hostIp: z.string(),
   primaryAllocation: z.object({ ip: z.string(), port: z.number() }).nullable(),
   permissions: z.array(z.string()).optional(),
   createdAt: z.number(),

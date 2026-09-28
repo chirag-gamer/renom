@@ -1,6 +1,7 @@
 import type { Database } from "../../infra/db/database.js";
 import { ulid } from "../../shared/ulid.js";
 import type { PublicServer } from "@renom/contracts";
+import { hostAddress } from "../net/host-address.js";
 
 export interface ServerRow {
   id: string;
@@ -16,6 +17,7 @@ export interface ServerRow {
   status: string;
   runtime_state: string | null;
   memory_mb: number;
+  cpu_weight: number;
   disk_quota_mb: number;
   eula_accepted_at: number | null;
   created_at: number;
@@ -24,7 +26,7 @@ export interface ServerRow {
 
 const PUBLIC_COLUMNS = `s.id, s.name, s.description, s.owner_id, u.username AS owner_username, s.blueprint_id, b.slug AS blueprint_slug,
   s.blueprint_version_tag, s.image_ref, s.node_id, s.status, s.runtime_state,
-  s.memory_mb, s.disk_quota_mb, s.eula_accepted_at, s.created_at, s.updated_at`;
+  s.memory_mb, s.cpu_weight, s.disk_quota_mb, s.eula_accepted_at, s.created_at, s.updated_at`;
 
 export class ServersRepo {
   constructor(private readonly db: Database) {}
@@ -102,6 +104,8 @@ export class ServersRepo {
     imageRef: string;
     memoryMb: number;
     diskQuotaMb: number;
+    /** Percentage of one core; 0 or omitted means unlimited. */
+    cpuWeight?: number;
     now?: number;
   }): ServerRow {
     const now = input.now ?? Date.now();
@@ -134,14 +138,16 @@ export class ServersRepo {
       imageRef: string;
       memoryMb: number;
       diskQuotaMb: number;
+      /** Percentage of one core; 0 or omitted means unlimited. */
+      cpuWeight?: number;
     },
     now: number,
   ): ServerRow {
     this.db
       .prepare(
         `INSERT INTO servers (id, name, description, owner_id, blueprint_id, blueprint_version_tag,
-           image_ref, status, runtime_state, memory_mb, disk_quota_mb, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'creating', 'offline', ?, ?, ?, ?)`,
+           image_ref, status, runtime_state, memory_mb, cpu_weight, disk_quota_mb, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'creating', 'offline', ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -152,6 +158,7 @@ export class ServersRepo {
         input.versionTag,
         input.imageRef,
         input.memoryMb,
+        input.cpuWeight ?? 0,
         input.diskQuotaMb,
         now,
         now,
@@ -197,7 +204,13 @@ export class ServersRepo {
 
   update(
     id: string,
-    patch: { name?: string; description?: string; memoryMb?: number; diskQuotaMb?: number },
+    patch: {
+      name?: string;
+      description?: string;
+      memoryMb?: number;
+      diskQuotaMb?: number;
+      cpuWeight?: number;
+    },
   ): ServerRow | null {
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -216,6 +229,10 @@ export class ServersRepo {
     if (patch.diskQuotaMb !== undefined) {
       sets.push("disk_quota_mb = ?");
       params.push(patch.diskQuotaMb);
+    }
+    if (patch.cpuWeight !== undefined) {
+      sets.push("cpu_weight = ?");
+      params.push(patch.cpuWeight);
     }
     if (sets.length === 0) return this.byId(id);
     sets.push("updated_at = ?");
@@ -277,11 +294,27 @@ export class ServersRepo {
       .get(serverId) as { ip: string; port: number } | undefined;
     return row ?? null;
   }
+
+  /**
+   * The address players actually dial: the node's configured `public_ip` when
+   * it has one, otherwise the host's own outbound address. Read per call so a
+   * change to `nodes.public_ip` takes effect without a restart.
+   */
+  hostIpFor(nodeId: string): string {
+    const row = this.db.prepare("SELECT public_ip FROM nodes WHERE id = ?").get(nodeId) as
+      { public_ip: string | null } | undefined;
+    const configured = row?.public_ip?.trim();
+    if (configured && configured !== "0.0.0.0" && configured !== "::") {
+      return hostAddress(configured);
+    }
+    return hostAddress();
+  }
 }
 
 export function toPublicServer(
   s: ServerRow,
   alloc: { ip: string; port: number } | null,
+  hostIp?: string,
 ): PublicServer {
   return {
     id: s.id,
@@ -294,6 +327,10 @@ export function toPublicServer(
     runtimeState: s.runtime_state as PublicServer["runtimeState"],
     memoryMb: s.memory_mb,
     diskQuotaMb: s.disk_quota_mb,
+    cpuWeight: s.cpu_weight,
+    // `0.0.0.0` in the allocations table is the bind wildcard, never
+    // something a player can dial, so the API answers with the host address.
+    hostIp: hostIp ?? hostAddress(),
     primaryAllocation: alloc,
     createdAt: s.created_at,
     updatedAt: s.updated_at,

@@ -297,6 +297,33 @@ button:disabled {
   padding: 8px 0;
   border-bottom: 1px dashed var(--border);
 }
+/* Per-file actions sit at the row's end, spaced so Rename/Move/Delete read as
+   three controls rather than one run of text. `margin-left:auto` keeps the
+   group right-aligned without `space-between` drifting the size column. */
+.file-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 14px;
+  margin-left: auto;
+}
+.file-actions button {
+  white-space: nowrap;
+}
+/* On a phone the name, size, and three actions cannot share one line: let the
+   row wrap instead of overflowing the panel. */
+@media (max-width: 560px) {
+  .file-list li {
+    flex-wrap: wrap;
+  }
+  .file-actions {
+    width: 100%;
+    margin-left: 0;
+    gap: 16px;
+  }
+  .file-actions button {
+    flex: 1 1 0;
+  }
+}
 .server-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

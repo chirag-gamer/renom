@@ -72,6 +72,7 @@ beforeAll(async () => {
     imageRef: "none",
     memoryMb: 512,
     diskQuotaMb: 1024,
+    cpuWeight: 100,
   });
   serverId = created.id;
   // Direct repo creation leaves status=creating; the API would finish the job.

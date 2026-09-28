@@ -14,6 +14,8 @@ import {
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import {
+  claimEndpointName,
+  endpointTaken,
   endpointValid,
   installPlugin,
   scanHistoryForAddress,
@@ -21,7 +23,8 @@ import {
 import { join } from "node:path";
 
 const tunnelSchema = z.object({
-  endpoint: z.string().min(2).max(63),
+  /** Omit to have the panel mint a random Connect endpoint name. */
+  endpoint: z.string().min(2).max(63).optional(),
 });
 
 export interface TunnelDeps {
@@ -86,18 +89,42 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       if (engine.stateOf(id) !== "offline") {
         throw new ConflictError("Stop the server before changing its tunnel (restart to activate)");
       }
-      if (!endpointValid(body.endpoint)) {
-        throw new BadRequestError("Endpoint must be 2-63 lowercase letters, digits, or dashes");
+      // Reserve the name BEFORE the plugin download. Checking first and
+      // writing after an `await` let two concurrent requests both pass the
+      // check and persist the same endpoint; claiming it up front means the
+      // second request sees it taken.
+      let endpoint: string;
+      if (body.endpoint) {
+        if (!endpointValid(body.endpoint)) {
+          throw new BadRequestError(
+            "Endpoint must look like vivid-lagoon-9784 (words, then four digits)",
+          );
+        }
+        if (endpointTaken(db, body.endpoint, id)) {
+          throw new ConflictError("That tunnel name is already used by another server");
+        }
+        endpoint = body.endpoint;
+      } else {
+        endpoint = claimEndpointName(db, id);
       }
-      await installPlugin(join(dataDir, "servers", id));
-      db.prepare(
+      const setVar = db.prepare(
         `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
          ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
-      ).run(id, "tunnel.provider", "minekube");
-      db.prepare(
-        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
-         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
-      ).run(id, "tunnel.endpoint", body.endpoint);
+      );
+      setVar.run(id, "tunnel.provider", "minekube");
+      setVar.run(id, "tunnel.endpoint", endpoint);
+      try {
+        await installPlugin(join(dataDir, "servers", id));
+      } catch (err) {
+        // The plugin did not land. Release the claim, but ONLY the one this
+        // request wrote: a later request may already have stored a different
+        // endpoint, and deleting that would destroy a newer setting.
+        db.prepare(
+          `DELETE FROM server_variables
+           WHERE server_id = ? AND key = 'tunnel.endpoint' AND value = ?`,
+        ).run(id, endpoint);
+        throw err;
+      }
       audit.record({
         event: "server.tunnel.enable",
         actorUserId: req.principal!.userId,
@@ -105,11 +132,11 @@ export function tunnelRouter(deps: TunnelDeps): Router {
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
-        target: { provider: "minekube", endpoint: body.endpoint },
+        target: { provider: "minekube", endpoint },
       });
       res.status(201).json({
         provider: "minekube",
-        endpoint: body.endpoint,
+        endpoint,
         note: "Restart the server to activate. Set enforce-secure-profile=false for 1.19+.",
       });
     })().catch(next);

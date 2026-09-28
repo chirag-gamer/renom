@@ -24,6 +24,7 @@ import {
   NotFoundError,
 } from "../../shared/errors.js";
 import { runInstallOps } from "../../modules/runtime/install.js";
+import { claimEndpointName, installPlugin } from "../../modules/tunnels/minekube.js";
 import {
   createServerSchema,
   patchServerSchema,
@@ -32,6 +33,20 @@ import {
 } from "@renom/contracts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+
+/** Unlimited CPU: a fresh server keeps every core the host has. */
+const DEFAULT_CPU_WEIGHT = 0;
+
+/**
+ * Blueprints with a plugin loader that can run the Minekube Connect plugin.
+ * Vanilla is deliberately absent: it is a bare JAR server with no plugin API,
+ * so an endpoint saved there would never come up.
+ */
+const PLUGIN_TUNNEL_BLUEPRINTS: Record<string, true> = {
+  paper: true,
+  purpur: true,
+  velocity: true,
+};
 
 export interface ServersDeps {
   db: Database;
@@ -62,7 +77,9 @@ export function serversRouter(deps: ServersDeps): Router {
         cursor: q.cursor,
       });
       res.json({
-        items: rows.map((s) => toPublicServer(s, servers.primaryAllocation(s.id))),
+        items: rows.map((s) =>
+          toPublicServer(s, servers.primaryAllocation(s.id), servers.hostIpFor(s.node_id)),
+        ),
         nextCursor: rows.length === q.limit ? (rows[rows.length - 1]?.id ?? null) : null,
       });
     } catch (e) {
@@ -128,6 +145,10 @@ export function serversRouter(deps: ServersDeps): Router {
         imageRef: doc.image,
         memoryMb: body.memoryMb,
         diskQuotaMb: body.diskQuotaMb,
+        // CPU is a panel resource, not a user plan: only an administrator may
+        // choose it. The PATCH route enforces the same rule, and honouring it
+        // here for anyone else would let a plain account mint a 10-core server.
+        cpuWeight: privileged ? body.cpuWeight : DEFAULT_CPU_WEIGHT,
       });
       const serverDir = join(dataDir, "servers", created.id);
       try {
@@ -154,18 +175,94 @@ export function serversRouter(deps: ServersDeps): Router {
         target: { blueprint: body.blueprintSlug },
       });
 
-      // Install runs in the background: creation stays fast while downloads
-      // land, and status tells the truth (installing → ready / install_failed).
+      // Both installs are backgrounded — a Paper jar and a 62 MB Connect
+      // plugin must not block the 201 — but they share ONE readiness gate:
+      // the server only becomes `ready` once the blueprint install AND the
+      // tunnel install have both settled. Letting each set `ready` on its own
+      // let a server become startable while its tunnel was still downloading.
+      //
       // Skipped under test: runInstallOps has its own suite with stubbed fetch.
-      if (doc.install.length > 0 && process.env.NODE_ENV !== "test") {
-        const installVars: Record<string, string> = {};
-        for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
-        if (alloc) {
-          installVars["allocation.ip"] = alloc.ip;
-          installVars["allocation.port"] = String(alloc.port);
+      const pluginCapable = PLUGIN_TUNNEL_BLUEPRINTS[doc.slug] === true;
+      const hasBlueprintInstall = doc.install.length > 0;
+      const wantsTunnel = pluginCapable;
+
+      if ((hasBlueprintInstall || wantsTunnel) && process.env.NODE_ENV !== "test") {
+        const pending: Promise<unknown>[] = [];
+
+        if (hasBlueprintInstall) {
+          const installVars: Record<string, string> = {};
+          for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
+          if (alloc) {
+            installVars["allocation.ip"] = alloc.ip;
+            installVars["allocation.port"] = String(alloc.port);
+          }
+          pending.push(
+            runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars }),
+          );
         }
+
+        if (wantsTunnel) {
+          const setVar = deps.db.prepare(
+            `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+             ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+          );
+          // The partial unique index (migration 0004) is the real arbiter: the
+          // pre-check in claimEndpointName loses a race, this insert does not.
+          const endpoint = claimEndpointName(deps.db, created.id);
+          setVar.run(created.id, "tunnel.provider", "minekube");
+          let reserved = true;
+          try {
+            setVar.run(created.id, "tunnel.endpoint", endpoint);
+          } catch {
+            reserved = false;
+            deps.db
+              .prepare(
+                "DELETE FROM server_variables WHERE server_id = ? AND key = 'tunnel.provider'",
+              )
+              .run(created.id);
+            audit.record({
+              event: "server.tunnel.enable_failed",
+              serverId: created.id,
+              target: { error: "could not reserve a free endpoint name" },
+            });
+          }
+          if (reserved) {
+            pending.push(
+              installPlugin(serverDir)
+                .then(() => {
+                  audit.record({
+                    event: "server.tunnel.enable",
+                    actorUserId: p.userId,
+                    actorIp: req.ip,
+                    requestId: req.requestId,
+                    serverId: created.id,
+                    target: { provider: "minekube", endpoint },
+                  });
+                })
+                .catch((err: unknown) => {
+                  // Best-effort: a failed tunnel must never fail server
+                  // creation. Release the claim this install made, and only
+                  // that one — the tunnel route can store a different
+                  // endpoint while the server is still installing, and
+                  // deleting that would destroy a newer setting.
+                  deps.db
+                    .prepare(
+                      `DELETE FROM server_variables
+                       WHERE server_id = ? AND key = 'tunnel.endpoint' AND value = ?`,
+                    )
+                    .run(created.id, endpoint);
+                  audit.record({
+                    event: "server.tunnel.enable_failed",
+                    serverId: created.id,
+                    target: { error: err instanceof Error ? err.message : String(err) },
+                  });
+                }),
+            );
+          }
+        }
+
         servers.setStatus(created.id, "installing");
-        void runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars })
+        void Promise.all(pending)
           .then(() => {
             servers.setStatus(created.id, "ready");
             audit.record({ event: "server.install.done", serverId: created.id });
@@ -183,7 +280,11 @@ export function serversRouter(deps: ServersDeps): Router {
       // The install state rides along explicitly: clients poll
       // GET /servers/:id until status leaves "installing".
       res.status(201).json({
-        server: toPublicServer(fresh, servers.primaryAllocation(fresh.id)),
+        server: toPublicServer(
+          fresh,
+          servers.primaryAllocation(fresh.id),
+          servers.hostIpFor(fresh.node_id),
+        ),
         install: { state: fresh.status },
       });
     } catch (e) {
@@ -205,7 +306,7 @@ export function serversRouter(deps: ServersDeps): Router {
       }
       res.json({
         server: {
-          ...toPublicServer(s, servers.primaryAllocation(s.id)),
+          ...toPublicServer(s, servers.primaryAllocation(s.id), servers.hostIpFor(s.node_id)),
           permissions: res.locals.effectivePermissions as string[],
         },
       });
@@ -216,14 +317,18 @@ export function serversRouter(deps: ServersDeps): Router {
     try {
       const body = parseBody(patchServerSchema, req);
       const id = req.params.id ?? "";
-      if (body.memoryMb !== undefined || body.diskQuotaMb !== undefined) {
+      if (
+        body.memoryMb !== undefined ||
+        body.diskQuotaMb !== undefined ||
+        body.cpuWeight !== undefined
+      ) {
         const permissions = res.locals.effectivePermissions as string[];
         if (
           (req.principal!.role !== "owner" && req.principal!.role !== "admin") ||
           (!permissions.includes("*") && !permissions.includes("settings.resources"))
         ) {
           throw new ForbiddenError(
-            "Only panel administrators with settings.resources can edit resources",
+            "Only panel administrators with settings.resources can edit CPU, memory, and disk limits",
           );
         }
       }
@@ -237,7 +342,13 @@ export function serversRouter(deps: ServersDeps): Router {
         requestId: req.requestId,
         serverId: updated.id,
       });
-      res.json({ server: toPublicServer(updated, servers.primaryAllocation(updated.id)) });
+      res.json({
+        server: toPublicServer(
+          updated,
+          servers.primaryAllocation(updated.id),
+          servers.hostIpFor(updated.node_id),
+        ),
+      });
     } catch (e) {
       next(e);
     }
