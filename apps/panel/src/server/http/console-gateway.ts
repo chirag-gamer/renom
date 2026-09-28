@@ -128,15 +128,21 @@ export function attachConsoleGateway(
       }
       unsubscribe(socket, serverId);
       void socket.join(`server:${serverId}`);
-      socket.emit("console:history", { v: 1, lines: engine.history(serverId, 100) });
+      socket.emit("console:history", {
+        v: 1,
+        lines: engine.history(serverId, 100),
+        run: engine.runId(serverId),
+      });
       const unsubs = socket.data.unsubs as Map<string, () => void>;
       const offLine = engine.onLine(serverId, (line: ConsoleLine) => {
         socket.volatile.emit("console:line", { v: 1, line });
       });
       // A new process starts a new console: tell every viewer to drop the
-      // previous run instead of stacking restarts into one endless log.
+      // previous run instead of stacking restarts into one endless log. The
+      // run id travels with it so a client that reconnects later can tell
+      // which process the replay it just received belongs to.
       const offReset = engine.onReset(serverId, () => {
-        socket.emit("console:reset", { v: 1, serverId });
+        socket.emit("console:reset", { v: 1, serverId, run: engine.runId(serverId) });
       });
       const offStats = engine.onStats(serverId, (stats: StatSample) => {
         // Reliable, unlike console:line: a sample carries the one-shot state

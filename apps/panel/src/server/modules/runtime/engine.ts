@@ -122,6 +122,13 @@ interface LiveProcess {
   listeners: Set<(line: ConsoleLine) => void>;
   stopping: boolean;
   statsListeners: Set<(sample: StatSample) => void>;
+  /**
+   * Increments on every start. A client that reconnects after a restart
+   * happened while it was offline sees the new run's replay with no reset
+   * event to announce the boundary, so it compares this to know its view is
+   * from a previous process.
+   */
+  run: number;
   /** Fired on every start so open viewers drop the previous run's console. */
   resetListeners: Set<() => void>;
   /** Previous cumulative readings — CPU and network are deltas between two. */
@@ -140,6 +147,7 @@ function newSlot(): LiveProcess {
     stopping: false,
     statsListeners: new Set(),
     resetListeners: new Set(),
+    run: 0,
     cpuMark: null,
     netMark: null,
     lastStatsState: null,
@@ -300,6 +308,7 @@ export class LocalProcessEngine {
     // dropped here and viewers are told, so a restart starts from zero instead
     // of stacking every run that server has ever had.
     entry.history = [];
+    entry.run += 1;
     entry.cpuMark = null;
     entry.netMark = null;
     for (const cb of entry.resetListeners) cb();
@@ -485,6 +494,11 @@ export class LocalProcessEngine {
     const live = this.live.get(serverId);
     if (!live) return [];
     return live.history.slice(-Math.min(Math.max(limit, 1), HISTORY_LIMIT));
+  }
+
+  /** Which process this server's history belongs to. See LiveProcess.run. */
+  runId(serverId: string): number {
+    return this.live.get(serverId)?.run ?? 0;
   }
 
   onLine(serverId: string, cb: (line: ConsoleLine) => void): () => void {

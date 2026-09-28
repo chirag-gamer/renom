@@ -1179,6 +1179,8 @@ function leaveServer() {
   currentServer = null;
   renderServerNav();
   resetStatSeries();
+  // A different server is a different run namespace.
+  consoleRun = null;
 }
 
 function canServerAny(required) {
@@ -1408,6 +1410,28 @@ function resetConsoleHistory(lines) {
   for (const line of lines) appendConsoleLine(line);
 }
 
+// Which process the on-screen console belongs to. A restart that happens
+// while the client is offline emits a reset event nobody hears, so the join
+// replay carries the server's run id instead: a different id means everything
+// on screen came from a process that is gone.
+let consoleRun = null;
+
+function adoptRun(run) {
+  if (typeof run !== "number") return;
+  // First sight: the REST history already painted the current run, so this
+  // only records which run it was. Clearing here would throw away the 200
+  // lines the REST read fetched in favour of the socket's 100.
+  if (consoleRun === null) {
+    consoleRun = run;
+    return;
+  }
+  if (run === consoleRun) return;
+  consoleRun = run;
+  document.getElementById("console-log").textContent = "";
+  consoleSeq = 0;
+  resetStatSeries();
+}
+
 async function refreshConsoleHistory(generation) {
   const id = currentServer.id;
   const { status, data } = await api(`/servers/${id}/console/history?limit=200`, {
@@ -1463,18 +1487,19 @@ function joinConsoleSocket() {
   // A join replay can still be the first thing we see (REST history denied, or
   // lines emitted between the REST read and the join); dedupe keeps it honest.
   socket.on("console:history", (msg) => {
+    adoptRun(msg?.run);
     for (const line of msg?.lines ?? []) appendConsoleLine(line, generation);
   });
   socket.on("console:line", (msg) => appendConsoleLine(msg.line, generation));
-  // A restart, a stop, or a kill is a new run: the engine drops the old
-  // scrollback and says so, so the console starts from zero instead of
-  // stacking every run the server has ever had. The seq counter is
-  // deliberately left alone — it stays monotonic per server, which is what
-  // keeps the dedupe above honest.
-  socket.on("console:reset", () => {
+  // A restart is a new run: the engine drops the old scrollback and says so,
+  // so the console starts from zero instead of stacking every run the server
+  // has ever had. `adoptRun` also rewinds the seq watermark, which is safe
+  // because the engine never reuses seq values: it only lets the new run's
+  // replay through, and the previous run is already gone from both the DOM
+  // and the server's buffer.
+  socket.on("console:reset", (msg) => {
     if (generation !== serverGeneration) return;
-    document.getElementById("console-log").textContent = "";
-    resetStatSeries();
+    adoptRun(msg?.run);
   });
   socket.on("stats", (msg) => {
     if (generation !== serverGeneration || msg?.serverId !== serverId) return;
@@ -1488,11 +1513,11 @@ function joinConsoleSocket() {
   });
 }
 
-/* ----- live resource graphs ----- */
-
 // Pterodactyl's StatGraphs keeps a fixed ring buffer per chart and wipes it
 // when the server leaves `running`. Same shape here: 60 samples at the
-// engine's 2s cadence is two minutes of history.
+// engine's 2s cadence is two minutes of history. This ring is the client's
+// own — the server pushes samples and keeps no history, so there is nothing
+// to replay and nothing to re-add for symmetry.
 const STAT_SAMPLES = 60;
 const statSeries = { cpu: [], memory: [], rx: [], tx: [] };
 const statCharts = ["chart-cpu", "chart-memory", "chart-network"];
