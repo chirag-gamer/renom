@@ -210,19 +210,19 @@ export class LocalProcessEngine {
     }
 
     // Bare hosts disagree on the Python name: prefer `python3`, take `python`.
-    // A blueprint that installed its own virtualenv (Endstone) is launched
-    // with that interpreter instead — the system Python has no endstone. The
-    // path is derived from the server directory rather than stored, so it
-    // survives a data-dir move.
+    // A blueprint that installed its own virtualenv (Endstone) must run with
+    // that interpreter — the system Python has no endstone. The path is
+    // derived from the server directory rather than stored, so it survives a
+    // data-dir move. `py3`/`py` are the per-interpreter venvs; the bare `venv`
+    // layout is from installs made before that split, so it is still honoured.
     if (cmd === "python") {
-      const venvPython = join(
-        dir,
-        ".renom",
-        "venv",
-        process.platform === "win32" ? "Scripts" : "bin",
-        process.platform === "win32" ? "python.exe" : "python",
-      );
-      if (existsSync(venvPython)) {
+      const binDir = process.platform === "win32" ? "Scripts" : "bin";
+      const exe = process.platform === "win32" ? "python.exe" : "python";
+      const venvRoot = join(dir, ".renom", "venv");
+      const venvPython = ["py3", "py", ""]
+        .map((sub) => join(venvRoot, sub, binDir, exe))
+        .find((candidate) => existsSync(candidate));
+      if (venvPython) {
         cmd = venvPython;
       } else {
         const probe = spawnSync("python3", ["--version"], { stdio: "ignore", windowsHide: true });

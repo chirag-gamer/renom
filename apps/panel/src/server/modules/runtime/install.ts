@@ -460,36 +460,42 @@ async function pipInstall(
   const execFileAsync = promisify(execFileCb);
   const venvDir = join(serverDir, ".renom", "venv");
   const isWindows = process.platform === "win32";
-  const venvPython = isWindows
-    ? join(venvDir, "Scripts", "python.exe")
-    : join(venvDir, "bin", "python");
   const spec = version && version !== "" && version !== "latest" ? `${pkg}==${version}` : pkg;
 
-  const candidates = ["python3", "python"];
+  // A venv belongs to the interpreter that made it. If `python3` exists but
+  // is too old for the package, its venv would be reused by the `python`
+  // candidate and fail again, so each candidate builds its own venv.
+  const candidates: Array<{ exe: string; dir: string }> = [
+    { exe: "python3", dir: join(venvDir, "py3") },
+    { exe: "python", dir: join(venvDir, "py") },
+  ];
   const tried: string[] = [];
-  for (const python of candidates) {
-    // Create the venv only if it is missing, so re-installs are cheap.
-    if (!existsSync(venvPython)) {
+  for (const candidate of candidates) {
+    const interpreter = join(candidate.dir, isWindows ? "Scripts" : "bin", "python");
+    if (!existsSync(interpreter)) {
       try {
-        await execFileAsync(python, ["-m", "venv", venvDir], {
+        await execFileAsync(candidate.exe, ["-m", "venv", candidate.dir], {
           timeout: 5 * 60_000,
           windowsHide: true,
         });
       } catch (err) {
-        tried.push(`${python} -m venv: ${err instanceof Error ? err.message : String(err)}`);
+        tried.push(
+          `${candidate.exe} -m venv: ${err instanceof Error ? err.message : String(err)}`,
+        );
         continue;
       }
     }
     try {
-      // `--disable-pip-version-check` keeps the install hermetic and quiet.
       await execFileAsync(
-        venvPython,
+        interpreter,
         ["-m", "pip", "install", "--disable-pip-version-check", spec],
         { timeout: 15 * 60_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
       );
-      return venvPython;
+      return interpreter;
     } catch (err) {
-      tried.push(`${spec}: ${err instanceof Error ? err.message : String(err)}`);
+      tried.push(
+        `${candidate.exe} (${spec}): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   throw new EngineError(

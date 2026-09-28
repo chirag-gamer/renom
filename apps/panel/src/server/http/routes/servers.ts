@@ -34,9 +34,19 @@ import {
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** One core's worth of CPU. Unprivileged creators always get this. */
 /** Unlimited CPU: a fresh server keeps every core the host has. */
 const DEFAULT_CPU_WEIGHT = 0;
+
+/**
+ * Blueprints with a plugin loader that can run the Minekube Connect plugin.
+ * Vanilla is deliberately absent: it is a bare JAR server with no plugin API,
+ * so an endpoint saved there would never come up.
+ */
+const PLUGIN_TUNNEL_BLUEPRINTS: Record<string, true> = {
+  paper: true,
+  purpur: true,
+  velocity: true,
+};
 
 export interface ServersDeps {
   db: Database;
@@ -163,18 +173,72 @@ export function serversRouter(deps: ServersDeps): Router {
         target: { blueprint: body.blueprintSlug },
       });
 
-      // Install runs in the background: creation stays fast while downloads
-      // land, and status tells the truth (installing → ready / install_failed).
+      // Both installs are backgrounded — a Paper jar and a 62 MB Connect
+      // plugin must not block the 201 — but they share ONE readiness gate:
+      // the server only becomes `ready` once the blueprint install AND the
+      // tunnel install have both settled. Letting each set `ready` on its own
+      // let a server become startable while its tunnel was still downloading.
+      //
       // Skipped under test: runInstallOps has its own suite with stubbed fetch.
-      if (doc.install.length > 0 && process.env.NODE_ENV !== "test") {
-        const installVars: Record<string, string> = {};
-        for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
-        if (alloc) {
-          installVars["allocation.ip"] = alloc.ip;
-          installVars["allocation.port"] = String(alloc.port);
+      const pluginCapable = PLUGIN_TUNNEL_BLUEPRINTS[doc.slug] === true;
+      const hasBlueprintInstall = doc.install.length > 0;
+      const wantsTunnel = pluginCapable;
+
+      if ((hasBlueprintInstall || wantsTunnel) && process.env.NODE_ENV !== "test") {
+        const pending: Promise<unknown>[] = [];
+
+        if (hasBlueprintInstall) {
+          const installVars: Record<string, string> = {};
+          for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
+          if (alloc) {
+            installVars["allocation.ip"] = alloc.ip;
+            installVars["allocation.port"] = String(alloc.port);
+          }
+          pending.push(runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars }));
         }
+
+        if (wantsTunnel) {
+          const setVar = deps.db.prepare(
+            `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+             ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+          );
+          // Reserve the name before the download so a concurrent create cannot
+          // claim the same endpoint.
+          const endpoint = claimEndpointName(deps.db, created.id);
+          setVar.run(created.id, "tunnel.provider", "minekube");
+          setVar.run(created.id, "tunnel.endpoint", endpoint);
+          pending.push(
+            installPlugin(serverDir)
+              .then(() => {
+                audit.record({
+                  event: "server.tunnel.enable",
+                  actorUserId: p.userId,
+                  actorIp: req.ip,
+                  requestId: req.requestId,
+                  serverId: created.id,
+                  target: { provider: "minekube", endpoint },
+                });
+              })
+              .catch((err: unknown) => {
+                // Best-effort: a failed tunnel must never fail server
+                // creation, but the half-claimed name is released so it is
+                // not stranded and never advertised.
+                deps.db
+                  .prepare(
+                    "DELETE FROM server_variables WHERE server_id = ? AND key IN ('tunnel.provider','tunnel.endpoint')",
+                  )
+                  .run(created.id);
+                audit.record({
+                  event: "server.tunnel.enable_failed",
+                  serverId: created.id,
+                  target: { error: err instanceof Error ? err.message : String(err) },
+                });
+              }),
+          );
+        }
+
         servers.setStatus(created.id, "installing");
-        void runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars })
+        void Promise.all(pending)
           .then(() => {
             servers.setStatus(created.id, "ready");
             audit.record({ event: "server.install.done", serverId: created.id });
@@ -187,44 +251,6 @@ export function serversRouter(deps: ServersDeps): Router {
               target: { error: err instanceof Error ? err.message : String(err) },
             });
           });
-      }
-
-      // Minekube Connect is installed by default for Java servers and proxies so
-      // a fresh server is reachable without a public IP. The name is claimed
-      // through the same reservation path the manual route uses, so it cannot
-      // collide with a name another server already advertises. Best-effort: a
-      // failed tunnel must never fail server creation.
-      const category = deps.db
-        .prepare("SELECT category FROM blueprints WHERE id = ?")
-        .get(bp.id) as { category: string } | undefined;
-      const isJava = category?.category === "minecraft-java" || category?.category === "proxy";
-      if (isJava && process.env.NODE_ENV !== "test") {
-        void (async () => {
-          try {
-            const endpoint = claimEndpointName(deps.db, created.id);
-            await installPlugin(serverDir);
-            const setVar = deps.db.prepare(
-              `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
-               ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
-            );
-            setVar.run(created.id, "tunnel.provider", "minekube");
-            setVar.run(created.id, "tunnel.endpoint", endpoint);
-            audit.record({
-              event: "server.tunnel.enable",
-              actorUserId: p.userId,
-              actorIp: req.ip,
-              requestId: req.requestId,
-              serverId: created.id,
-              target: { provider: "minekube", endpoint },
-            });
-          } catch (err) {
-            audit.record({
-              event: "server.tunnel.enable_failed",
-              serverId: created.id,
-              target: { error: err instanceof Error ? err.message : String(err) },
-            });
-          }
-        })();
       }
       const fresh = servers.byId(created.id)!;
       // The install state rides along explicitly: clients poll

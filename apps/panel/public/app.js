@@ -1117,6 +1117,7 @@ function applyServerPermissions() {
   document.getElementById("form-console").hidden = !canServer("control.console");
   document.getElementById("form-file-read").hidden = !canServer("file.read");
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
+  document.getElementById("btn-file-mkdir").hidden = !canServer("file.create");
   document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
   document.getElementById("btn-backup").hidden = !canServer("backup.create");
   document.getElementById("form-schedule").hidden = !canServer("schedule.create");
@@ -1796,8 +1797,17 @@ async function refreshAddonCapability(generation) {
   if (isStaleLoad(generation)) return;
   const tab = document.querySelector('#server-tabs [data-tab="addons"]');
   const supported = status === 200 && data.supported;
-  if (tab) tab.hidden = !supported || !canServer("startup.read");
-  if (!supported) return;
+  const usable = supported && canServer("startup.read");
+  if (tab) tab.hidden = !usable;
+  if (!usable) {
+    // setTab() already ran before this check, so a deep link to
+    // /servers/:id/addons would leave the addons panel showing with no tab
+    // left to leave it. Move to a tab this server actually has.
+    if (!document.getElementById("tab-addons").hidden) {
+      setTab(availableServerTabs()[0] || "console");
+    }
+    return;
+  }
   document.getElementById("addon-kind").textContent =
     data.projectType === "mod" ? "mods" : "plugins";
   results.innerHTML = "";
@@ -1823,10 +1833,16 @@ document.getElementById("form-addon-search").addEventListener("submit", async (e
     note.textContent = "Type something to search Modrinth.";
     return;
   }
+  // Pin the server this search is for. Without it a slow response can land
+  // after the user moved to another server, rendering the wrong hits and
+  // leaving Install buttons that would install into the new server.
+  const serverId = currentServer.id;
+  const generation = serverGeneration;
   const { status, data } = await api(
-    `/servers/${currentServer.id}/addons/search?q=${encodeURIComponent(query)}`,
+    `/servers/${serverId}/addons/search?q=${encodeURIComponent(query)}`,
     { token: store.token },
   );
+  if (generation !== serverGeneration || currentServer?.id !== serverId) return;
   if (status !== 200) {
     note.hidden = false;
     note.textContent = describeProblem(status, data);
@@ -1853,13 +1869,18 @@ document.getElementById("form-addon-search").addEventListener("submit", async (e
     install.hidden = !canServer("startup.update");
     install.addEventListener("click", async () => {
       install.disabled = true;
-      const res = await api(`/servers/${currentServer.id}/addons`, {
+      const res = await api(`/servers/${serverId}/addons`, {
         method: "POST",
         token: store.token,
         body: { projects: [hit.projectId] },
       });
-      if (res.status !== 201) fail(err, describeProblem(res.status, res.data));
-      else refreshAddons();
+      if (res.status !== 201) {
+        fail(err, describeProblem(res.status, res.data));
+        // Let the user retry this project without rerunning the search.
+        install.disabled = false;
+        return;
+      }
+      refreshAddons();
     });
     li.append(name, meta, install);
     results.append(li);

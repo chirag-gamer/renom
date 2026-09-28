@@ -456,7 +456,9 @@
                 </p>
               </div>
               <div class="btn-row">
-                <button type="button" id="btn-file-mkdir" class="secondary">New folder</button>
+                <button type="button" id="btn-file-mkdir" class="secondary" hidden>
+                  New folder
+                </button>
                 <button type="button" id="btn-open-props" class="secondary">
                   Open server.properties
                 </button>
@@ -550,14 +552,15 @@
           <div id="tab-network" hidden>
             <h3>Addresses</h3>
             <ul id="alloc-list" class="user-list"></ul>
-            <h3>Public tunnel <span class="chip">optional</span></h3>
+            <h3>Public tunnel <span class="chip">on by default</span></h3>
             <p id="tunnel-info" class="note">No tunnel. Players join you by your IP and port.</p>
             <form id="form-tunnel" class="inline-form">
               <input
                 name="endpoint"
                 placeholder="Leave blank for a random name"
                 maxlength="63"
-                pattern="[a-z0-9][a-z0-9-]*"
+                pattern="[a-z][a-z]{3,7}(-[a-z][a-z]{3,7})?-[0-9]{4}"
+                title="Lowercase words then four digits, e.g. vivid-lagoon-9784. Leave blank for a random name."
               />
               <button type="submit">Enable Minekube tunnel</button>
             </form>
@@ -597,17 +600,19 @@
                 <input name="description" id="settings-desc" maxlength="500" />
               </label>
               <label data-admin-only hidden
-                >CPU limit (%, 100 = one core)
+                >CPU (JVM processor count hint)
                 <input
                   name="cpuWeight"
                   id="settings-cpu"
                   type="number"
-                  min="10"
+                  min="0"
                   max="1000"
                   step="10"
                 />
                 <span class="hint">
-                  Applied to Java servers as the JVM processor count. Overallocation is allowed.
+                  0 is unlimited. A positive value is a percentage of one core and rounds up to
+                  whole cores (100 = 1 core, 300 = 3). This sizes the JVM's thread pools — it is not
+                  a kernel-level CPU quota, and it only applies to Java servers.
                 </span>
               </label>
               <label data-admin-only hidden

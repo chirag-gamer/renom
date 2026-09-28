@@ -89,8 +89,10 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       if (engine.stateOf(id) !== "offline") {
         throw new ConflictError("Stop the server before changing its tunnel (restart to activate)");
       }
-      // A supplied name must be free for this server; a blank one is minted
-      // from whatever is unclaimed, so two servers never share a join address.
+      // Reserve the name BEFORE the plugin download. Checking first and
+      // writing after an `await` let two concurrent requests both pass the
+      // check and persist the same endpoint; claiming it up front means the
+      // second request sees it taken.
       let endpoint: string;
       if (body.endpoint) {
         if (!endpointValid(body.endpoint)) {
@@ -105,15 +107,22 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       } else {
         endpoint = claimEndpointName(db, id);
       }
-      await installPlugin(join(dataDir, "servers", id));
-      db.prepare(
+      const setVar = db.prepare(
         `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
          ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
-      ).run(id, "tunnel.provider", "minekube");
-      db.prepare(
-        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
-         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
-      ).run(id, "tunnel.endpoint", endpoint);
+      );
+      setVar.run(id, "tunnel.provider", "minekube");
+      setVar.run(id, "tunnel.endpoint", endpoint);
+      try {
+        await installPlugin(join(dataDir, "servers", id));
+      } catch (err) {
+        // The name is reserved but the plugin did not land: drop the claim so
+        // the name is not stranded, and let the caller retry.
+        db.prepare(
+          "DELETE FROM server_variables WHERE server_id = ? AND key IN ('tunnel.provider','tunnel.endpoint')",
+        ).run(id);
+        throw err;
+      }
       audit.record({
         event: "server.tunnel.enable",
         actorUserId: req.principal!.userId,
