@@ -8,23 +8,12 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="app-topbar" id="app-topbar">
-        <div class="sidebar-heading">
-          <a class="topbar-brand" href="/" data-route="home" aria-label="Renom servers">
-            <strong>RENOM</strong><span>Game server panel</span>
-          </a>
-          <button
-            type="button"
-            id="sidebar-toggle"
-            class="sidebar-toggle"
-            aria-label="Toggle navigation"
-            aria-expanded="false"
-            aria-controls="main-navigation"
-          >
-            <span aria-hidden="true">☰</span>
-          </button>
-        </div>
-        <nav class="topbar-nav" id="main-navigation" aria-label="Main navigation">
+      <aside class="sidebar" id="app-sidebar">
+        <a class="sidebar-brand" href="/" data-route="home" aria-label="Renom servers">
+          <strong>RENOM</strong><span>Game server panel</span>
+        </a>
+
+        <nav class="side-nav" id="main-navigation" aria-label="Main navigation">
           <a href="/" data-route="home"><span aria-hidden="true">▦</span> Servers</a>
           <a href="/account" data-route="account"><span aria-hidden="true">◉</span> Account</a>
           <a href="/api-keys" data-route="api"><span aria-hidden="true">⌘</span> API keys</a>
@@ -32,17 +21,29 @@
             ><span aria-hidden="true">⚙</span> Admin</a
           >
         </nav>
-        <div class="topbar-actions">
+
+        <nav class="side-nav side-nav--server" id="server-navigation" aria-label="Server" hidden>
+          <p class="side-nav-title" id="server-nav-title">Server</p>
+          <a href="#" data-server-tab="console"><span aria-hidden="true">▸_</span> Console</a>
+          <a href="#" data-server-tab="files"><span aria-hidden="true">▤</span> Files</a>
+          <a href="#" data-server-tab="backups"><span aria-hidden="true">▣</span> Backups</a>
+          <a href="#" data-server-tab="schedules"><span aria-hidden="true">◷</span> Schedule</a>
+          <a href="#" data-server-tab="startup"><span aria-hidden="true">⚑</span> Startup</a>
+          <a href="#" data-server-tab="network"><span aria-hidden="true">⇄</span> Network</a>
+          <a href="#" data-server-tab="users"><span aria-hidden="true">☖</span> Users</a>
+          <a href="#" data-server-tab="addons" id="server-nav-addons"
+            ><span aria-hidden="true">✦</span> <span id="server-nav-addons-label">Plugins</span></a
+          >
+          <a href="#" data-server-tab="settings"><span aria-hidden="true">⚒</span> Settings</a>
+        </nav>
+
+        <div class="sidebar-foot">
           <span id="topbar-user" class="sidebar-user"></span>
           <button type="button" id="btn-topbar-signout" class="sidebar-signout">Sign out</button>
         </div>
-      </header>
-      <main class="shell app-main">
-        <header class="brand">
-          <h1>Renom</h1>
-          <p class="tagline">Your game servers, on your machine.</p>
-        </header>
+      </aside>
 
+      <main class="app-main">
         <section id="view-setup" class="card" hidden>
           <h2>First, create your admin account</h2>
           <p>
@@ -137,8 +138,6 @@
             </p>
             <p class="error" id="server-list-error" role="alert" hidden></p>
           </div>
-
-          <p><button type="button" id="btn-signout" class="secondary">Sign out</button></p>
         </section>
 
         <section id="view-admin" class="card wide" hidden>
@@ -308,6 +307,84 @@
           </p>
         </section>
 
+        <section id="view-admin-server" class="card wide" hidden>
+          <p>
+            <button type="button" id="btn-admin-server-back" class="secondary">
+              ← All servers
+            </button>
+          </p>
+          <p class="eyebrow">Administration / Servers</p>
+          <h2 id="admin-server-heading">Server</h2>
+          <p id="admin-server-meta" class="note"></p>
+          <form id="form-admin-server">
+            <div class="form-grid">
+              <label
+                >Server name<input
+                  name="name"
+                  id="admin-server-name"
+                  required
+                  minlength="1"
+                  maxlength="64"
+                />
+              </label>
+              <label
+                >Description<input
+                  name="description"
+                  id="admin-server-description"
+                  maxlength="500"
+                  placeholder="Optional server description"
+                />
+              </label>
+            </div>
+            <fieldset>
+              <legend>Resources</legend>
+              <div class="form-grid">
+                <label
+                  >CPU <span class="hint">percent of one core</span>
+                  <input
+                    name="cpuWeight"
+                    id="admin-server-cpu"
+                    type="number"
+                    min="0"
+                    max="1000"
+                    step="10"
+                  />
+                  <span class="hint">
+                    0 is unlimited. 100 is one core, 300 is three. Applied to Java servers.
+                  </span>
+                </label>
+                <label
+                  >Memory MB
+                  <input
+                    name="memoryMb"
+                    id="admin-server-memory"
+                    type="number"
+                    min="128"
+                    max="1048576"
+                  />
+                </label>
+                <label
+                  >Disk MB
+                  <input
+                    name="diskQuotaMb"
+                    id="admin-server-disk"
+                    type="number"
+                    min="256"
+                    max="10485760"
+                  />
+                </label>
+              </div>
+            </fieldset>
+            <p><button type="submit">Save server</button></p>
+            <p class="error" id="admin-server-error" role="alert" hidden></p>
+          </form>
+          <p>
+            <button type="button" id="btn-admin-server-console" class="secondary">
+              Open console
+            </button>
+          </p>
+        </section>
+
         <section id="view-account" class="card" hidden>
           <p class="eyebrow">Account</p>
           <h2>Your account</h2>
@@ -371,6 +448,11 @@
                 <select name="blueprint" id="blueprint-select" aria-label="Blueprint"></select>
               </label>
               <label
+                >CPU <span class="hint">percent of one core</span>
+                <input name="cpuWeight" type="number" min="0" max="1000" step="10" value="0" />
+                <span class="hint">0 is unlimited. 100 is one core, 300 is three.</span>
+              </label>
+              <label
                 >Memory MB
                 <input name="memoryMb" type="number" min="128" max="1048576" value="1024" />
               </label>
@@ -397,251 +479,326 @@
           <ul id="api-key-list" class="user-list"></ul>
           <form id="form-api-key" class="permission-form">
             <label
-              >Label<input name="memo" maxlength="128" placeholder="e.g. backup script"
-            /></label>
+              >Label<input name="memo" maxlength="128" placeholder="e.g. backup script" />
+            </label>
             <fieldset>
               <legend>Scopes</legend>
               <div id="api-permission-options" class="permission-grid"></div>
             </fieldset>
-            <button type="submit">Create API key</button>
+            <p><button type="submit">Create key</button></p>
+            <p class="error" id="api-error" role="alert" hidden></p>
           </form>
-          <p class="error" id="api-error" role="alert" hidden></p>
         </section>
 
-        <section id="view-server" class="card wide" hidden>
-          <p><button type="button" id="btn-back" class="secondary">← All servers</button></p>
-          <h2 id="srv-name">Server</h2>
-          <p id="srv-meta" class="note"></p>
-          <div id="srv-power" class="btn-row" role="group" aria-label="Power">
-            <button type="button" data-power="start">Start</button>
-            <button type="button" data-power="restart" class="secondary">Restart</button>
-            <button type="button" data-power="stop" class="secondary">Stop</button>
-            <button type="button" data-power="kill" class="danger">Kill</button>
-          </div>
-          <p class="error" id="srv-error" role="alert" hidden></p>
+        <section id="view-server" class="server-view" hidden>
+          <header class="server-head">
+            <div>
+              <h2 id="srv-name">Server</h2>
+              <p id="srv-meta" class="note"></p>
+            </div>
+            <p class="error" id="srv-error" role="alert" hidden></p>
+          </header>
 
-          <nav class="tabs" id="server-tabs" aria-label="Server sections">
-            <button type="button" data-tab="console" class="active">Console</button>
-            <button type="button" data-tab="files">Files</button>
-            <button type="button" data-tab="backups">Backups</button>
-            <button type="button" data-tab="schedules">Schedules</button>
-            <button type="button" data-tab="addons">Addons</button>
-            <button type="button" data-tab="startup">Startup</button>
-            <button type="button" data-tab="network">Network</button>
-            <button type="button" data-tab="users">Users</button>
-            <button type="button" data-tab="settings">Settings</button>
-          </nav>
-
-          <div id="tab-console">
-            <pre id="console-log" class="console" aria-live="off"></pre>
-            <form id="form-console" class="inline-form">
-              <input
-                name="command"
-                id="console-input"
-                placeholder="Type a server command, then Enter"
-                autocomplete="off"
-              />
-              <button type="submit">Send</button>
-            </form>
-            <p class="note" id="console-note">Live output appears here while the server runs.</p>
-          </div>
-
-          <div id="tab-files" hidden>
-            <div class="page-header">
-              <div>
-                <p class="eyebrow">File manager</p>
-                <p class="note">
-                  Browse, edit, rename, move, and delete. Editing opens a dialog — the list stays
-                  readable.
+          <div class="server-layout">
+            <div class="server-content">
+              <div id="tab-console">
+                <pre id="console-log" class="console" aria-live="off"></pre>
+                <form id="form-console" class="inline-form">
+                  <input
+                    name="command"
+                    id="console-input"
+                    placeholder="Type a server command, then Enter"
+                    autocomplete="off"
+                  />
+                  <button type="submit">Send</button>
+                </form>
+                <p class="note" id="console-note">
+                  Live output appears here while the server runs.
                 </p>
               </div>
-              <div class="btn-row">
-                <button type="button" id="btn-file-mkdir" class="secondary" hidden>
-                  New folder
-                </button>
-                <button type="button" id="btn-open-props" class="secondary">
-                  Open server.properties
-                </button>
+
+              <div id="tab-files" hidden>
+                <div class="page-header">
+                  <div>
+                    <p class="eyebrow">File manager</p>
+                    <p class="note">
+                      Browse, edit, rename, move, and delete. Editing opens a dialog — the list
+                      stays readable.
+                    </p>
+                  </div>
+                  <div class="btn-row">
+                    <button type="button" id="btn-file-mkdir" class="secondary" hidden>
+                      New folder
+                    </button>
+                    <button type="button" id="btn-open-props" class="secondary">
+                      Open server.properties
+                    </button>
+                  </div>
+                </div>
+                <p class="note" id="files-path">/</p>
+                <ul id="file-list" class="file-list"></ul>
+                <form id="form-file-read" class="inline-form">
+                  <input name="path" placeholder="File to open, e.g. server.properties" />
+                  <button type="submit" class="secondary">Open</button>
+                </form>
+                <p class="error" id="files-error" role="alert" hidden></p>
+              </div>
+
+              <dialog id="file-editor" class="file-editor">
+                <div class="dialog-header">
+                  <h3>Edit file</h3>
+                  <button type="button" id="btn-file-close" class="secondary">Close</button>
+                </div>
+                <p id="file-dialog-path" class="note"></p>
+                <textarea id="file-dialog-content" rows="18" spellcheck="false"></textarea>
+                <p><button type="button" id="btn-file-dialog-save">Save changes</button></p>
+                <p class="error" id="file-dialog-error" role="alert" hidden></p>
+              </dialog>
+
+              <div id="tab-backups" hidden>
+                <ul id="backup-list" class="user-list"></ul>
+                <p><button type="button" id="btn-backup">Back up now</button></p>
+                <p class="error" id="backups-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-schedules" hidden>
+                <ul id="schedule-list" class="user-list"></ul>
+                <form id="form-schedule" class="inline-form">
+                  <input
+                    name="name"
+                    required
+                    maxlength="64"
+                    placeholder="Name, e.g. nightly restart"
+                  />
+                  <input name="cron" required placeholder="When, e.g. 0 4 * * *" />
+                  <select name="action" aria-label="Does">
+                    <option value="restart">Restart the server</option>
+                    <option value="start">Start the server</option>
+                    <option value="stop">Stop the server</option>
+                    <option value="backup">Back it up</option>
+                  </select>
+                  <button type="submit">Add schedule</button>
+                </form>
+                <p class="error" id="schedules-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-addons" hidden>
+                <div class="page-header">
+                  <div>
+                    <p class="eyebrow">Addons</p>
+                    <p class="note">
+                      Search Modrinth for <strong id="addon-kind">mods and plugins</strong>. Results
+                      are filtered to this server's software and exact Minecraft version, so nothing
+                      incompatible is offered. They activate on the next start.
+                    </p>
+                  </div>
+                  <form id="form-addon-search" class="inline-form">
+                    <input
+                      name="q"
+                      id="addon-search-input"
+                      placeholder="Search Modrinth, e.g. performance"
+                      maxlength="64"
+                      autocomplete="off"
+                    />
+                    <button type="submit">Search</button>
+                  </form>
+                </div>
+                <p class="note" id="addon-search-note" hidden></p>
+                <ul id="addon-search-results" class="user-list"></ul>
+                <h3>Installed</h3>
+                <ul id="addon-list" class="user-list"></ul>
+                <form id="form-addon" class="inline-form" hidden>
+                  <input
+                    name="projects"
+                    required
+                    placeholder="Project ids, e.g. lithium, phosphor"
+                  />
+                  <button type="submit">Install from Modrinth</button>
+                </form>
+                <p class="error" id="addons-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-startup" hidden>
+                <p>
+                  These are the knobs your server's blueprint defines. Changes apply on the next
+                  start.
+                </p>
+                <form id="form-variables">
+                  <div id="variable-fields"></div>
+                  <p><button type="submit">Save startup settings</button></p>
+                </form>
+                <p class="error" id="startup-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-network" hidden>
+                <h3>Addresses</h3>
+                <ul id="alloc-list" class="user-list"></ul>
+                <h3>Public tunnel <span class="chip">on by default</span></h3>
+                <p id="tunnel-info" class="note">
+                  No tunnel. Players join you by your IP and port.
+                </p>
+                <form id="form-tunnel" class="inline-form">
+                  <input
+                    name="endpoint"
+                    placeholder="Leave blank for a random name"
+                    maxlength="63"
+                    pattern="[a-z][a-z]{3,7}(-[a-z][a-z]{3,7})?-[0-9]{4}"
+                    title="Lowercase words then four digits, e.g. vivid-lagoon-9784. Leave blank for a random name."
+                  />
+                  <button type="submit">Enable Minekube tunnel</button>
+                </form>
+                <p class="note">
+                  Installs the Minekube Connect plugin and shows the public address here after boot.
+                  Leave the name blank and the panel mints a random one, so you never collide with
+                  an endpoint another organization already owns.
+                </p>
+                <p class="error" id="network-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-users" hidden>
+                <p>People who can touch this server — and exactly what they're allowed to do.</p>
+                <ul id="subuser-list" class="user-list"></ul>
+                <form id="form-subuser" class="permission-form">
+                  <label>
+                    Username
+                    <input name="username" required placeholder="Username" />
+                  </label>
+                  <fieldset>
+                    <legend>Permissions</legend>
+                    <div id="permission-options" class="permission-grid"></div>
+                  </fieldset>
+                  <button type="submit">Invite collaborator</button>
+                </form>
+                <p class="error" id="subusers-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-settings" hidden>
+                <form id="form-settings">
+                  <label
+                    >Name
+                    <input name="name" id="settings-name" required maxlength="64" />
+                  </label>
+                  <label
+                    >Description
+                    <input name="description" id="settings-desc" maxlength="500" />
+                  </label>
+                  <label data-admin-only hidden
+                    >CPU (JVM processor count hint)
+                    <input
+                      name="cpuWeight"
+                      id="settings-cpu"
+                      type="number"
+                      min="0"
+                      max="1000"
+                      step="10"
+                    />
+                    <span class="hint">
+                      0 is unlimited. A positive value is a percentage of one core and rounds up to
+                      whole cores (100 = 1 core, 300 = 3). This sizes the JVM's thread pools — it is
+                      not a kernel-level CPU quota, and it only applies to Java servers.
+                    </span>
+                  </label>
+                  <label data-admin-only hidden
+                    >Memory limit (MB)
+                    <input
+                      name="memoryMb"
+                      id="settings-memory"
+                      type="number"
+                      min="128"
+                      max="1048576"
+                    />
+                  </label>
+                  <label data-admin-only hidden
+                    >Disk quota (MB)
+                    <input
+                      name="diskQuotaMb"
+                      id="settings-disk"
+                      type="number"
+                      min="256"
+                      max="10485760"
+                    />
+                  </label>
+                  <p><button type="submit">Save settings</button></p>
+                </form>
+                <p>
+                  <button type="button" id="btn-reinstall" class="secondary">
+                    Reinstall server files
+                  </button>
+                </p>
+                <p>
+                  <button type="button" id="btn-delete-server" class="danger">
+                    Delete this server
+                  </button>
+                </p>
+                <p class="error" id="settings-error" role="alert" hidden></p>
               </div>
             </div>
-            <p class="note" id="files-path">/</p>
-            <ul id="file-list" class="file-list"></ul>
-            <form id="form-file-read" class="inline-form">
-              <input name="path" placeholder="File to open, e.g. server.properties" />
-              <button type="submit" class="secondary">Open</button>
-            </form>
-            <p class="error" id="files-error" role="alert" hidden></p>
-          </div>
 
-          <dialog id="file-editor" class="file-editor">
-            <div class="dialog-header">
-              <h3>Edit file</h3>
-              <button type="button" id="btn-file-close" class="secondary">Close</button>
-            </div>
-            <p id="file-dialog-path" class="note"></p>
-            <textarea id="file-dialog-content" rows="18" spellcheck="false"></textarea>
-            <p><button type="button" id="btn-file-dialog-save">Save changes</button></p>
-            <p class="error" id="file-dialog-error" role="alert" hidden></p>
-          </dialog>
+            <aside class="server-rail" id="server-rail">
+              <div class="rail-block">
+                <h3>Power</h3>
+                <div id="srv-power" class="rail-power" role="group" aria-label="Power">
+                  <button type="button" data-power="start">Start</button>
+                  <button type="button" data-power="restart" class="secondary">Restart</button>
+                  <button type="button" data-power="stop" class="secondary">Stop</button>
+                  <button type="button" data-power="kill" class="danger">Kill</button>
+                </div>
+              </div>
 
-          <div id="tab-backups" hidden>
-            <ul id="backup-list" class="user-list"></ul>
-            <p><button type="button" id="btn-backup">Back up now</button></p>
-            <p class="error" id="backups-error" role="alert" hidden></p>
-          </div>
+              <div class="rail-block">
+                <h3>CPU</h3>
+                <p class="stat-value" id="stat-cpu-value">—</p>
+                <svg
+                  class="chart"
+                  id="chart-cpu"
+                  viewBox="0 0 100 32"
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="CPU usage over time"
+                >
+                  <path class="chart-fill" d="" />
+                  <path class="chart-line" d="" />
+                </svg>
+              </div>
 
-          <div id="tab-schedules" hidden>
-            <ul id="schedule-list" class="user-list"></ul>
-            <form id="form-schedule" class="inline-form">
-              <input name="name" required maxlength="64" placeholder="Name, e.g. nightly restart" />
-              <input name="cron" required placeholder="When, e.g. 0 4 * * *" />
-              <select name="action" aria-label="Does">
-                <option value="restart">Restart the server</option>
-                <option value="start">Start the server</option>
-                <option value="stop">Stop the server</option>
-                <option value="backup">Back it up</option>
-              </select>
-              <button type="submit">Add schedule</button>
-            </form>
-            <p class="error" id="schedules-error" role="alert" hidden></p>
-          </div>
+              <div class="rail-block">
+                <h3>Memory</h3>
+                <p class="stat-value" id="stat-memory-value">—</p>
+                <svg
+                  class="chart"
+                  id="chart-memory"
+                  viewBox="0 0 100 32"
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="Memory usage over time"
+                >
+                  <path class="chart-fill" d="" />
+                  <path class="chart-line" d="" />
+                </svg>
+              </div>
 
-          <div id="tab-addons" hidden>
-            <div class="page-header">
-              <div>
-                <p class="eyebrow">Addons</p>
+              <div class="rail-block">
+                <h3>Network</h3>
+                <p class="stat-value" id="stat-network-value">—</p>
+                <svg
+                  class="chart"
+                  id="chart-network"
+                  viewBox="0 0 100 32"
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="Host network traffic over time"
+                >
+                  <path class="chart-fill chart-fill--in" d="" />
+                  <path class="chart-line chart-line--in" d="" />
+                  <path class="chart-fill chart-fill--out" d="" />
+                  <path class="chart-line chart-line--out" d="" />
+                </svg>
                 <p class="note">
-                  Search Modrinth for <strong id="addon-kind">mods and plugins</strong>. Results are
-                  filtered to this server's software and exact Minecraft version, so nothing
-                  incompatible is offered. They activate on the next start.
+                  Host interface traffic, not this server alone — Renom runs servers as plain
+                  processes, which have no per-process byte counters.
                 </p>
               </div>
-              <form id="form-addon-search" class="inline-form">
-                <input
-                  name="q"
-                  id="addon-search-input"
-                  placeholder="Search Modrinth, e.g. performance"
-                  maxlength="64"
-                  autocomplete="off"
-                />
-                <button type="submit">Search</button>
-              </form>
-            </div>
-            <ul id="addon-search-results" class="user-list"></ul>
-            <p class="note" id="addon-search-note" hidden></p>
-            <h3>Installed</h3>
-            <ul id="addon-list" class="user-list"></ul>
-            <form id="form-addon" class="inline-form" hidden>
-              <input name="projects" required placeholder="Project ids, e.g. lithium, phosphor" />
-              <button type="submit">Install from Modrinth</button>
-            </form>
-            <p class="error" id="addons-error" role="alert" hidden></p>
-          </div>
-
-          <div id="tab-startup" hidden>
-            <p>
-              These are the knobs your server's blueprint defines. Changes apply on the next start.
-            </p>
-            <form id="form-variables">
-              <div id="variable-fields"></div>
-              <p><button type="submit">Save startup settings</button></p>
-            </form>
-            <p class="error" id="startup-error" role="alert" hidden></p>
-          </div>
-
-          <div id="tab-network" hidden>
-            <h3>Addresses</h3>
-            <ul id="alloc-list" class="user-list"></ul>
-            <h3>Public tunnel <span class="chip">on by default</span></h3>
-            <p id="tunnel-info" class="note">No tunnel. Players join you by your IP and port.</p>
-            <form id="form-tunnel" class="inline-form">
-              <input
-                name="endpoint"
-                placeholder="Leave blank for a random name"
-                maxlength="63"
-                pattern="[a-z][a-z]{3,7}(-[a-z][a-z]{3,7})?-[0-9]{4}"
-                title="Lowercase words then four digits, e.g. vivid-lagoon-9784. Leave blank for a random name."
-              />
-              <button type="submit">Enable Minekube tunnel</button>
-            </form>
-            <p class="note">
-              Installs the Minekube Connect plugin and shows the public address here after boot.
-              Leave the name blank and the panel mints a random one, so you never collide with an
-              endpoint another organization already owns.
-            </p>
-            <p class="error" id="network-error" role="alert" hidden></p>
-          </div>
-
-          <div id="tab-users" hidden>
-            <p>People who can touch this server — and exactly what they're allowed to do.</p>
-            <ul id="subuser-list" class="user-list"></ul>
-            <form id="form-subuser" class="permission-form">
-              <label>
-                Username
-                <input name="username" required placeholder="Username" />
-              </label>
-              <fieldset>
-                <legend>Permissions</legend>
-                <div id="permission-options" class="permission-grid"></div>
-              </fieldset>
-              <button type="submit">Invite collaborator</button>
-            </form>
-            <p class="error" id="subusers-error" role="alert" hidden></p>
-          </div>
-
-          <div id="tab-settings" hidden>
-            <form id="form-settings">
-              <label
-                >Name
-                <input name="name" id="settings-name" required maxlength="64" />
-              </label>
-              <label
-                >Description
-                <input name="description" id="settings-desc" maxlength="500" />
-              </label>
-              <label data-admin-only hidden
-                >CPU (JVM processor count hint)
-                <input
-                  name="cpuWeight"
-                  id="settings-cpu"
-                  type="number"
-                  min="0"
-                  max="1000"
-                  step="10"
-                />
-                <span class="hint">
-                  0 is unlimited. A positive value is a percentage of one core and rounds up to
-                  whole cores (100 = 1 core, 300 = 3). This sizes the JVM's thread pools — it is not
-                  a kernel-level CPU quota, and it only applies to Java servers.
-                </span>
-              </label>
-              <label data-admin-only hidden
-                >Memory limit (MB)
-                <input name="memoryMb" id="settings-memory" type="number" min="128" max="1048576" />
-              </label>
-              <label data-admin-only hidden
-                >Disk quota (MB)
-                <input
-                  name="diskQuotaMb"
-                  id="settings-disk"
-                  type="number"
-                  min="256"
-                  max="10485760"
-                />
-              </label>
-              <p><button type="submit">Save settings</button></p>
-            </form>
-            <p>
-              <button type="button" id="btn-reinstall" class="secondary">
-                Reinstall server files
-              </button>
-            </p>
-            <p>
-              <button type="button" id="btn-delete-server" class="danger">
-                Delete this server
-              </button>
-            </p>
-            <p class="error" id="settings-error" role="alert" hidden></p>
+            </aside>
           </div>
         </section>
       </main>

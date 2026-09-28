@@ -2,7 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import type { Database } from "../infra/db/database.js";
 import type { AuthService, Principal } from "../modules/auth/service.js";
-import type { LocalProcessEngine, ConsoleLine } from "../modules/runtime/engine.js";
+import type { LocalProcessEngine, ConsoleLine, StatSample } from "../modules/runtime/engine.js";
 import { resolveEffectivePermissions } from "../modules/servers/permissions.js";
 import { intersectScopes } from "./middleware/authz.js";
 import { hasPermission } from "@renom/contracts";
@@ -130,12 +130,25 @@ export function attachConsoleGateway(
       void socket.join(`server:${serverId}`);
       socket.emit("console:history", { v: 1, lines: engine.history(serverId, 100) });
       const unsubs = socket.data.unsubs as Map<string, () => void>;
-      unsubs.set(
-        serverId,
-        engine.onLine(serverId, (line: ConsoleLine) => {
-          socket.volatile.emit("console:line", { v: 1, line });
-        }),
-      );
+      const offLine = engine.onLine(serverId, (line: ConsoleLine) => {
+        socket.volatile.emit("console:line", { v: 1, line });
+      });
+      // A new process starts a new console: tell every viewer to drop the
+      // previous run instead of stacking restarts into one endless log.
+      const offReset = engine.onReset(serverId, () => {
+        socket.emit("console:reset", { v: 1, serverId });
+      });
+      const offStats = engine.onStats(serverId, (stats: StatSample) => {
+        // Reliable, unlike console:line: a sample carries the one-shot state
+        // transition that tells the client to freeze its graphs, and a dropped
+        // frame would leave them claiming a dead server is still running.
+        socket.emit("stats", { v: 1, serverId, stats });
+      });
+      unsubs.set(serverId, () => {
+        offLine();
+        offReset();
+        offStats();
+      });
       live.get(socket.id)?.servers.add(serverId);
       ack?.({ ok: true });
     });

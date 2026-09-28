@@ -6,6 +6,7 @@ import type { ServersRepo } from "../servers/repo.js";
 import type { BlueprintRegistry } from "../blueprints/registry.js";
 import type { BlueprintVariable } from "../blueprints/schema.js";
 import { EngineError } from "../../shared/errors.js";
+import { perSecond, readNetworkCounters, readProcessReading } from "./stats.js";
 
 export type PowerAction = "start" | "stop" | "restart" | "kill";
 
@@ -16,7 +17,27 @@ export interface ConsoleLine {
   text: string;
 }
 
+/**
+ * One resource reading for a running server. `cpuPercent` and `memoryBytes`
+ * are measured per process; the network rates are this host's interface
+ * traffic, because a bare process has no per-process byte counters — the UI
+ * labels them as host traffic rather than attributing them to one server.
+ */
+export interface StatSample {
+  ts: number;
+  state: "offline" | "starting" | "running" | "stopping";
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  networkRxPerSec: number | null;
+  networkTxPerSec: number | null;
+}
+
 const HISTORY_LIMIT = 500;
+
+/** How often a running process is sampled while a client is watching. */
+const STATS_INTERVAL_MS = 2_000;
+/** Rolling window handed to the graphs: four minutes at the sample rate. */
+const STATS_HISTORY = 120;
 const LINE_MAX = 4096;
 
 function javaMajor(candidate: string): number | null {
@@ -102,6 +123,32 @@ interface LiveProcess {
   seq: number;
   listeners: Set<(line: ConsoleLine) => void>;
   stopping: boolean;
+  /** Rolling readings behind the live graphs. */
+  stats: StatSample[];
+  statsListeners: Set<(sample: StatSample) => void>;
+  /** Fired on every start so open viewers drop the previous run's console. */
+  resetListeners: Set<() => void>;
+  /** Previous cumulative readings — CPU and network are deltas between two. */
+  cpuMark: { value: number; at: number } | null;
+  netMark: { rx: number; tx: number; at: number } | null;
+  /** Last state pushed to stats listeners, so transitions are announced once. */
+  lastStatsState: StatSample["state"] | null;
+}
+
+function newSlot(): LiveProcess {
+  return {
+    proc: null,
+    history: [],
+    seq: 0,
+    listeners: new Set(),
+    stopping: false,
+    stats: [],
+    statsListeners: new Set(),
+    resetListeners: new Set(),
+    cpuMark: null,
+    netMark: null,
+    lastStatsState: null,
+  };
 }
 
 /**
@@ -114,13 +161,20 @@ interface LiveProcess {
  */
 export class LocalProcessEngine {
   private readonly live = new Map<string, LiveProcess>();
+  private readonly sampler: NodeJS.Timeout;
 
   constructor(
     private readonly db: Database,
     private readonly servers: ServersRepo,
     private readonly blueprints: BlueprintRegistry,
     private readonly dataDir: string,
-  ) {}
+  ) {
+    // Unref'd so a sampling tick can never be the reason the panel stays up,
+    // and swallowed so a tick that lands during shutdown (a closed database
+    // makes stateOf() throw) cannot become an unhandled rejection.
+    this.sampler = setInterval(() => this.sampleAll().catch(() => undefined), STATS_INTERVAL_MS);
+    this.sampler.unref();
+  }
 
   stateOf(serverId: string): "offline" | "starting" | "running" | "stopping" {
     const live = this.live.get(serverId);
@@ -237,14 +291,22 @@ export class LocalProcessEngine {
     mkdirSync(cwd, { recursive: true });
 
     this.servers.setRuntimeState(serverId, "starting");
-    // Reuse a lazy slot (history + listeners survive restarts) or create one.
+    // Reuse a lazy slot (listeners survive restarts) or create one.
     let entry = this.live.get(serverId);
     if (!entry) {
-      entry = { proc: null, history: [], seq: 0, listeners: new Set(), stopping: false };
+      entry = newSlot();
       this.live.set(serverId, entry);
     } else {
       entry.stopping = false;
     }
+    // A new process means a new console. The previous run's scrollback is
+    // dropped here and viewers are told, so a restart starts from zero instead
+    // of stacking every run that server has ever had.
+    entry.history = [];
+    entry.stats = [];
+    entry.cpuMark = null;
+    entry.netMark = null;
+    for (const cb of entry.resetListeners) cb();
     const slot: LiveProcess = entry;
     const emit = (stream: ConsoleLine["stream"], text: string) => {
       const line: ConsoleLine = {
@@ -433,7 +495,7 @@ export class LocalProcessEngine {
     // Lazy slot: subscribers and history survive processes coming and going.
     let live = this.live.get(serverId);
     if (!live) {
-      live = { proc: null, history: [], seq: 0, listeners: new Set(), stopping: false };
+      live = newSlot();
       this.live.set(serverId, live);
     }
     live.listeners.add(cb);
@@ -441,6 +503,106 @@ export class LocalProcessEngine {
     return () => {
       slot.listeners.delete(cb);
     };
+  }
+
+  onStats(serverId: string, cb: (sample: StatSample) => void): () => void {
+    const live = this.live.get(serverId) ?? this.ensureSlot(serverId);
+    live.statsListeners.add(cb);
+    const slot = live;
+    return () => {
+      slot.statsListeners.delete(cb);
+    };
+  }
+
+  /** Fired on every start, so an open console drops the previous run. */
+  onReset(serverId: string, cb: () => void): () => void {
+    const live = this.live.get(serverId) ?? this.ensureSlot(serverId);
+    live.resetListeners.add(cb);
+    const slot = live;
+    return () => {
+      slot.resetListeners.delete(cb);
+    };
+  }
+
+  private ensureSlot(serverId: string): LiveProcess {
+    const existing = this.live.get(serverId);
+    if (existing) return existing;
+    const slot = newSlot();
+    this.live.set(serverId, slot);
+    return slot;
+  }
+
+  /**
+   * One sampling pass over every tracked server. A state change is published
+   * on its own tick — a server that dies between samples still tells its
+   * viewers, instead of leaving a frozen graph claiming it is running.
+   */
+  private async sampleAll(): Promise<void> {
+    for (const [serverId, slot] of this.live) {
+      // Push-driven, like Pterodactyl's per-connection sampling: a server
+      // nobody is watching costs the host nothing.
+      if (slot.statsListeners.size === 0) continue;
+      const state = this.stateOf(serverId);
+      const pid = slot.proc?.pid;
+      if (state !== "running" || pid === undefined) {
+        // A state change is published on its own tick, so a server that dies
+        // between samples still tells its viewers instead of leaving a frozen
+        // graph claiming it is running.
+        if (slot.lastStatsState !== state) {
+          this.publish(slot, {
+            ts: Date.now(),
+            state,
+            cpuPercent: null,
+            memoryBytes: null,
+            networkRxPerSec: null,
+            networkTxPerSec: null,
+          });
+        }
+        continue;
+      }
+      const now = Date.now();
+      const [reading, network] = await Promise.all([
+        readProcessReading(pid),
+        readNetworkCounters(),
+      ]);
+      const sample: StatSample = {
+        ts: now,
+        state,
+        cpuPercent: null,
+        memoryBytes: reading?.memoryBytes ?? null,
+        networkRxPerSec: null,
+        networkTxPerSec: null,
+      };
+      if (reading && slot.cpuMark) {
+        sample.cpuPercent = perSecond(
+          { value: slot.cpuMark.value, at: slot.cpuMark.at },
+          { value: reading.cpuMs, at: now },
+        );
+      }
+      if (network) {
+        if (slot.netMark) {
+          const at = { at: slot.netMark.at };
+          sample.networkRxPerSec = perSecond(
+            { value: slot.netMark.rx, ...at },
+            { value: network.rxBytes, at: now },
+          );
+          sample.networkTxPerSec = perSecond(
+            { value: slot.netMark.tx, ...at },
+            { value: network.txBytes, at: now },
+          );
+        }
+        slot.netMark = { rx: network.rxBytes, tx: network.txBytes, at: now };
+      }
+      slot.cpuMark = reading ? { value: reading.cpuMs, at: now } : null;
+      this.publish(slot, sample);
+    }
+  }
+
+  private publish(slot: LiveProcess, sample: StatSample): void {
+    slot.lastStatsState = sample.state;
+    slot.stats.push(sample);
+    if (slot.stats.length > STATS_HISTORY) slot.stats.splice(0, slot.stats.length - STATS_HISTORY);
+    for (const cb of slot.statsListeners) cb(sample);
   }
 
   /**

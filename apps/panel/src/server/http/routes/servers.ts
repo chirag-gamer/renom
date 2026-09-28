@@ -48,6 +48,24 @@ const PLUGIN_TUNNEL_BLUEPRINTS: Record<string, true> = {
   velocity: true,
 };
 
+/**
+ * Store the Minecraft version the installer actually resolved.
+ *
+ * Blueprints ship `mcVersion: "latest"`, which no Modrinth query can filter
+ * on — before this, a brand new Paper server could never search or install a
+ * plugin. The installer writes the concrete build it downloaded back into its
+ * variable map, and this is where that becomes durable.
+ */
+function persistInstalledVersion(
+  servers: ServersRepo,
+  serverId: string,
+  vars: Record<string, string> | null,
+): void {
+  const version = vars?.["mcVersion"];
+  if (!version || version === "latest") return;
+  servers.setVariable(serverId, "mcVersion", version);
+}
+
 export interface ServersDeps {
   db: Database;
   users: UsersRepo;
@@ -186,11 +204,12 @@ export function serversRouter(deps: ServersDeps): Router {
       const hasBlueprintInstall = doc.install.length > 0;
       const wantsTunnel = pluginCapable;
 
+      let installVars: Record<string, string> | null = null;
       if ((hasBlueprintInstall || wantsTunnel) && process.env.NODE_ENV !== "test") {
         const pending: Promise<unknown>[] = [];
 
         if (hasBlueprintInstall) {
-          const installVars: Record<string, string> = {};
+          installVars = {};
           for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
           if (alloc) {
             installVars["allocation.ip"] = alloc.ip;
@@ -264,6 +283,7 @@ export function serversRouter(deps: ServersDeps): Router {
         servers.setStatus(created.id, "installing");
         void Promise.all(pending)
           .then(() => {
+            persistInstalledVersion(servers, created.id, installVars);
             servers.setStatus(created.id, "ready");
             audit.record({ event: "server.install.done", serverId: created.id });
           })
@@ -382,6 +402,7 @@ export function serversRouter(deps: ServersDeps): Router {
       });
       try {
         await runInstallOps(doc, { serverId: id, dir: join(dataDir, "servers", id), vars });
+        persistInstalledVersion(servers, id, vars);
         servers.setStatus(id, "ready");
         audit.record({ event: "server.install.done", serverId: id });
       } catch (err) {

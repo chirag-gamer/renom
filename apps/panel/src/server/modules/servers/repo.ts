@@ -256,6 +256,16 @@ export class ServersRepo {
       .run(status, Date.now(), id);
   }
 
+  /** Store one blueprint variable override for a server. */
+  setVariable(id: string, key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(id, key, value);
+  }
+
   /** Record an explicit human EULA acceptance (never implied, always audited at the route). */
   recordEula(id: string, ip: string | null): void {
     this.db
