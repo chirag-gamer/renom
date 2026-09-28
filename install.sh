@@ -358,6 +358,9 @@ if [ "$ADMIN_EXISTS" = "yes" ]; then
     say "  ${RESET_PASS}"
     say "Every existing session for that account has been signed out."
     unset RESET_PASS
+
+    say "To do this again later: run ./install.sh (renom.sh option 2 only updates code,"
+    say "it does not reset passwords)."
   fi
 elif [ "$ADMIN_EXISTS" = "unknown" ]; then
   warn "Could not check for existing accounts. Create the admin from the web page on first open"
@@ -398,3 +401,5 @@ say "Then open:       http://${DISPLAY_HOST}:${PORT}"
 say ""
 say "Keep it running with systemd, pm2, or screen — see README.md."
 say "Back up ${DATA_DIR}/panel.db and you can rebuild everything else from this folder."
+say "Forgot the admin password? Re-run ./install.sh — it will offer a new one."
+say "Use ./renom.sh option 2 to update code only; it does not reset passwords."
