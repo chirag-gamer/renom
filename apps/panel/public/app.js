@@ -634,15 +634,20 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
 /* ---------- admin: manage one server ---------- */
 
 let editingAdminServerId = "";
+let adminServerRequest = 0;
 
 async function refreshAdminServer(serverId) {
   editingAdminServerId = serverId;
+  // A generation, not an id comparison: two visits to the same server would
+  // otherwise let the first, slower response repaint the reopened form with
+  // values the admin has already moved past.
+  const request = ++adminServerRequest;
   const err = document.getElementById("admin-server-error");
   err.hidden = true;
   const { status, data } = await api(`/servers/${encodeURIComponent(serverId)}`, {
     token: store.token,
   });
-  if (editingAdminServerId !== serverId) return;
+  if (request !== adminServerRequest) return;
   if (status !== 200) {
     fail(err, describeProblem(status, data));
     return;
@@ -1427,10 +1432,24 @@ function joinConsoleSocket() {
   const generation = serverGeneration;
   const serverId = currentServer.id;
   socket = window.io({ path: "/socket.io/", auth: { token: store.token } });
-  socket.on("connect", () => {
-    // Transport is up; the note must reflect the server again, not "connected".
-    if (generation === serverGeneration) applyConsoleNote();
-  });
+  // Re-join on every (re)connect, not just the first: a reconnect lands on a
+  // brand new server-side socket that has never joined the room, so without
+  // this the console and the graphs stay dead until a manual page refresh.
+  const join = () => {
+    if (generation !== serverGeneration) return;
+    socket.emit("console:join", serverId, (res) => {
+      if (generation !== serverGeneration) return;
+      if (!res || !res.ok) {
+        note.textContent =
+          res && res.reason === "suspended"
+            ? "This server is suspended."
+            : "Live updates unavailable.";
+      } else {
+        applyConsoleNote();
+      }
+    });
+  };
+  socket.on("connect", join);
   socket.on("disconnect", () => {
     if (generation === serverGeneration) {
       note.textContent = "Live connection closed — refresh to see new output.";
@@ -1461,18 +1480,10 @@ function joinConsoleSocket() {
     if (generation !== serverGeneration || msg?.serverId !== serverId) return;
     pushStatSample(msg.stats);
   });
+
   socket.on("console:revoked", () => {
     if (generation === serverGeneration) {
       note.textContent = "Your access to this console changed — ask the owner if you need it back.";
-    }
-  });
-  socket.emit("console:join", serverId, (res) => {
-    if (generation !== serverGeneration) return;
-    if (!res || !res.ok) {
-      note.textContent =
-        res && res.reason === "suspended"
-          ? "This server is suspended."
-          : "Live updates unavailable.";
     }
   });
 }

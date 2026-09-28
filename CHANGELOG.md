@@ -19,8 +19,9 @@ All notable changes to Renom are documented here. Format based on
   non-loopback interface counters. **The network figures are host-wide, not per-server** — a process
   outside a container has no per-process byte counters, so the UI labels them as host traffic rather
   than attributing them to one server. Sampling only runs while a client is watching.
-- Console no longer stacks runs: starting, restarting, stopping, or killing a server clears the
-  console buffer, so each run reads from zero instead of appending every run the server has had.
+- Console no longer stacks runs: starting or restarting a server clears the console buffer, so each
+  run reads from zero instead of appending every run the server has had. Stopping or killing keeps the
+  last run's scrollback on screen until the next start.
 - Admin: clicking a server in the admin list opens a dedicated, admin-only management view (name,
   description, CPU, memory, disk) instead of jumping into that server's console. A separate "Console"
   control opens the server. The user-management pattern is unchanged.

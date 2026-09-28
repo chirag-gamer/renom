@@ -47,6 +47,11 @@ body {
   grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
 }
+/* The rail is hidden on sign-in and first-run setup, which would otherwise
+   auto-place the only remaining child into the fixed 248px track. */
+.app-shell:has(.sidebar[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
 .sidebar {
   /* Pinned to the viewport and scrolled on its own: a tall page (a long
      console, a long file list) must not push the sign-out out of reach. */

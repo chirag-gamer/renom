@@ -36,8 +36,6 @@ const HISTORY_LIMIT = 500;
 
 /** How often a running process is sampled while a client is watching. */
 const STATS_INTERVAL_MS = 2_000;
-/** Rolling window handed to the graphs: four minutes at the sample rate. */
-const STATS_HISTORY = 120;
 const LINE_MAX = 4096;
 
 function javaMajor(candidate: string): number | null {
@@ -123,8 +121,6 @@ interface LiveProcess {
   seq: number;
   listeners: Set<(line: ConsoleLine) => void>;
   stopping: boolean;
-  /** Rolling readings behind the live graphs. */
-  stats: StatSample[];
   statsListeners: Set<(sample: StatSample) => void>;
   /** Fired on every start so open viewers drop the previous run's console. */
   resetListeners: Set<() => void>;
@@ -142,7 +138,6 @@ function newSlot(): LiveProcess {
     seq: 0,
     listeners: new Set(),
     stopping: false,
-    stats: [],
     statsListeners: new Set(),
     resetListeners: new Set(),
     cpuMark: null,
@@ -162,6 +157,8 @@ function newSlot(): LiveProcess {
 export class LocalProcessEngine {
   private readonly live = new Map<string, LiveProcess>();
   private readonly sampler: NodeJS.Timeout;
+  /** Guards against overlapping sampling passes; see sampleAll. */
+  private sampling = false;
 
   constructor(
     private readonly db: Database,
@@ -303,7 +300,6 @@ export class LocalProcessEngine {
     // dropped here and viewers are told, so a restart starts from zero instead
     // of stacking every run that server has ever had.
     entry.history = [];
-    entry.stats = [];
     entry.cpuMark = null;
     entry.netMark = null;
     for (const cb of entry.resetListeners) cb();
@@ -538,6 +534,18 @@ export class LocalProcessEngine {
    * viewers, instead of leaving a frozen graph claiming it is running.
    */
   private async sampleAll(): Promise<void> {
+    // The readers spawn a process on Windows and can outlast the interval, so
+    // an overlapping pass would race the marks and publish out-of-order rates.
+    if (this.sampling) return;
+    this.sampling = true;
+    try {
+      await this.samplePass();
+    } finally {
+      this.sampling = false;
+    }
+  }
+
+  private async samplePass(): Promise<void> {
     for (const [serverId, slot] of this.live) {
       // Push-driven, like Pterodactyl's per-connection sampling: a server
       // nobody is watching costs the host nothing.
@@ -549,6 +557,8 @@ export class LocalProcessEngine {
         // between samples still tells its viewers instead of leaving a frozen
         // graph claiming it is running.
         if (slot.lastStatsState !== state) {
+          slot.cpuMark = null;
+          slot.netMark = null;
           this.publish(slot, {
             ts: Date.now(),
             state,
@@ -565,6 +575,14 @@ export class LocalProcessEngine {
         readProcessReading(pid),
         readNetworkCounters(),
       ]);
+      // The reads above await, and the process can exit or be replaced while
+      // they run. Publishing now would put a stale "running" sample after the
+      // offline or reset frame that followed it, contaminating the new run.
+      if (slot.proc?.pid !== pid || this.stateOf(serverId) !== "running") {
+        slot.cpuMark = null;
+        slot.netMark = null;
+        continue;
+      }
       const sample: StatSample = {
         ts: now,
         state,
@@ -600,8 +618,6 @@ export class LocalProcessEngine {
 
   private publish(slot: LiveProcess, sample: StatSample): void {
     slot.lastStatsState = sample.state;
-    slot.stats.push(sample);
-    if (slot.stats.length > STATS_HISTORY) slot.stats.splice(0, slot.stats.length - STATS_HISTORY);
     for (const cb of slot.statsListeners) cb(sample);
   }
 

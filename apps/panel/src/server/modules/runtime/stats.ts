@@ -24,8 +24,6 @@ const execFileAsync = promisify(execFile);
 
 /** Linux reports CPU time in clock ticks; USER_HZ is 100 on every supported ABI. */
 const CLOCK_TICKS_PER_SECOND = 100;
-/** Linux base page size (4 KiB) on x86-64 and arm64. */
-const PAGE_SIZE = 4096;
 
 export interface ProcessReading {
   /** Total CPU time the process has consumed, in milliseconds. */
@@ -41,9 +39,9 @@ export interface NetworkCounters {
 }
 
 async function readLinuxProcess(pid: number): Promise<ProcessReading | null> {
-  const [stat, statm] = await Promise.all([
+  const [stat, status] = await Promise.all([
     readFile(`/proc/${pid}/stat`, "utf8"),
-    readFile(`/proc/${pid}/statm`, "utf8"),
+    readFile(`/proc/${pid}/status`, "utf8"),
   ]);
   // The comm field is parenthesised and may contain spaces, so the field list
   // is split after the final ')' — everything before it is pid + comm.
@@ -54,10 +52,13 @@ async function readLinuxProcess(pid: number): Promise<ProcessReading | null> {
   const utime = Number(tail[11]);
   const stime = Number(tail[12]);
   if (!Number.isFinite(utime) || !Number.isFinite(stime)) return null;
-  const residentPages = Number(statm.trim().split(/\s+/)[1]);
+  // VmRSS is already in kibibytes. `statm` counts pages, which would need a
+  // page-size constant — and 4 KiB is wrong on 16 KiB and 64 KiB arm64 hosts,
+  // understating memory by 4x or 16x there.
+  const rssKb = Number(/^VmRSS:\s+(\d+)\s+kB$/m.exec(status)?.[1]);
   return {
     cpuMs: ((utime + stime) / CLOCK_TICKS_PER_SECOND) * 1000,
-    memoryBytes: Number.isFinite(residentPages) ? residentPages * PAGE_SIZE : 0,
+    memoryBytes: Number.isFinite(rssKb) ? rssKb * 1024 : 0,
   };
 }
 
