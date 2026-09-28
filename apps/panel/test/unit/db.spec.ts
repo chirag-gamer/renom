@@ -89,13 +89,16 @@ describe("database layer", () => {
       db.prepare(
         "INSERT INTO blueprints (id,slug,name,category,source,created_at,updated_at) VALUES ('b1','paper','Paper','minecraft-java','builtin',0,0)",
       ).run();
-      for (const id of ["srv-a", "srv-b"]) {
+      // Claim order is deliberately the OPPOSITE of id order: srv-z claims
+      // the name first, and srv-a (lexicographically smaller) claims second.
+      // Correct cleanup keeps the first claim — srv-z — not the smaller id.
+      for (const id of ["srv-z", "srv-a"]) {
         db.prepare(
           `INSERT INTO servers (id,name,owner_id,blueprint_id,blueprint_version_tag,image_ref,memory_mb,disk_quota_mb,created_at,updated_at)
            VALUES (?,?,'u1','b1','v1','img',1024,1024,0,0)`,
         ).run(id, id);
       }
-      for (const id of ["srv-a", "srv-b"]) {
+      for (const id of ["srv-z", "srv-a"]) {
         db.prepare(
           "INSERT INTO server_variables (server_id,key,value) VALUES (?,'tunnel.endpoint','vivid-lagoon-9784')",
         ).run(id);
@@ -108,7 +111,7 @@ describe("database layer", () => {
       const left = upgraded
         .prepare("SELECT server_id FROM server_variables WHERE key = 'tunnel.endpoint'")
         .all() as Array<{ server_id: string }>;
-      expect(left.map((r) => r.server_id)).toEqual(["srv-a"]);
+      expect(left.map((r) => r.server_id)).toEqual(["srv-z"]);
       const applied = upgraded
         .prepare("SELECT name FROM _migrations WHERE name = 'tunnel-endpoint-unique'")
         .get();

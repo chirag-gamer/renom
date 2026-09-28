@@ -24,13 +24,14 @@ export const tunnelEndpointUniqueMigration: Migration = {
   up: (db) => {
     // Installs that ran the old, unreserved code could already hold one name
     // on several servers, and CREATE UNIQUE INDEX aborts the whole migration
-    // (so the panel would not boot). Keep the lowest server_id for each name
-    // and drop the losers, then verify none remain before creating the index.
+    // (so the panel would not boot). Keep the earliest claim for each name and
+    // drop the losers. `rowid` is insertion order, so this is the first
+    // server that claimed the name — it does not rely on the server-id format.
     db.exec(`
       DELETE FROM server_variables
       WHERE key = 'tunnel.endpoint'
-        AND server_id NOT IN (
-          SELECT MIN(server_id) FROM server_variables
+        AND rowid NOT IN (
+          SELECT MIN(rowid) FROM server_variables
           WHERE key = 'tunnel.endpoint'
           GROUP BY value
         )
