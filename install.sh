@@ -341,7 +341,24 @@ say ""
 # --- admin account, only when the panel has no users yet.
 ADMIN_EXISTS="$(DATA_DIR="$DATA_DIR" npm run --silent setup:admin --workspace @renom/panel -- --check 2>/dev/null || echo unknown)"
 if [ "$ADMIN_EXISTS" = "yes" ]; then
-  info "Accounts already exist — skipping admin creation."
+  # An existing account is a locked door, not an error. Offer to set a new
+  # admin password so a lost one is recoverable without touching the database.
+  RESET_ADMIN="$(ask "Admin username to reset (Enter to skip)" "")"
+  if [ -z "$RESET_ADMIN" ]; then
+    info "Password reset skipped."
+  else
+    RESET_PASS="$(node -e 'console.log(require("node:crypto").randomBytes(12).toString("base64url").slice(0,16))')"
+    export RENOM_ADMIN_PASSWORD="$RESET_PASS"
+    DATA_DIR="$DATA_DIR" \
+      npm run --silent setup:admin --workspace @renom/panel -- \
+      --username "$RESET_ADMIN" --reset-password || die "Password reset failed."
+    unset RENOM_ADMIN_PASSWORD
+    say ""
+    say "New password for ${RESET_ADMIN} (shown once — save it now):"
+    say "  ${RESET_PASS}"
+    say "Every existing session for that account has been signed out."
+    unset RESET_PASS
+  fi
 elif [ "$ADMIN_EXISTS" = "unknown" ]; then
   warn "Could not check for existing accounts. Create the admin from the web page on first open"
   warn "using this setup token: ${SETUP_TOKEN}"
