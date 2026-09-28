@@ -241,13 +241,16 @@ export function serversRouter(deps: ServersDeps): Router {
                 })
                 .catch((err: unknown) => {
                   // Best-effort: a failed tunnel must never fail server
-                  // creation, but the half-claimed name is released so it is
-                  // not stranded and never advertised.
+                  // creation. Release the claim this install made, and only
+                  // that one — the tunnel route can store a different
+                  // endpoint while the server is still installing, and
+                  // deleting that would destroy a newer setting.
                   deps.db
                     .prepare(
-                      "DELETE FROM server_variables WHERE server_id = ? AND key IN ('tunnel.provider','tunnel.endpoint')",
+                      `DELETE FROM server_variables
+                       WHERE server_id = ? AND key = 'tunnel.endpoint' AND value = ?`,
                     )
-                    .run(created.id);
+                    .run(created.id, endpoint);
                   audit.record({
                     event: "server.tunnel.enable_failed",
                     serverId: created.id,

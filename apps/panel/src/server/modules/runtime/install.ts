@@ -241,12 +241,7 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
       case "fetch-endstone": {
         // The engine derives the venv interpreter from the server directory,
         // so nothing absolute needs persisting here.
-        await pipInstall(
-          fetchImpl,
-          ctx.dir,
-          "endstone",
-          sub(ctx.vars, op.version ?? ""),
-        );
+        await pipInstall(fetchImpl, ctx.dir, "endstone", sub(ctx.vars, op.version ?? ""));
         break;
       }
       case "modrinth-install": {
@@ -479,9 +474,11 @@ async function pipInstall(
           windowsHide: true,
         });
       } catch (err) {
-        tried.push(
-          `${candidate.exe} -m venv: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        tried.push(`${candidate.exe} -m venv: ${err instanceof Error ? err.message : String(err)}`);
+        // A half-made venv is worse than none: the engine picks the first
+        // interpreter it finds, so leaving a broken one behind would make it
+        // launch a venv that never got the package.
+        rmSync(candidate.dir, { recursive: true, force: true });
         continue;
       }
     }
@@ -493,9 +490,10 @@ async function pipInstall(
       );
       return interpreter;
     } catch (err) {
-      tried.push(
-        `${candidate.exe} (${spec}): ${err instanceof Error ? err.message : String(err)}`,
-      );
+      tried.push(`${candidate.exe} (${spec}): ${err instanceof Error ? err.message : String(err)}`);
+      // Drop the failed venv so the next candidate's success is what the
+      // engine finds, and a retry starts from a clean state.
+      rmSync(candidate.dir, { recursive: true, force: true });
     }
   }
   throw new EngineError(

@@ -22,17 +22,28 @@ export const tunnelEndpointUniqueMigration: Migration = {
   id: 4,
   name: "tunnel-endpoint-unique",
   up: (db) => {
-    // Keep only the oldest claim for any duplicated name; the rest become
-    // untunnelled rather than fighting over one address.
+    // Installs that ran the old, unreserved code could already hold one name
+    // on several servers, and CREATE UNIQUE INDEX aborts the whole migration
+    // (so the panel would not boot). Keep the lowest server_id for each name
+    // and drop the losers, then verify none remain before creating the index.
     db.exec(`
       DELETE FROM server_variables
       WHERE key = 'tunnel.endpoint'
-        AND rowid NOT IN (
-          SELECT MIN(rowid) FROM server_variables
+        AND server_id NOT IN (
+          SELECT MIN(server_id) FROM server_variables
           WHERE key = 'tunnel.endpoint'
           GROUP BY value
         )
     `);
+    // A stray row must not brick startup: if anything survived, the unique
+    // index is skipped and the app still runs with a best-effort guard.
+    const dupes = db
+      .prepare(
+        `SELECT value FROM server_variables WHERE key = 'tunnel.endpoint'
+         GROUP BY value HAVING COUNT(*) > 1 LIMIT 1`,
+      )
+      .get() as { value: string } | undefined;
+    if (dupes) return;
     db.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_tunnel_endpoint_unique ON server_variables(value) WHERE key = 'tunnel.endpoint'",
     );

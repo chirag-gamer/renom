@@ -116,11 +116,13 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       try {
         await installPlugin(join(dataDir, "servers", id));
       } catch (err) {
-        // The name is reserved but the plugin did not land: drop the claim so
-        // the name is not stranded, and let the caller retry.
+        // The plugin did not land. Release the claim, but ONLY the one this
+        // request wrote: a later request may already have stored a different
+        // endpoint, and deleting that would destroy a newer setting.
         db.prepare(
-          "DELETE FROM server_variables WHERE server_id = ? AND key IN ('tunnel.provider','tunnel.endpoint')",
-        ).run(id);
+          `DELETE FROM server_variables
+           WHERE server_id = ? AND key = 'tunnel.endpoint' AND value = ?`,
+        ).run(id, endpoint);
         throw err;
       }
       audit.record({

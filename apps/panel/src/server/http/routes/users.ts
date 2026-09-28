@@ -103,7 +103,13 @@ export function usersRouter(
       if (!target) throw new NotFoundError("User not found");
       const owned = servers
         .listOwned(target.id)
-        .map((server) => toPublicServer(server, servers.primaryAllocation(server.id), servers.hostIpFor(server.node_id)));
+        .map((server) =>
+          toPublicServer(
+            server,
+            servers.primaryAllocation(server.id),
+            servers.hostIpFor(server.node_id),
+          ),
+        );
       res.json({ user: toPublicUserWithQuotas(target), servers: owned });
     } catch (e) {
       next(e);

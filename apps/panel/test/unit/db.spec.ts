@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openAndMigrate, openDatabase } from "../../src/server/infra/db/index.js";
+import { openAndMigrate, openDatabase, allMigrations } from "../../src/server/infra/db/index.js";
 import { runMigrations } from "../../src/server/infra/db/migrations.js";
 
 const dirs: string[] = [];
@@ -71,6 +71,50 @@ describe("database layer", () => {
       setVar.run("srv-b", "tunnel.endpoint", "amber-meadow-1234");
     } finally {
       db.close();
+    }
+  });
+  it("survives pre-existing duplicate endpoints without bricking boot", () => {
+    // Reproduces an install that ran the old unreserved code: the same name
+    // stored on two servers. The migration must clean it up and still apply.
+    const file = tempDb();
+    const db = openDatabase(file);
+    runMigrations(db, allMigrations.slice(0, 3));
+    try {
+      db.prepare(
+        "INSERT INTO nodes (id,name,data_root,backup_root,status,created_at) VALUES ('local','Local','/d','/b','online',0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u1','alice','owner',0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO blueprints (id,slug,name,category,source,created_at,updated_at) VALUES ('b1','paper','Paper','minecraft-java','builtin',0,0)",
+      ).run();
+      for (const id of ["srv-a", "srv-b"]) {
+        db.prepare(
+          `INSERT INTO servers (id,name,owner_id,blueprint_id,blueprint_version_tag,image_ref,memory_mb,disk_quota_mb,created_at,updated_at)
+           VALUES (?,?,'u1','b1','v1','img',1024,1024,0,0)`,
+        ).run(id, id);
+      }
+      for (const id of ["srv-a", "srv-b"]) {
+        db.prepare(
+          "INSERT INTO server_variables (server_id,key,value) VALUES (?,'tunnel.endpoint','vivid-lagoon-9784')",
+        ).run(id);
+      }
+    } finally {
+      db.close();
+    }
+    const upgraded = openAndMigrate(file);
+    try {
+      const left = upgraded
+        .prepare("SELECT server_id FROM server_variables WHERE key = 'tunnel.endpoint'")
+        .all() as Array<{ server_id: string }>;
+      expect(left.map((r) => r.server_id)).toEqual(["srv-a"]);
+      const applied = upgraded
+        .prepare("SELECT name FROM _migrations WHERE name = 'tunnel-endpoint-unique'")
+        .get();
+      expect(applied).toBeDefined();
+    } finally {
+      upgraded.close();
     }
   });
 

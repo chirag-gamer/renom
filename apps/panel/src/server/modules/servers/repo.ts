@@ -301,9 +301,8 @@ export class ServersRepo {
    * change to `nodes.public_ip` takes effect without a restart.
    */
   hostIpFor(nodeId: string): string {
-    const row = this.db
-      .prepare("SELECT public_ip FROM nodes WHERE id = ?")
-      .get(nodeId) as { public_ip: string | null } | undefined;
+    const row = this.db.prepare("SELECT public_ip FROM nodes WHERE id = ?").get(nodeId) as
+      { public_ip: string | null } | undefined;
     const configured = row?.public_ip?.trim();
     if (configured && configured !== "0.0.0.0" && configured !== "::") {
       return hostAddress(configured);
