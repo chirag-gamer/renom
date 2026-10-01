@@ -92,7 +92,11 @@ export function powerRouter(deps: PowerDeps): Router {
       });
       assertSuspendedReadable(req, res);
       const limit = Math.min(Math.max(Number(req.query.limit ?? 100) || 100, 1), 500);
-      res.json({ lines: engine.history(req.params.id ?? "", limit) });
+      const id = req.params.id ?? "";
+      // `run` travels with the lines so the client knows which process it is
+      // looking at. Without it a restart between this read and the socket
+      // join leaves the replay with no boundary to notice.
+      res.json({ lines: engine.history(id, limit), run: engine.runId(id) });
     })().catch(next);
   });
 

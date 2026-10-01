@@ -1427,8 +1427,12 @@ function adoptRun(run) {
   }
   if (run === consoleRun) return;
   consoleRun = run;
+  // Deliberately NOT rewinding consoleSeq here. The engine's counter is
+  // monotonic across runs, so the new run's lines are always above the
+  // watermark and the replay that may follow passes on its own. Rewinding
+  // would instead let a straggler from the dying process — one that raced
+  // ahead of the reset — land in the console just cleared.
   document.getElementById("console-log").textContent = "";
-  consoleSeq = 0;
   resetStatSeries();
 }
 
@@ -1443,6 +1447,11 @@ async function refreshConsoleHistory(generation) {
     appendLine("(You don't have permission to see this server's console.)");
     return;
   }
+  // Adopt the run before the socket join arrives: if the server restarts
+  // between this read and that replay, the replay names a different run and
+  // the view has to start over. Without it the first replay would always be a
+  // "first sight" and would be appended to whatever is already on screen.
+  adoptRun(data.run);
   resetConsoleHistory(data.lines);
 }
 
@@ -1493,10 +1502,8 @@ function joinConsoleSocket() {
   socket.on("console:line", (msg) => appendConsoleLine(msg.line, generation));
   // A restart is a new run: the engine drops the old scrollback and says so,
   // so the console starts from zero instead of stacking every run the server
-  // has ever had. `adoptRun` also rewinds the seq watermark, which is safe
-  // because the engine never reuses seq values: it only lets the new run's
-  // replay through, and the previous run is already gone from both the DOM
-  // and the server's buffer.
+  // has ever had. No replay follows a live reset, so the seq watermark is
+  // left where it is — see adoptRun for why rewinding it would be wrong here.
   socket.on("console:reset", (msg) => {
     if (generation !== serverGeneration) return;
     adoptRun(msg?.run);

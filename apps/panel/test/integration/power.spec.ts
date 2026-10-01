@@ -218,6 +218,34 @@ describe("power + console", () => {
     }
   });
 
+  it("console history carries the run id so a client can spot a restart", async () => {
+    const id = await makeServer("echo-run");
+    try {
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" })
+        .expect(200);
+      const first = await request(app)
+        .get(`/api/v3/servers/${id}/console/history?limit=200`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(typeof first.body.run).toBe("number");
+
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "restart" })
+        .expect(200);
+
+      const second = await request(app)
+        .get(`/api/v3/servers/${id}/console/history?limit=200`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(second.body.run).toBeGreaterThan(first.body.run);
+    } finally {
+      await stopQuiet(id);
+    }
+  });
+
   it("kill ends the process; suspended servers refuse power", async () => {
     const id = await makeServer("echo-kill");
     try {

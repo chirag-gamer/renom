@@ -632,7 +632,16 @@ export class LocalProcessEngine {
 
   private publish(slot: LiveProcess, sample: StatSample): void {
     slot.lastStatsState = sample.state;
-    for (const cb of slot.statsListeners) cb(sample);
+    // A listener that throws must not abort the pass: the loop covers every
+    // tracked server, so one bad subscriber would cost every other server its
+    // readings until the next tick.
+    for (const cb of slot.statsListeners) {
+      try {
+        cb(sample);
+      } catch {
+        /* a closed or wedged socket — the next tick is 2s away */
+      }
+    }
   }
 
   /**
