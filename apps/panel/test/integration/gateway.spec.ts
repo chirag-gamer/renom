@@ -130,6 +130,35 @@ describe("console gateway", () => {
     await ctx.engine.stop(serverId);
   });
 
+  it("stamps the join replay with a run id that advances on restart", async () => {
+    // A client that reconnects after a restart cannot hear the reset event
+    // that happened while it was offline, so the replay has to say which
+    // process it belongs to. Without this field the reconnect bug returns.
+    await ctx.engine.start(serverId);
+    const socket = connect(ownerToken);
+    await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+
+    const firstReplay = new Promise<{ v: number; run: number }>((resolve) =>
+      socket.on("console:history", resolve),
+    );
+    expect(
+      (await new Promise<{ ok: boolean }>((r) => socket.emit("console:join", serverId, r))).ok,
+    ).toBe(true);
+    const first = await firstReplay;
+    expect(typeof first.run).toBe("number");
+
+    await ctx.engine.restart(serverId);
+
+    const secondReplay = new Promise<{ v: number; run: number }>((resolve) =>
+      socket.on("console:history", resolve),
+    );
+    await new Promise<{ ok: boolean }>((r) => socket.emit("console:join", serverId, r));
+    expect((await secondReplay).run).toBeGreaterThan(first.run);
+
+    socket.close();
+    await ctx.engine.stop(serverId);
+  });
+
   it("returns not-found for unknown server ids (no id oracle)", async () => {
     ctx.users.create({ username: "mallory", password: "mallory-pass", role: "user" });
     const socket = connect(ownerToken);

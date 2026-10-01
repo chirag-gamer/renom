@@ -256,6 +256,27 @@ export class ServersRepo {
       .run(status, Date.now(), id);
   }
 
+  /**
+   * Store one blueprint variable override, but only if it still holds
+   * `expected` — or holds nothing at all. Used to record a value the panel
+   * derived without stomping an edit a human made in the meantime.
+   */
+  setVariableIfUnchanged(id: string, key: string, value: string, expected: string | null): boolean {
+    const current = (
+      this.db
+        .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = ?")
+        .get(id, key) as { value: string } | undefined
+    )?.value;
+    if (current !== undefined && current !== expected) return false;
+    this.db
+      .prepare(
+        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(id, key, value);
+    return true;
+  }
+
   /** Record an explicit human EULA acceptance (never implied, always audited at the route). */
   recordEula(id: string, ip: string | null): void {
     this.db

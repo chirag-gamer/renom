@@ -179,6 +179,73 @@ describe("power + console", () => {
     }
   });
 
+  it("a restart starts a new console: the previous run's scrollback is dropped", async () => {
+    const id = await makeServer("echo-reset");
+    try {
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" })
+        .expect(200);
+      expect(await waitForHistory(id, "process started")).toBe(true);
+
+      // A line that only this run can have produced.
+      await request(app)
+        .post(`/api/v3/servers/${id}/console/send`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ command: "before-restart" })
+        .expect(200);
+      expect(await waitForHistory(id, "echo:before-restart")).toBe(true);
+
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "restart" })
+        .expect(200);
+      expect(await waitForHistory(id, "process started")).toBe(true);
+
+      // Two starts would mean the old run's lines stacked onto the new one.
+      // The engine emits "process started" once per launch, so a single
+      // occurrence proves the buffer was cleared rather than appended to.
+      const history = await request(app)
+        .get(`/api/v3/servers/${id}/console/history?limit=200`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      const texts = (history.body.lines as Array<{ text: string }>).map((l) => l.text);
+      expect(texts.filter((t) => t.includes("process started"))).toHaveLength(1);
+      expect(texts.some((t) => t.includes("echo:before-restart"))).toBe(false);
+    } finally {
+      await stopQuiet(id);
+    }
+  });
+
+  it("console history carries the run id so a client can spot a restart", async () => {
+    const id = await makeServer("echo-run");
+    try {
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "start" })
+        .expect(200);
+      const first = await request(app)
+        .get(`/api/v3/servers/${id}/console/history?limit=200`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(typeof first.body.run).toBe("number");
+
+      await request(app)
+        .post(`/api/v3/servers/${id}/power`)
+        .set("authorization", `Bearer ${ownerToken}`)
+        .send({ action: "restart" })
+        .expect(200);
+
+      const second = await request(app)
+        .get(`/api/v3/servers/${id}/console/history?limit=200`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(second.body.run).toBeGreaterThan(first.body.run);
+    } finally {
+      await stopQuiet(id);
+    }
+  });
+
   it("kill ends the process; suspended servers refuse power", async () => {
     const id = await makeServer("echo-kill");
     try {

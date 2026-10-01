@@ -172,6 +172,14 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
           maxBytes: 512 * 1024 * 1024,
           sha256: build.sha256,
         });
+        // Record the build we actually installed. "latest" cannot resolve
+        // Modrinth addon files, and the version in use is the only one the
+        // server is known to be compatible with. Only when this op was
+        // templated from the variable: an imported blueprint may name its
+        // version key differently, and persisting under `mcVersion` a value
+        // the op never read would drive the Modrinth filter off a version
+        // nothing is running.
+        if (op.version === "{mcVersion}") ctx.vars["mcVersion"] = version;
         break;
       }
       case "fetch-vanilla": {
@@ -180,6 +188,7 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
           maxBytes: 512 * 1024 * 1024,
           sha1: artifact.sha1,
         });
+        if (op.version === "{mcVersion}") ctx.vars["mcVersion"] = artifact.version;
         break;
       }
       case "fetch-purpur": {
@@ -188,6 +197,7 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
           maxBytes: 512 * 1024 * 1024,
           md5: artifact.md5,
         });
+        if (op.version === "{mcVersion}") ctx.vars["mcVersion"] = artifact.version;
         break;
       }
       case "extract": {
@@ -622,8 +632,11 @@ export async function installModrinthProjects(
   const dir = join(ctx.dir, platform.dir);
   mkdirSync(dir, { recursive: true });
   for (const project of projects) {
-    const id = project.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9-_]{1,63}$/.test(id)) {
+    const id = project.trim();
+    // Modrinth project ids are case-sensitive base62 ('Vebnzrzj' is LuckPerms,
+    // 'vebnzrzj' is nobody), so the id is used exactly as given. Lowercasing
+    // it here 404'd every project whose id carries an uppercase letter.
+    if (!/^[A-Za-z0-9][A-Za-z0-9-_]{1,63}$/.test(id)) {
       throw new EngineError(`Not a Modrinth project id: '${project}'`);
     }
     const versions = (await fetchJson(
@@ -777,7 +790,7 @@ async function latestPaperBuild(
 async function resolveVanilla(
   fetchImpl: typeof fetch,
   version: string,
-): Promise<{ url: string; sha1: string }> {
+): Promise<{ url: string; sha1: string; version: string }> {
   const manifest = (await fetchJson(
     fetchImpl,
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
@@ -788,13 +801,13 @@ async function resolveVanilla(
   const detail = (await fetchJson(fetchImpl, entry.url)) as {
     downloads: { server: { url: string; sha1: string } };
   };
-  return { url: detail.downloads.server.url, sha1: detail.downloads.server.sha1 };
+  return { url: detail.downloads.server.url, sha1: detail.downloads.server.sha1, version: id };
 }
 
 async function resolvePurpur(
   fetchImpl: typeof fetch,
   version: string,
-): Promise<{ url: string; md5?: string }> {
+): Promise<{ url: string; md5?: string; version: string }> {
   const id = version === "" || version === "latest" ? "latest" : version;
   const info = (await fetchJson(
     fetchImpl,
@@ -812,5 +825,6 @@ async function resolvePurpur(
   return {
     url: `https://api.purpurmc.org/v2/paper/${encodeURIComponent(info.version)}/${encodeURIComponent(build)}/download`,
     md5: detail.md5 ?? info.md5,
+    version: info.version,
   };
 }

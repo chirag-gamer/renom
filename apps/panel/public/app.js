@@ -12,28 +12,25 @@ const views = {
   "user-create": document.getElementById("view-user-create"),
   "server-create": document.getElementById("view-server-create"),
   "user-detail": document.getElementById("view-user-detail"),
+  "admin-server": document.getElementById("view-admin-server"),
   api: document.getElementById("view-api"),
   server: document.getElementById("view-server"),
 };
 
 function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
-  const topbar = document.getElementById("app-topbar");
-  if (topbar) topbar.hidden = name === "setup" || name === "login";
-  document
-    .querySelector(".app-shell")
-    ?.classList.toggle("is-authenticated", topbar?.hidden === false);
+  const sidebar = document.getElementById("app-sidebar");
+  if (sidebar) sidebar.hidden = name === "setup" || name === "login";
   document.querySelectorAll("[data-route]").forEach((link) => {
     link.classList.toggle(
       "active",
       link.dataset.route === name ||
         ((name === "user-create" || name === "server-create" || name === "user-detail") &&
           link.dataset.route === "admin") ||
+        (name === "admin-server" && link.dataset.route === "admin") ||
         (name === "server" && link.dataset.route === "home"),
     );
   });
-  document.querySelector(".app-shell")?.classList.remove("navigation-open");
-  document.getElementById("sidebar-toggle")?.setAttribute("aria-expanded", "false");
 }
 
 function setView(name, detailId = "") {
@@ -41,7 +38,8 @@ function setView(name, detailId = "") {
     name === "admin" ||
     name === "user-create" ||
     name === "server-create" ||
-    name === "user-detail";
+    name === "user-detail" ||
+    name === "admin-server";
   if (adminOnly && me?.role !== "owner" && me?.role !== "admin") return;
   show(name);
   if (name === "admin") {
@@ -54,6 +52,7 @@ function setView(name, detailId = "") {
     void refreshUsers();
   }
   if (name === "user-detail") void refreshUserDetail(detailId);
+  if (name === "admin-server") void refreshAdminServer(detailId);
   if (name === "api") void refreshApiKeys();
   if (name === "account") renderAccount();
 }
@@ -112,6 +111,17 @@ async function routeFromPath() {
       return;
     }
     setView("user-create");
+    return;
+  }
+  // Admin server management is its own surface, mirroring the user one: the
+  // name in the admin list opens this, not the server's console.
+  const adminServerMatch = path.match(/^\/admin\/servers\/([^/]+)$/);
+  if (adminServerMatch) {
+    if (me?.role !== "owner" && me?.role !== "admin") {
+      await navigate("/");
+      return;
+    }
+    setView("admin-server", adminServerMatch[1]);
     return;
   }
   const userMatch = path.match(/^\/admin\/users\/([^/]+)$/);
@@ -540,16 +550,23 @@ async function refreshAdminServers() {
     }
     for (const server of data.items) {
       const li = document.createElement("li");
-      const open = document.createElement("button");
-      open.type = "button";
-      open.className = "linklike";
-      open.textContent = server.name;
-      open.addEventListener("click", () => openServer(server.id));
+      const manage = document.createElement("button");
+      manage.type = "button";
+      manage.className = "linklike";
+      manage.textContent = server.name;
+      // Pterodactyl's admin list does the same: the name opens the admin
+      // edit view, and a separate control is the way into the server.
+      manage.addEventListener("click", () => void navigate(`/admin/servers/${server.id}`));
       const meta = document.createElement("span");
       meta.className = "role";
       const owner = server.ownerUsername ? ` · owner: ${server.ownerUsername}` : "";
       meta.textContent = `${server.blueprintSlug} · ${server.status}${owner}`;
-      li.append(open, meta);
+      const consoleLink = document.createElement("button");
+      consoleLink.type = "button";
+      consoleLink.className = "linklike";
+      consoleLink.textContent = "Console";
+      consoleLink.addEventListener("click", () => void navigate(`/servers/${server.id}/console`));
+      li.append(manage, meta, consoleLink);
       list.append(li);
     }
     if (!data.nextCursor) return;
@@ -595,6 +612,9 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   if (me?.role === "owner" || me?.role === "admin") {
     body.memoryMb = Number(fd.get("memoryMb")) || 1024;
     body.diskQuotaMb = Number(fd.get("diskQuotaMb")) || 5120;
+    // CPU is a panel resource: the API ignores it for anyone but an admin,
+    // so the value belongs with the other admin-only fields.
+    body.cpuWeight = Math.max(0, Number(fd.get("cpuWeight")) || 0);
     body.ownerUsername = fd.get("ownerUsername") || undefined;
   }
   const { status, data } = await api("/servers", {
@@ -609,6 +629,72 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
   } else {
     fail(err, describeProblem(status, data));
   }
+});
+
+/* ---------- admin: manage one server ---------- */
+
+let editingAdminServerId = "";
+let adminServerRequest = 0;
+
+async function refreshAdminServer(serverId) {
+  editingAdminServerId = serverId;
+  // A generation, not an id comparison: two visits to the same server would
+  // otherwise let the first, slower response repaint the reopened form with
+  // values the admin has already moved past.
+  const request = ++adminServerRequest;
+  const err = document.getElementById("admin-server-error");
+  err.hidden = true;
+  const { status, data } = await api(`/servers/${encodeURIComponent(serverId)}`, {
+    token: store.token,
+  });
+  if (request !== adminServerRequest) return;
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  const server = data.server;
+  document.getElementById("admin-server-heading").textContent = server.name;
+  const alloc = server.primaryAllocation
+    ? `${server.hostIp}:${server.primaryAllocation.port}`
+    : "no address yet";
+  document.getElementById("admin-server-meta").textContent =
+    `${server.blueprintSlug} · ${server.status} · owner: ${server.ownerUsername} · ${alloc}`;
+  document.getElementById("admin-server-name").value = server.name;
+  document.getElementById("admin-server-description").value = server.description || "";
+  document.getElementById("admin-server-cpu").value = server.cpuWeight;
+  document.getElementById("admin-server-memory").value = server.memoryMb;
+  document.getElementById("admin-server-disk").value = server.diskQuotaMb;
+}
+
+document.getElementById("btn-admin-server-back").addEventListener("click", () => {
+  void navigate("/admin/servers");
+});
+
+document.getElementById("btn-admin-server-console").addEventListener("click", () => {
+  void navigate(`/servers/${editingAdminServerId}/console`);
+});
+
+document.getElementById("form-admin-server").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("admin-server-error");
+  err.hidden = true;
+  const { status, data } = await api(`/servers/${editingAdminServerId}`, {
+    method: "PATCH",
+    token: store.token,
+    body: {
+      name: document.getElementById("admin-server-name").value,
+      description: document.getElementById("admin-server-description").value,
+      cpuWeight: Number(document.getElementById("admin-server-cpu").value),
+      memoryMb: Number(document.getElementById("admin-server-memory").value),
+      diskQuotaMb: Number(document.getElementById("admin-server-disk").value),
+    },
+  });
+  if (status !== 200) {
+    fail(err, describeProblem(status, data));
+    return;
+  }
+  await refreshAdminServer(editingAdminServerId);
+  await refreshAdminServers();
 });
 
 document.getElementById("btn-admin-create-user").addEventListener("click", () => {
@@ -944,12 +1030,13 @@ function signOut() {
   show("login");
 }
 
-document.getElementById("btn-signout").addEventListener("click", signOut);
+// One sign-out, in the sidebar. The dashboard used to carry a second copy.
 document.getElementById("btn-topbar-signout").addEventListener("click", signOut);
-document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
-  const shell = document.querySelector(".app-shell");
-  const isOpen = shell?.classList.toggle("navigation-open") ?? false;
-  document.getElementById("sidebar-toggle")?.setAttribute("aria-expanded", String(isOpen));
+document.querySelectorAll("[data-server-tab]").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    setTab(link.dataset.serverTab);
+  });
 });
 document.querySelectorAll("[data-route]").forEach((link) => {
   link.addEventListener("click", (event) => {
@@ -1018,10 +1105,15 @@ document.getElementById("form-api-key").addEventListener("submit", async (e) => 
 
 /* ---------- server detail ---------- */
 
-document.getElementById("btn-back").addEventListener("click", async () => {
-  leaveServer();
-  await navigate("/");
-});
+// The server's own menus live in the left rail above the global ones, so the
+// rail stays put while the middle column swaps between them.
+function renderServerNav() {
+  const nav = document.getElementById("server-navigation");
+  nav.hidden = !currentServer;
+  if (currentServer) {
+    document.getElementById("server-nav-title").textContent = currentServer.name;
+  }
+}
 
 async function openServer(id, tab = "console", updateUrl = true) {
   // Claim the generation before awaiting: the newest navigation owns the view,
@@ -1041,6 +1133,8 @@ async function openServer(id, tab = "console", updateUrl = true) {
   document.getElementById("file-dialog-path").textContent = "";
   document.getElementById("file-dialog-content").value = "";
   renderServerHeader();
+  renderServerNav();
+  resetStatSeries();
   applyServerPermissions();
   setTab(tab, false);
   show("server");
@@ -1083,6 +1177,10 @@ function leaveServer() {
     socket = null;
   }
   currentServer = null;
+  renderServerNav();
+  resetStatSeries();
+  // A different server is a different run namespace.
+  consoleRun = null;
 }
 
 function canServerAny(required) {
@@ -1107,13 +1205,19 @@ function isPanelAdmin() {
 }
 
 function applyServerPermissions() {
-  const tabButtons = document.querySelectorAll("#server-tabs [data-tab]");
-  for (const button of tabButtons) {
-    button.hidden = !canServerAny(serverTabPermissions[button.dataset.tab]);
+  for (const link of document.querySelectorAll("#server-navigation [data-server-tab]")) {
+    link.hidden = !canServerAny(serverTabPermissions[link.dataset.serverTab]);
   }
   document.querySelectorAll("#srv-power [data-power]").forEach((button) => {
     button.hidden = !canServer(serverPowerPermissions[button.dataset.power]);
   });
+  // The graphs are fed by the console socket. Without websocket.connect they
+  // would sit at "—" forever, so they are hidden rather than faked; the power
+  // buttons still work, because they go over REST.
+  const live = canServer("websocket.connect");
+  for (const block of statCharts.map((id) => document.getElementById(id)?.closest(".rail-block"))) {
+    if (block) block.hidden = !live;
+  }
   document.getElementById("form-console").hidden = !canServer("control.console");
   document.getElementById("form-file-read").hidden = !canServer("file.read");
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
@@ -1243,10 +1347,6 @@ document.querySelectorAll("#srv-power button").forEach((btn) => {
   });
 });
 
-document.querySelectorAll(".tabs button").forEach((btn) => {
-  btn.addEventListener("click", () => setTab(btn.dataset.tab));
-});
-
 function setTab(name, updateUrl = true) {
   const requestedName = name;
   const tabNames = [
@@ -1266,14 +1366,16 @@ function setTab(name, updateUrl = true) {
     const method = updateUrl ? "pushState" : "replaceState";
     history[method]({}, "", `/servers/${currentServer.id}/${name}`);
   }
-  const activeTab = document.querySelector(`.tabs button[data-tab="${name}"]`);
+  const activeLink = document.querySelector(`#server-navigation [data-server-tab="${name}"]`);
   document
-    .querySelectorAll(".tabs button")
-    .forEach((button) => button.classList.toggle("active", button === activeTab));
-  activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    .querySelectorAll("#server-navigation [data-server-tab]")
+    .forEach((link) => link.classList.toggle("active", link === activeLink));
   for (const t of tabNames) {
     document.getElementById(`tab-${t}`).hidden = t !== name;
   }
+  // Power and the live graphs belong to the console: the console owns the
+  // full width of the middle column, and the rail is empty anywhere else.
+  document.getElementById("server-rail").hidden = name !== "console";
 }
 
 /* ----- console ----- */
@@ -1308,6 +1410,32 @@ function resetConsoleHistory(lines) {
   for (const line of lines) appendConsoleLine(line);
 }
 
+// Which process the on-screen console belongs to. A restart that happens
+// while the client is offline emits a reset event nobody hears, so the join
+// replay carries the server's run id instead: a different id means everything
+// on screen came from a process that is gone.
+let consoleRun = null;
+
+function adoptRun(run) {
+  if (typeof run !== "number") return;
+  // First sight: the REST history already painted the current run, so this
+  // only records which run it was. Clearing here would throw away the 200
+  // lines the REST read fetched in favour of the socket's 100.
+  if (consoleRun === null) {
+    consoleRun = run;
+    return;
+  }
+  if (run === consoleRun) return;
+  consoleRun = run;
+  // Deliberately NOT rewinding consoleSeq here. The engine's counter is
+  // monotonic across runs, so the new run's lines are always above the
+  // watermark and the replay that may follow passes on its own. Rewinding
+  // would instead let a straggler from the dying process — one that raced
+  // ahead of the reset — land in the console just cleared.
+  document.getElementById("console-log").textContent = "";
+  resetStatSeries();
+}
+
 async function refreshConsoleHistory(generation) {
   const id = currentServer.id;
   const { status, data } = await api(`/servers/${id}/console/history?limit=200`, {
@@ -1319,6 +1447,11 @@ async function refreshConsoleHistory(generation) {
     appendLine("(You don't have permission to see this server's console.)");
     return;
   }
+  // Adopt the run before the socket join arrives: if the server restarts
+  // between this read and that replay, the replay names a different run and
+  // the view has to start over. Without it the first replay would always be a
+  // "first sight" and would be appended to whatever is already on screen.
+  adoptRun(data.run);
   resetConsoleHistory(data.lines);
 }
 
@@ -1332,10 +1465,24 @@ function joinConsoleSocket() {
   const generation = serverGeneration;
   const serverId = currentServer.id;
   socket = window.io({ path: "/socket.io/", auth: { token: store.token } });
-  socket.on("connect", () => {
-    // Transport is up; the note must reflect the server again, not "connected".
-    if (generation === serverGeneration) applyConsoleNote();
-  });
+  // Re-join on every (re)connect, not just the first: a reconnect lands on a
+  // brand new server-side socket that has never joined the room, so without
+  // this the console and the graphs stay dead until a manual page refresh.
+  const join = () => {
+    if (generation !== serverGeneration) return;
+    socket.emit("console:join", serverId, (res) => {
+      if (generation !== serverGeneration) return;
+      if (!res || !res.ok) {
+        note.textContent =
+          res && res.reason === "suspended"
+            ? "This server is suspended."
+            : "Live updates unavailable.";
+      } else {
+        applyConsoleNote();
+      }
+    });
+  };
+  socket.on("connect", join);
   socket.on("disconnect", () => {
     if (generation === serverGeneration) {
       note.textContent = "Live connection closed — refresh to see new output.";
@@ -1349,23 +1496,122 @@ function joinConsoleSocket() {
   // A join replay can still be the first thing we see (REST history denied, or
   // lines emitted between the REST read and the join); dedupe keeps it honest.
   socket.on("console:history", (msg) => {
+    adoptRun(msg?.run);
     for (const line of msg?.lines ?? []) appendConsoleLine(line, generation);
   });
   socket.on("console:line", (msg) => appendConsoleLine(msg.line, generation));
+  // A restart is a new run: the engine drops the old scrollback and says so,
+  // so the console starts from zero instead of stacking every run the server
+  // has ever had. No replay follows a live reset, so the seq watermark is
+  // left where it is — see adoptRun for why rewinding it would be wrong here.
+  socket.on("console:reset", (msg) => {
+    if (generation !== serverGeneration) return;
+    adoptRun(msg?.run);
+  });
+  socket.on("stats", (msg) => {
+    if (generation !== serverGeneration || msg?.serverId !== serverId) return;
+    pushStatSample(msg.stats);
+  });
+
   socket.on("console:revoked", () => {
     if (generation === serverGeneration) {
       note.textContent = "Your access to this console changed — ask the owner if you need it back.";
     }
   });
-  socket.emit("console:join", serverId, (res) => {
-    if (generation !== serverGeneration) return;
-    if (!res || !res.ok) {
-      note.textContent =
-        res && res.reason === "suspended"
-          ? "This server is suspended."
-          : "Live updates unavailable.";
+}
+
+// Pterodactyl's StatGraphs keeps a fixed ring buffer per chart and wipes it
+// when the server leaves `running`. Same shape here: 60 samples at the
+// engine's 2s cadence is two minutes of history. This ring is the client's
+// own — the server pushes samples and keeps no history, so there is nothing
+// to replay and nothing to re-add for symmetry.
+const STAT_SAMPLES = 60;
+const statSeries = { cpu: [], memory: [], rx: [], tx: [] };
+const statCharts = ["chart-cpu", "chart-memory", "chart-network"];
+
+function resetStatSeries() {
+  for (const key of Object.keys(statSeries)) statSeries[key].length = 0;
+  document.getElementById("stat-cpu-value").textContent = "—";
+  document.getElementById("stat-memory-value").textContent = "—";
+  document.getElementById("stat-network-value").textContent = "—";
+  for (const id of statCharts) {
+    for (const path of document.getElementById(id).querySelectorAll("path")) {
+      path.setAttribute("d", "");
     }
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function cpuLimitLabel() {
+  const weight = currentServer?.cpuWeight ?? 0;
+  if (!weight) return "all cores";
+  return weight === 100 ? "1 core" : `${Math.ceil(weight / 100)} cores`;
+}
+
+// `pair` picks which fill/line of a two-series chart to draw into: 0 for
+// inbound (or a single-series chart), 1 for outbound.
+function drawChart(chartId, series, ceiling, pair = 0) {
+  const svg = document.getElementById(chartId);
+  if (!svg) return;
+  const paths = svg.querySelectorAll("path");
+  const drawable = paths.length === 4 ? [paths[pair * 2], paths[pair * 2 + 1]] : paths;
+  if (!drawable[0] || !drawable[1]) return;
+  const known = series.filter((value) => value !== null);
+  if (known.length < 2) return;
+  const max = Math.max(ceiling || 0, ...known) * 1.1 || 1;
+  const step = 100 / (series.length - 1);
+  const points = series.map((value, index) => {
+    const y = 32 - (Math.min(value ?? 0, max) / max) * 30;
+    return `${(index * step).toFixed(2)},${y.toFixed(2)}`;
   });
+  const line = `M${points.join(" L")}`;
+  drawable[0].setAttribute("d", `${line} L100,32 L0,32 Z`);
+  drawable[1].setAttribute("d", line);
+}
+
+function pushStatSample(sample) {
+  if (!sample) return;
+  const record = (key, value) => {
+    statSeries[key].push(value);
+    if (statSeries[key].length > STAT_SAMPLES) statSeries[key].shift();
+  };
+  record("cpu", sample.cpuPercent);
+  record("memory", sample.memoryBytes === null ? null : sample.memoryBytes / (1024 * 1024));
+  record("rx", sample.networkRxPerSec);
+  record("tx", sample.networkTxPerSec);
+
+  const running = sample.state === "running";
+  document.getElementById("stat-cpu-value").textContent =
+    running && sample.cpuPercent !== null
+      ? `${sample.cpuPercent.toFixed(1)}% of ${cpuLimitLabel()}`
+      : "—";
+  document.getElementById("stat-memory-value").textContent = running
+    ? `${formatBytes(sample.memoryBytes)} / ${currentServer?.memoryMb ?? 0} MB`
+    : "—";
+  document.getElementById("stat-network-value").textContent = running
+    ? `↓ ${formatBytes(sample.networkRxPerSec)}/s  ↑ ${formatBytes(sample.networkTxPerSec)}/s`
+    : "—";
+
+  drawChart("chart-cpu", statSeries.cpu, 100);
+  drawChart("chart-memory", statSeries.memory, currentServer?.memoryMb ?? 0);
+  // Inbound and outbound share one scale so the two lines are comparable.
+  const traffic = Math.max(
+    ...statSeries.rx.filter((value) => value !== null),
+    ...statSeries.tx.filter((value) => value !== null),
+  );
+  drawChart("chart-network", statSeries.rx, traffic, 0);
+  drawChart("chart-network", statSeries.tx, traffic, 1);
 }
 
 document.getElementById("form-console").addEventListener("submit", async (e) => {
@@ -1795,25 +2041,29 @@ async function refreshAddonCapability(generation) {
     token: store.token,
   });
   if (isStaleLoad(generation)) return;
-  const tab = document.querySelector('#server-tabs [data-tab="addons"]');
+  const navLink = document.getElementById("server-nav-addons");
   const supported = status === 200 && data.supported;
   const usable = supported && canServer("startup.read");
-  if (tab) tab.hidden = !usable;
+  if (navLink) navLink.hidden = !usable;
   if (!usable) {
     // setTab() already ran before this check, so a deep link to
-    // /servers/:id/addons would leave the addons panel showing with no tab
-    // left to leave it. Move to a tab this server actually has.
+    // /servers/:id/addons would leave the addons panel showing with no nav
+    // entry left to leave it. Move to a tab this server actually has.
     if (!document.getElementById("tab-addons").hidden) {
       setTab(availableServerTabs()[0] || "console");
     }
     return;
   }
-  document.getElementById("addon-kind").textContent =
-    data.projectType === "mod" ? "mods" : "plugins";
+  const kind = data.projectType === "mod" ? "mods" : "plugins";
+  document.getElementById("addon-kind").textContent = kind;
+  document.getElementById("server-nav-addons-label").textContent =
+    kind === "mods" ? "Mods" : "Plugins";
   results.innerHTML = "";
   if (data.mcVersion) {
     note.hidden = true;
   } else {
+    // The installer now records the version it resolved, so this only shows
+    // on a server that was created before that, or one still installing.
     note.hidden = false;
     note.textContent =
       'Set an exact Minecraft version on the Startup tab first — "latest" cannot resolve addon files.';
@@ -1891,9 +2141,11 @@ document.getElementById("form-addon").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = document.getElementById("addons-error");
   err.hidden = true;
+  // Modrinth ids are case-sensitive; only the surrounding whitespace and
+  // separators are ours to normalise.
   const projects = String(new FormData(e.target).get("projects") || "")
     .split(/[\s,]+/)
-    .map((p) => p.trim().toLowerCase())
+    .map((p) => p.trim())
     .filter(Boolean);
   const { status, data } = await api(`/servers/${currentServer.id}/addons`, {
     method: "POST",

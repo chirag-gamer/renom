@@ -48,6 +48,29 @@ const PLUGIN_TUNNEL_BLUEPRINTS: Record<string, true> = {
   velocity: true,
 };
 
+/**
+ * Store the Minecraft version the installer actually resolved.
+ *
+ * Blueprints ship `mcVersion: "latest"`, which no Modrinth query can filter
+ * on — before this, a brand new Paper server could never search or install a
+ * plugin. The installer writes the concrete build it downloaded back into its
+ * variable map, and this is where that becomes durable.
+ *
+ * The write is conditional: installation is backgrounded, so an admin can set
+ * a version on the Startup tab while it runs, and a blind write would undo
+ * that with the value the install happened to download.
+ */
+function persistInstalledVersion(
+  servers: ServersRepo,
+  serverId: string,
+  vars: Record<string, string> | null,
+  requested: string | undefined,
+): void {
+  const version = vars?.["mcVersion"];
+  if (!version || version === "latest") return;
+  servers.setVariableIfUnchanged(serverId, "mcVersion", version, requested ?? null);
+}
+
 export interface ServersDeps {
   db: Database;
   users: UsersRepo;
@@ -186,16 +209,20 @@ export function serversRouter(deps: ServersDeps): Router {
       const hasBlueprintInstall = doc.install.length > 0;
       const wantsTunnel = pluginCapable;
 
+      let installVars: Record<string, string> | null = null;
+      // The version the install STARTED from, for the conditional write-back.
+      let requestedVersion: string | undefined;
       if ((hasBlueprintInstall || wantsTunnel) && process.env.NODE_ENV !== "test") {
         const pending: Promise<unknown>[] = [];
 
         if (hasBlueprintInstall) {
-          const installVars: Record<string, string> = {};
+          installVars = {};
           for (const v of doc.variables ?? []) installVars[v.key] = String(v.default);
           if (alloc) {
             installVars["allocation.ip"] = alloc.ip;
             installVars["allocation.port"] = String(alloc.port);
           }
+          requestedVersion = installVars["mcVersion"];
           pending.push(
             runInstallOps(doc, { serverId: created.id, dir: serverDir, vars: installVars }),
           );
@@ -264,6 +291,7 @@ export function serversRouter(deps: ServersDeps): Router {
         servers.setStatus(created.id, "installing");
         void Promise.all(pending)
           .then(() => {
+            persistInstalledVersion(servers, created.id, installVars, requestedVersion);
             servers.setStatus(created.id, "ready");
             audit.record({ event: "server.install.done", serverId: created.id });
           })
@@ -380,8 +408,11 @@ export function serversRouter(deps: ServersDeps): Router {
         requestId: req.requestId,
         serverId: id,
       });
+      // Captured before the install, which overwrites it in place.
+      const requestedVersion = vars["mcVersion"];
       try {
         await runInstallOps(doc, { serverId: id, dir: join(dataDir, "servers", id), vars });
+        persistInstalledVersion(servers, id, vars, requestedVersion);
         servers.setStatus(id, "ready");
         audit.record({ event: "server.install.done", serverId: id });
       } catch (err) {

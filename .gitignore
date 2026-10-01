@@ -12,6 +12,9 @@ data/
 *.db-journal
 *.db-wal
 *.db-shm
+# Scratch panel instances created for local browser verification. The server
+# files inside them (paper.jar, downloaded plugins) are large binaries.
+.ui-verify*/
 .env
 .env.*
 !.env.example

@@ -77,6 +77,38 @@ describe("install executor", () => {
     expect(readFileSync(join(srv, "paper.jar"))).toEqual(JAR_BYTES);
   });
 
+  it("records the version it resolved, so Modrinth can filter on it", async () => {
+    const srv = join(dir, "paper-latest");
+    mkdirSync(srv, { recursive: true });
+    const vars: Record<string, string> = { mcVersion: "latest" };
+    await runInstallOps({ install: [{ op: "fetch-paper", version: "{mcVersion}" }] } as never, {
+      serverId: "x",
+      dir: srv,
+      vars,
+      fetchImpl: stubFetch(PAPER_ROUTES),
+    });
+    // The stub's only version is 1.21.1, so "latest" must have resolved to it.
+    // Without this write-back a new server stores no version at all and every
+    // Modrinth search and install refuses.
+    expect(vars.mcVersion).toBe("1.21.1");
+  });
+
+  it("leaves mcVersion alone when the op did not read it", async () => {
+    const srv = join(dir, "paper-literal");
+    mkdirSync(srv, { recursive: true });
+    const vars: Record<string, string> = {};
+    await runInstallOps({ install: [{ op: "fetch-paper", version: "1.21.1" }] } as never, {
+      serverId: "x",
+      dir: srv,
+      vars,
+      fetchImpl: stubFetch(PAPER_ROUTES),
+    });
+    // An imported blueprint may name its version key differently. Persisting
+    // under mcVersion a value this op never read would drive the Modrinth
+    // filter off a version the server is not running.
+    expect(vars.mcVersion).toBeUndefined();
+  });
+
   it("refuses a corrupt jar (checksum mismatch)", async () => {
     const srv = join(dir, "corrupt");
     mkdirSync(srv, { recursive: true });
@@ -142,6 +174,44 @@ describe("install executor", () => {
       fetchImpl,
     });
     expect(readFileSync(join(srv, "mods", "lithium.jar"))).toEqual(addonBytes);
+  });
+
+  it("keeps a Modrinth project id's casing — Modrinth ids are case-sensitive", async () => {
+    const addonBytes = Buffer.from("fake-mixed-case-addon");
+    const addonSha512 = createHash("sha512").update(addonBytes).digest("hex");
+    // Registered under the exact casing Modrinth hands the client. A
+    // lowercased request misses this route and 404s, which is what made every
+    // mixed-case project ('Vebnzrzj' is LuckPerms) uninstallable.
+    const fetchImpl = stubFetch({
+      "https://api.modrinth.com/v2/project/Vebnzrzj/version": {
+        json: [
+          {
+            files: [
+              {
+                url: "https://cdn.modrinth.com/luckperms.jar",
+                filename: "LuckPerms.jar",
+                hashes: { sha512: addonSha512 },
+                primary: true,
+              },
+            ],
+          },
+        ],
+      },
+      "https://cdn.modrinth.com/luckperms.jar": { bytes: addonBytes },
+    });
+    const srv = join(dir, "addons-case");
+    mkdirSync(srv, { recursive: true });
+    await runInstallOps(
+      { install: [{ op: "modrinth-install", projects: ["Vebnzrzj"] }] } as never,
+      {
+        serverId: "x",
+        dir: srv,
+        vars: { mcVersion: "1.21.1" },
+        blueprintSlug: "paper",
+        fetchImpl,
+      },
+    );
+    expect(readFileSync(join(srv, "plugins", "LuckPerms.jar"))).toEqual(addonBytes);
   });
 
   it("refuses Modrinth on vanilla (no mod platform)", async () => {

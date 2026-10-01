@@ -7,15 +7,35 @@ All notable changes to Renom are documented here. Format based on
 
 ### Changed
 
+- The panel is now full-screen with a persistent left navigation rail. Global destinations (Servers,
+  Account, API keys, Admin) sit at the top; when a server is open, its own menus — Console, Files,
+  Backups, Schedule, Startup, Network, Users, Plugins, Settings — appear beneath and stay put while
+  the middle column swaps between them. The centred "white box" layout is gone.
+- Console: power buttons and live resource graphs moved to a right rail that is shown only on the
+  Console tab, so the console owns the full width of the middle column. Start, Restart, Stop, and Kill
+  keep their state rules (Start is offered only when the server is offline).
+- Live resource graphs: CPU and memory are sampled per process from the host OS every two seconds and
+  pushed over the existing console socket, and inbound/outbound network rates come from the host's
+  non-loopback interface counters. **The network figures are host-wide, not per-server** — a process
+  outside a container has no per-process byte counters, so the UI labels them as host traffic rather
+  than attributing them to one server. Sampling only runs while a client is watching.
+- Console no longer stacks runs: starting or restarting a server clears the console buffer, so each
+  run reads from zero instead of appending every run the server has had. Stopping or killing keeps the
+  last run's scrollback on screen until the next start.
+- Admin: clicking a server in the admin list opens a dedicated, admin-only management view (name,
+  description, CPU, memory, disk) instead of jumping into that server's console. A separate "Console"
+  control opens the server. The user-management pattern is unchanged.
+- Server creation now offers a CPU allocation field alongside memory and disk.
+
 - Restored the approved warm-paper Renom design system across authenticated navigation, server cards,
-  and server tabs. The dashboard now uses the 1200px centered layout, paper surfaces, terracotta actions,
-  and teal health states rather than a separate dark theme.
+  and server tabs: paper surfaces, terracotta actions, and teal health states rather than a separate
+  dark theme.
 - Panel updates now provision required Java runtimes before rebuilding. Provisioning skips runtimes that
   are already installed, and best-effort runtimes (Java 25 and 17) are skipped when the package manager
   cannot supply or install them, so a single failure never aborts an update. Required Java 21 must be
   present for the panel to build.
-- Dashboard status now reports the real server-list state (loading, empty, failed, or server count), sign-out
-  works from both the header and the dashboard, and navigation no longer overwrites a newer route.
+- Dashboard status now reports the real server-list state (loading, empty, failed, or server count),
+  and navigation no longer overwrites a newer route.
 - Server console: live-connection state is now reported (connected, closed, unreachable, suspended),
   recent history is replayed when the stream joins, and power buttons reflect the real server state
   (Start only when offline, Stop and Kill only when running) with a confirmation before a forced kill.
@@ -48,6 +68,15 @@ All notable changes to Renom are documented here. Format based on
 - Server addresses no longer show the `0.0.0.0` bind wildcard. The host address is resolved per
   request from the node's configured `public_ip` (or the host's own outbound address), so a change
   to `nodes.public_ip` applies without restarting the panel.
+- Plugins and mods on a brand new Paper or Purpur server now work. The installer resolved the
+  blueprint's `"latest"` Minecraft version to a concrete build but never recorded it, so every new
+  server stored no version at all and both Modrinth search and install refused. The resolved version
+  is now persisted after install and after reinstall.
+- Modrinth project ids are case-sensitive base62 (`Vebnzrzj` is LuckPerms, `vebnzrzj` is nobody).
+  The panel lowercased every submitted id, so installing any project whose id contains an uppercase
+  letter failed with a 404. Ids are now used exactly as given or as returned by search.
+- The dashboard carried a second sign-out button below the server list, next to the one in the header.
+  Only the header button remains.
 
 ### Added
 
