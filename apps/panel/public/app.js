@@ -1520,11 +1520,12 @@ function joinConsoleSocket() {
   });
 }
 
-// Pterodactyl's StatGraphs keeps a fixed ring buffer per chart and wipes it
-// when the server leaves `running`. Same shape here: 60 samples at the
-// engine's 2s cadence is two minutes of history. This ring is the client's
-// own — the server pushes samples and keeps no history, so there is nothing
-// to replay and nothing to re-add for symmetry.
+// 60 samples at the engine's 2s cadence is two minutes of history. The ring
+// is the client's own — the server pushes samples and keeps none, so there is
+// nothing to replay and nothing to re-add for symmetry. It is cleared when the
+// run changes or the view is left. Samples taken while the server is not
+// running are recorded as null and draw at the baseline with the label
+// reading "—", so a missing reading is never shown as a measurement of zero.
 const STAT_SAMPLES = 60;
 const statSeries = { cpu: [], memory: [], rx: [], tx: [] };
 const statCharts = ["chart-cpu", "chart-memory", "chart-network"];
