@@ -38,13 +38,19 @@ export interface NetworkCounters {
   txBytes: number;
 }
 
-async function readLinuxProcess(pid: number): Promise<ProcessReading | null> {
-  const [stat, status] = await Promise.all([
-    readFile(`/proc/${pid}/stat`, "utf8"),
-    readFile(`/proc/${pid}/status`, "utf8"),
-  ]);
-  // The comm field is parenthesised and may contain spaces, so the field list
-  // is split after the final ')' — everything before it is pid + comm.
+/**
+ * Parse a Linux `/proc/<pid>/stat` + `/proc/<pid>/status` pair.
+ *
+ * Pure and exported so it can be exercised on any platform. The reader below
+ * only runs on Linux, and Linux is where the panel deploys — a wrong field
+ * index here would report confidently wrong CPU on every production host
+ * with nothing on a Windows dev machine to notice.
+ */
+export function parseProcStat(stat: string, status: string): ProcessReading | null {
+  // `comm` is parenthesised and may contain spaces or ')' of its own, so the
+  // field list starts after the LAST ')': everything before is pid + comm.
+  // Fields are 1-indexed from `pid`, so the slice from field 3 (`state`)
+  // puts utime (14) at index 11 and stime (15) at index 12.
   const tail = stat
     .slice(stat.lastIndexOf(")") + 1)
     .trim()
@@ -60,6 +66,14 @@ async function readLinuxProcess(pid: number): Promise<ProcessReading | null> {
     cpuMs: ((utime + stime) / CLOCK_TICKS_PER_SECOND) * 1000,
     memoryBytes: Number.isFinite(rssKb) ? rssKb * 1024 : 0,
   };
+}
+
+async function readLinuxProcess(pid: number): Promise<ProcessReading | null> {
+  const [stat, status] = await Promise.all([
+    readFile(`/proc/${pid}/stat`, "utf8"),
+    readFile(`/proc/${pid}/status`, "utf8"),
+  ]);
+  return parseProcStat(stat, status);
 }
 
 async function readWindowsProcess(pid: number): Promise<ProcessReading | null> {
