@@ -1126,6 +1126,9 @@ async function openServer(id, tab = "console", updateUrl = true) {
     return;
   }
   currentServer = data.server;
+  // A different server has a different address; the header must not keep the
+  // previous server's tunnel while this one's network read is in flight.
+  tunnelAddress = "";
   if (updateUrl) history.pushState({}, "", `/servers/${id}/${tab}`);
   filesDir = "";
   // Never carry another server's file into this one: a save after switching
@@ -1177,6 +1180,7 @@ function leaveServer() {
     socket = null;
   }
   currentServer = null;
+  tunnelAddress = "";
   renderServerNav();
   resetStatSeries();
   // A different server is a different run namespace.
@@ -1253,15 +1257,22 @@ function fillSettings() {
   document.getElementById("settings-disk").value = currentServer.diskQuotaMb;
 }
 
+// The Minekube tunnel prints the address players actually dial into the
+// console. Until the panel has it, the header falls back to the host address.
+let tunnelAddress = "";
+
 function renderServerHeader() {
   const s = currentServer;
   document.getElementById("srv-name").textContent = s.name;
   // 0.0.0.0 is the bind wildcard, not an address anyone can dial; the API
-  // resolves the host's real outbound IP for players to use.
-  const alloc = s.primaryAllocation ? `${s.hostIp}:${s.primaryAllocation.port}` : "no address yet";
+  // resolves the host's real outbound IP for players to use, and an active
+  // tunnel supersedes both with the public Minekube address.
+  const join =
+    tunnelAddress ||
+    (s.primaryAllocation ? `${s.hostIp}:${s.primaryAllocation.port}` : "no address yet");
   const runtime = s.runtimeState ? ` · ${readableStatus(s)}` : "";
   document.getElementById("srv-meta").textContent =
-    `${s.blueprintSlug} · ${s.status}${runtime} · ${alloc}`;
+    `${s.blueprintSlug} · ${s.status}${runtime} · ${join}`;
   applyPowerState();
   applyConsoleNote();
 }
@@ -1386,12 +1397,146 @@ function setTab(name, updateUrl = true) {
 let consoleSeq = 0;
 let serverGeneration = 0;
 
+// Minecraft writes ANSI SGR codes into its console. A browser shows them as
+// literal text ("[38;2;255;170;0m"), so each line is converted to spans here.
+// The palette is Pterodactyl's, so a coloured line reads the same in both
+// panels. Only SGR matters for a console: every other escape sequence (cursor
+// moves, screen clears) is dropped rather than printed.
+const ANSI_BASE_COLORS = [
+  "#000000",
+  "#E54B4B",
+  "#9ECE58",
+  "#FAED70",
+  "#396FE2",
+  "#BB80B3",
+  "#2DDAFD",
+  "#d0d0d0",
+];
+const ANSI_BRIGHT_COLORS = [
+  "#555555",
+  "#FF5370",
+  "#C3E88D",
+  "#FFCB6B",
+  "#82AAFF",
+  "#C792EA",
+  "#89DDFF",
+  "#ffffff",
+];
+
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// The xterm 256-colour cube, so `38;5;n` lands on the same shade a terminal
+// would pick.
+function ansi256Color(n) {
+  if (n < 8) return ANSI_BASE_COLORS[n];
+  if (n < 16) return ANSI_BRIGHT_COLORS[n - 8];
+  if (n < 232) {
+    const cube = n - 16;
+    const step = (value) => (value === 0 ? 0 : 55 + value * 40);
+    return `rgb(${step(Math.floor(cube / 36))},${step(Math.floor((cube % 36) / 6))},${step(cube % 6)})`;
+  }
+  const grey = 8 + (n - 232) * 10;
+  return `rgb(${grey},${grey},${grey})`;
+}
+
+function ansiStyleText(style) {
+  const parts = [];
+  if (style.color) parts.push(`color:${style.color}`);
+  if (style.background) parts.push(`background:${style.background}`);
+  if (style.bold) parts.push("font-weight:600");
+  if (style.dim) parts.push("opacity:.7");
+  if (style.underline) parts.push("text-decoration:underline");
+  return parts.join(";");
+}
+
+function applySgr(style, params) {
+  const codes = (params === "" ? "0" : params).split(";").map(Number);
+  for (let i = 0; i < codes.length; i += 1) {
+    const code = codes[i];
+    if (!Number.isFinite(code)) continue;
+    if (code === 0) {
+      style.color = null;
+      style.background = null;
+      style.bold = false;
+      style.dim = false;
+      style.underline = false;
+    } else if (code === 1) style.bold = true;
+    else if (code === 2) style.dim = true;
+    else if (code === 4) style.underline = true;
+    else if (code === 22) {
+      style.bold = false;
+      style.dim = false;
+    } else if (code === 24) style.underline = false;
+    else if (code === 39) style.color = null;
+    else if (code === 49) style.background = null;
+    else if (code >= 30 && code <= 37) style.color = ANSI_BASE_COLORS[code - 30];
+    else if (code >= 90 && code <= 97) style.color = ANSI_BRIGHT_COLORS[code - 90];
+    else if (code >= 40 && code <= 47) style.background = ANSI_BASE_COLORS[code - 40];
+    else if (code >= 100 && code <= 107) style.background = ANSI_BRIGHT_COLORS[code - 100];
+    else if (code === 38 || code === 48) {
+      const target = code === 38 ? "color" : "background";
+      const mode = codes[i + 1];
+      if (mode === 5 && Number.isFinite(codes[i + 2])) {
+        style[target] = ansi256Color(codes[i + 2]);
+        i += 2;
+      } else if (mode === 2 && [codes[i + 2], codes[i + 3], codes[i + 4]].every(Number.isFinite)) {
+        style[target] = `rgb(${codes[i + 2]},${codes[i + 3]},${codes[i + 4]})`;
+        i += 4;
+      } else {
+        i += 1;
+      }
+    }
+  }
+}
+
+// An ordinary log line keeps its text as-is and pays no span, because nothing
+// is emitted for it. Style is not carried across lines: Minecraft re-emits its
+// prefix on every line, and a bleed would colour everything after a truncated
+// escape.
+function ansiToHtml(text) {
+  const style = { color: null, background: null, bold: false, dim: false, underline: false };
+  let html = "";
+  let plain = "";
+  const flush = () => {
+    if (!plain) return;
+    const css = ansiStyleText(style);
+    html += css ? `<span style="${css}">${escapeHtml(plain)}</span>` : escapeHtml(plain);
+    plain = "";
+  };
+  const escape = /\u001b\[([0-9;]*)([A-Za-z])/g;
+  let last = 0;
+  let match;
+  while ((match = escape.exec(text)) !== null) {
+    plain += text.slice(last, match.index);
+    last = escape.lastIndex;
+    // Flush with the style that was active for the text before this code.
+    if (match[2] === "m") {
+      flush();
+      applySgr(style, match[1]);
+    }
+  }
+  plain += text.slice(last);
+  flush();
+  return html;
+}
+
+// One element per line: ANSI can style it, and the oldest line can be dropped
+// without re-rendering the whole buffer.
+const CONSOLE_MAX_LINES = 500;
+
 function appendLine(text) {
   const log = document.getElementById("console-log");
-  log.textContent += (log.textContent ? "\n" : "") + text;
-  const lines = log.textContent.split("\n");
-  if (lines.length > 500) log.textContent = lines.slice(-500).join("\n");
-  log.scrollTop = log.scrollHeight;
+  // Only follow the tail when the view is already at the bottom, so scrolling
+  // back through history is not yanked away by the next streamed line.
+  const pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  const line = document.createElement("div");
+  line.className = "console-line";
+  line.innerHTML = ansiToHtml(text);
+  log.append(line);
+  while (log.childElementCount > CONSOLE_MAX_LINES) log.firstElementChild.remove();
+  if (pinned) log.scrollTop = log.scrollHeight;
 }
 
 function appendConsoleLine(line, generation) {
@@ -2242,6 +2387,14 @@ async function refreshNetwork(generation) {
       : `Tunnel “${t.data.endpoint}” is installed — start the server and the public address appears here.`;
   } else {
     info.textContent = "No tunnel. Players join you by your IP and port.";
+  }
+  // The server header shows the same join address as the Network tab: once the
+  // tunnel reports the address it printed to the console, that is what players
+  // dial, and the host's internal address is no longer the answer.
+  const join = t.status === 200 ? (t.data.address ?? "") : "";
+  if (join !== tunnelAddress) {
+    tunnelAddress = join;
+    renderServerHeader();
   }
 }
 

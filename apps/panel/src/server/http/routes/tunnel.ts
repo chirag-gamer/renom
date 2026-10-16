@@ -14,6 +14,7 @@ import {
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import {
+  addressForEndpoint,
   claimEndpointName,
   endpointTaken,
   endpointValid,
@@ -61,8 +62,14 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       const id = req.params.id ?? "";
       const endpoint = stored(id, "tunnel.endpoint");
       const provider = stored(id, "tunnel.provider");
-      const address =
+      // The printed line is the source of truth, but it scrolls out of the
+      // retained history on a busy server, which used to make the address
+      // disappear from the panel entirely. The reserved endpoint still names
+      // the address, so it answers when the line is gone.
+      const printed =
         provider === "minekube" ? scanHistoryForAddress(engine.history(id, 500)) : null;
+      const address =
+        printed ?? (provider === "minekube" && endpoint ? addressForEndpoint(endpoint) : null);
       res.json({ provider, endpoint, address });
     } catch (e) {
       next(e);

@@ -400,6 +400,24 @@ describe("EULA gate + variables + tunnel API", () => {
     expect(before.body).toEqual({ provider: null, endpoint: null, address: null });
   });
 
+  it("still names the join address after the printed line scrolls away", async () => {
+    // A reserved endpoint is enough: a busy server pushes the plugin's
+    // "Your public address" line out of the 500-line history within minutes,
+    // and the panel used to answer `null` from then on.
+    const setVar = ctx.db.prepare(
+      "INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?) " +
+        "ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value",
+    );
+    setVar.run(serverId, "tunnel.provider", "minekube");
+    setVar.run(serverId, "tunnel.endpoint", "vivid-lagoon-9784");
+
+    const res = await request(app)
+      .get(`/api/v3/servers/${serverId}/tunnel`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.address).toBe("vivid-lagoon-9784.play.minekube.net");
+  });
+
   it("Minekube refuses Bedrock servers with directions", async () => {
     const catalog = await request(app)
       .get("/api/v3/blueprints")

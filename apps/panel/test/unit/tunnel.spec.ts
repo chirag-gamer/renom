@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { endpointValid, generateEndpointName } from "../../src/server/modules/tunnels/minekube.js";
+import {
+  addressForEndpoint,
+  endpointValid,
+  generateEndpointName,
+} from "../../src/server/modules/tunnels/minekube.js";
 
 describe("tunnel endpoint names", () => {
+  it("derives the address Connect publishes for a reserved endpoint", () => {
+    // The plugin prints this exact string; the panel needs it without the line,
+    // because a busy server pushes it out of the retained console history.
+    expect(addressForEndpoint("noble-fjord-2128")).toBe("noble-fjord-2128.play.minekube.net");
+  });
   it("accepts only the Connect grammar the panel documents", () => {
     expect(endpointValid("vivid-lagoon-9784")).toBe(true);
     expect(endpointValid("amber-9784")).toBe(true);

@@ -53,6 +53,17 @@ export function parsePublicAddress(line: string): string | null {
   return m?.[1] ?? null;
 }
 
+/**
+ * The address Connect publishes for a reserved endpoint. Read from the plugin's
+ * own output when that line is still in the console history, but a busy server
+ * pushes 500 lines out within minutes, and the address must not vanish with it:
+ * the panel minted the endpoint, so the address is its function
+ * (docs/tunnels.md: `<endpoint>.play.minekube.net`).
+ */
+export function addressForEndpoint(endpoint: string): string {
+  return `${endpoint}.play.minekube.net`;
+}
+
 /** Newest address wins while scanning oldest → newest history. */
 export function scanHistoryForAddress(lines: Array<{ text: string }>): string | null {
   let found: string | null = null;
