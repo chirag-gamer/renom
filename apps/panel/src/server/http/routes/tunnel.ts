@@ -14,11 +14,11 @@ import {
 import { parseBody } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import {
-  addressForEndpoint,
   claimEndpointName,
   endpointTaken,
   endpointValid,
   installPlugin,
+  resolveJoinAddress,
   scanHistoryForAddress,
 } from "../../modules/tunnels/minekube.js";
 import { join } from "node:path";
@@ -62,14 +62,14 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       const id = req.params.id ?? "";
       const endpoint = stored(id, "tunnel.endpoint");
       const provider = stored(id, "tunnel.provider");
-      // The printed line is the source of truth, but it scrolls out of the
-      // retained history on a busy server, which used to make the address
-      // disappear from the panel entirely. The reserved endpoint still names
-      // the address, so it answers when the line is gone.
+      // The printed line is the plugin's own word, but it scrolls out of the
+      // retained history on a busy server and can outlive the endpoint it was
+      // printed for. resolveJoinAddress keeps it only while it still matches
+      // the endpoint reserved now, so a renamed tunnel never advertises a dead
+      // address yet the address never vanishes with the line either.
       const printed =
         provider === "minekube" ? scanHistoryForAddress(engine.history(id, 500)) : null;
-      const address =
-        printed ?? (provider === "minekube" && endpoint ? addressForEndpoint(endpoint) : null);
+      const address = provider === "minekube" ? resolveJoinAddress(printed, endpoint) : null;
       res.json({ provider, endpoint, address });
     } catch (e) {
       next(e);

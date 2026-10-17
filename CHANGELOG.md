@@ -70,7 +70,9 @@ All notable changes to Renom are documented here. Format based on
 - The server header showed the host's internal address even when a Minekube tunnel had published a
   public one. It now shows the address players actually dial (`<endpoint>.play.minekube.net`), and
   that address no longer disappears from the panel once the plugin's "Your public address" line has
-  been pushed out of the retained console history by a busy server.
+  been pushed out of the retained console history by a busy server. It is scoped to the endpoint
+  reserved now, so renaming a tunnel while the server is stopped does not surface the previous
+  endpoint's address.
 - Endstone reported `install_failed` on every current Debian and Ubuntu: the installer ran a bare
   `pip install` into the system interpreter, which PEP 668 refuses. Endstone now installs into a
   per-server virtualenv under `.renom/venv`, and the engine launches that interpreter, so the server

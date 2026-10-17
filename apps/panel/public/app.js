@@ -1505,7 +1505,14 @@ function ansiToHtml(text) {
     html += css ? `<span style="${css}">${escapeHtml(plain)}</span>` : escapeHtml(plain);
     plain = "";
   };
-  const escape = /\u001b\[([0-9;]*)([A-Za-z])/g;
+  // One complete sequence at a time: a CSI (ESC [ params intermediates final),
+  // an OSC (ESC ] … BEL or ST), or a bare two-character escape. Only an SGR
+  // CSI (final byte "m") styles the text; every other sequence is removed from
+  // the output rather than printed. A private cursor-mode code such as
+  // ESC[?25l has no letter final after digits, so the older digit-only matcher
+  // walked past it and leaked its bytes as visible text.
+  const escape =
+    /\u001b\[([0-9;:<=>?]*)[ -/]*([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\|$)|\u001b[@-Z\\^_]/g;
   let last = 0;
   let match;
   while ((match = escape.exec(text)) !== null) {
@@ -2359,14 +2366,19 @@ document.getElementById("form-variables").addEventListener("submit", async (e) =
 /* ----- network: allocations + tunnel ----- */
 
 async function refreshNetwork(generation) {
+  // The address the header shows belongs to one server: pin the id, because a
+  // response that lands after navigation must not paint another server's
+  // tunnel onto the header. The tunnel submit path calls this without a
+  // generation, so the id check is the guard that always applies.
+  const serverId = currentServer.id;
   const list = document.getElementById("alloc-list");
   const err = document.getElementById("network-error");
   err.hidden = true;
   list.innerHTML = "";
-  const { status, data } = await api(`/servers/${currentServer.id}/allocations`, {
+  const { status, data } = await api(`/servers/${serverId}/allocations`, {
     token: store.token,
   });
-  if (isStaleLoad(generation)) return;
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
   if (status !== 200) {
     fail(err, "You don't have permission to see network settings.");
     return;
@@ -2378,8 +2390,8 @@ async function refreshNetwork(generation) {
     li.append(name);
     list.append(li);
   }
-  const t = await api(`/servers/${currentServer.id}/tunnel`, { token: store.token });
-  if (isStaleLoad(generation)) return;
+  const t = await api(`/servers/${serverId}/tunnel`, { token: store.token });
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
   const info = document.getElementById("tunnel-info");
   if (t.status === 200 && t.data.endpoint) {
     info.textContent = t.data.address
@@ -2412,7 +2424,7 @@ document.getElementById("form-tunnel").addEventListener("submit", async (e) => {
   if (status !== 201) fail(err, describeProblem(status, data));
   else {
     e.target.reset();
-    refreshNetwork();
+    refreshNetwork(serverGeneration);
   }
 });
 

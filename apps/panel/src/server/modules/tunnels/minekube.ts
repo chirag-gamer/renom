@@ -74,6 +74,20 @@ export function scanHistoryForAddress(lines: Array<{ text: string }>): string | 
   return found;
 }
 
+/**
+ * The join address to show. The plugin's printed line is the source of truth,
+ * but only while it names the endpoint reserved now: the engine keeps the last
+ * run's scrollback while the server is stopped (engine.ts `history`), so a
+ * tunnel renamed in that window leaves the previous endpoint's line behind and
+ * it would advertise an address nobody can dial. When no endpoint is reserved
+ * the scanned line is still the only answer; otherwise the derivation stands
+ * in, which is also what keeps the address on screen once the line scrolls out.
+ */
+export function resolveJoinAddress(printed: string | null, endpoint: string | null): string | null {
+  const derived = endpoint ? addressForEndpoint(endpoint) : null;
+  return printed && (derived === null || printed === derived) ? printed : derived;
+}
+
 // Connect's grammar: 4-8 letters, then 4 digits, joined by single dashes —
 // e.g. `vivid-lagoon-9784`. Validating against the real shape (rather than any
 // lowercase string) means a stored endpoint can actually come up, instead of
