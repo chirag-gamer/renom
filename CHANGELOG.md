@@ -7,6 +7,15 @@ All notable changes to Renom are documented here. Format based on
 
 ### Changed
 
+- Console: the log is a fixed, self-scrolling pane sized to the viewport instead of a box that kept
+  growing. A long-running server no longer pushes the page down, and the view follows the newest
+  lines only while it is already at the bottom, so scrolling back through history is not yanked away
+  by the next streamed line.
+- Console: ANSI colour codes render as coloured text instead of literal escape text. Basic, 256-colour
+  and truecolour SGR, plus bold, dim, and underline, are converted to spans using Pterodactyl's
+  palette; every other escape sequence (cursor moves, screen clears) is dropped. Line text is
+  HTML-escaped, so a line that prints `<script>` stays text.
+
 - The panel is now full-screen with a persistent left navigation rail. Global destinations (Servers,
   Account, API keys, Admin) sit at the top; when a server is open, its own menus — Console, Files,
   Backups, Schedule, Startup, Network, Users, Plugins, Settings — appear beneath and stay put while
@@ -58,6 +67,12 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
+- The server header showed the host's internal address even when a Minekube tunnel had published a
+  public one. It now shows the address players actually dial (`<endpoint>.play.minekube.net`), and
+  that address no longer disappears from the panel once the plugin's "Your public address" line has
+  been pushed out of the retained console history by a busy server. It is scoped to the endpoint
+  reserved now, so renaming a tunnel while the server is stopped does not surface the previous
+  endpoint's address.
 - Endstone reported `install_failed` on every current Debian and Ubuntu: the installer ran a bare
   `pip install` into the system interpreter, which PEP 668 refuses. Endstone now installs into a
   per-server virtualenv under `.renom/venv`, and the engine launches that interpreter, so the server

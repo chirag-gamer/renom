@@ -18,6 +18,7 @@ import {
   endpointTaken,
   endpointValid,
   installPlugin,
+  resolveJoinAddress,
   scanHistoryForAddress,
 } from "../../modules/tunnels/minekube.js";
 import { join } from "node:path";
@@ -61,8 +62,14 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       const id = req.params.id ?? "";
       const endpoint = stored(id, "tunnel.endpoint");
       const provider = stored(id, "tunnel.provider");
-      const address =
+      // The printed line is the plugin's own word, but it scrolls out of the
+      // retained history on a busy server and can outlive the endpoint it was
+      // printed for. resolveJoinAddress keeps it only while it still matches
+      // the endpoint reserved now, so a renamed tunnel never advertises a dead
+      // address yet the address never vanishes with the line either.
+      const printed =
         provider === "minekube" ? scanHistoryForAddress(engine.history(id, 500)) : null;
+      const address = provider === "minekube" ? resolveJoinAddress(printed, endpoint) : null;
       res.json({ provider, endpoint, address });
     } catch (e) {
       next(e);

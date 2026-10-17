@@ -53,6 +53,17 @@ export function parsePublicAddress(line: string): string | null {
   return m?.[1] ?? null;
 }
 
+/**
+ * The address Connect publishes for a reserved endpoint. Read from the plugin's
+ * own output when that line is still in the console history, but a busy server
+ * pushes 500 lines out within minutes, and the address must not vanish with it:
+ * the panel minted the endpoint, so the address is its function
+ * (docs/tunnels.md: `<endpoint>.play.minekube.net`).
+ */
+export function addressForEndpoint(endpoint: string): string {
+  return `${endpoint}.play.minekube.net`;
+}
+
 /** Newest address wins while scanning oldest → newest history. */
 export function scanHistoryForAddress(lines: Array<{ text: string }>): string | null {
   let found: string | null = null;
@@ -61,6 +72,20 @@ export function scanHistoryForAddress(lines: Array<{ text: string }>): string | 
     if (addr) found = addr;
   }
   return found;
+}
+
+/**
+ * The join address to show. The plugin's printed line is the source of truth,
+ * but only while it names the endpoint reserved now: the engine keeps the last
+ * run's scrollback while the server is stopped (engine.ts `history`), so a
+ * tunnel renamed in that window leaves the previous endpoint's line behind and
+ * it would advertise an address nobody can dial. When no endpoint is reserved
+ * the scanned line is still the only answer; otherwise the derivation stands
+ * in, which is also what keeps the address on screen once the line scrolls out.
+ */
+export function resolveJoinAddress(printed: string | null, endpoint: string | null): string | null {
+  const derived = endpoint ? addressForEndpoint(endpoint) : null;
+  return printed && (derived === null || printed === derived) ? printed : derived;
 }
 
 // Connect's grammar: 4-8 letters, then 4 digits, joined by single dashes —

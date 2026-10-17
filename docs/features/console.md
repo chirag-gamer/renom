@@ -13,6 +13,17 @@ first, then live lines append as they arrive. A slow client is dropped
 rather than buffered forever. Every payload carries a `{v: 1}` envelope so
 clients can evolve.
 
+The log is a fixed pane: it scrolls inside itself, so a server that has been
+running for days never pushes the page down. It follows the newest lines only
+while you are already at the bottom — scroll up to read, and it stays put.
+
+Colour codes are rendered, not printed. Minecraft writes ANSI escape sequences
+(`ESC[38;2;255;170;0m`), which the browser shows as text; the panel converts
+them to coloured spans using the same palette Pterodactyl uses, including
+256-colour and truecolour, bold, dim, and underline. Anything else an escape
+can do (move the cursor, clear the screen) is dropped. Line text is escaped,
+so output that prints markup is displayed as written, never executed.
+
 ## Revocation cuts the stream
 
 Removing a collaborator, suspending a user or server, or revoking an API key

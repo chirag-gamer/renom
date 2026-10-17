@@ -14,7 +14,10 @@ Minekube Connect tunnel from the Network tab:
    with that name.
 3. After boot, your public address appears on the same tab, shaped like
    `my-server-1.play.minekube.net`. Share that. Players join it on the
-   normal port, Java and Bedrock alike.
+   normal port, Java and Bedrock alike. Users with Network access see it in
+   the server header too, so the address you hand out is on screen as soon as
+   the server is open — and it stays there even after the plugin's own line
+   has scrolled out of the console history.
 
 Two things to know. First, Minecraft 1.19 and newer must have
 `enforce-secure-profile=false` in server.properties or tunnelled players get

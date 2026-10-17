@@ -679,13 +679,17 @@ button:disabled {
   color: #f3f0ec;
   border-radius: 8px;
   padding: 14px;
-  /* The console is the reason this page exists: give it the height. */
-  min-height: calc(100vh - 340px);
-  max-height: none;
+  /* A fixed pane that scrolls itself, like Pterodactyl's terminal: output
+     streams into the same box forever instead of pushing the page down. */
+  height: max(240px, calc(100vh - 320px));
   overflow-y: auto;
+  overscroll-behavior: contain;
   white-space: pre-wrap;
   word-break: break-word;
   font: 400 14px/1.6 var(--mono);
+}
+.console-line {
+  min-height: 1.6em;
 }
 textarea {
   display: block;
