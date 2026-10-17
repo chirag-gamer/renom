@@ -1512,7 +1512,7 @@ function ansiToHtml(text) {
   // ESC[?25l has no letter final after digits, so the older digit-only matcher
   // walked past it and leaked its bytes as visible text.
   const escape =
-    /\u001b\[([0-9;:<=>?]*)[ -/]*([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\|$)|\u001b[@-Z\\^_]/g;
+    /\u001b\[([0-9;:<=>?]*)[ -/]*([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\|$)|\u001b[@-Z\\^_0-9<=>?a-z{|}~]/g;
   let last = 0;
   let match;
   while ((match = escape.exec(text)) !== null) {
