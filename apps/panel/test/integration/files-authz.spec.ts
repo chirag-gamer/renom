@@ -180,4 +180,58 @@ describe("files API authorization + confinement", () => {
       .send({ path: "big.txt", content: "x".repeat(1_500_000) });
     expect(big.status).toBe(413);
   });
+
+  it("downloads a file with attachment disposition", async () => {
+    const res = await request(app)
+      .get(`/api/v3/servers/${serverId}/files/download`)
+      .query({ path: "server.properties" })
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toContain("attachment");
+    expect(res.body?.toString?.("utf8") ?? res.text).toBe("motd=hello");
+  });
+
+  it("compresses and decompresses files via API", async () => {
+    const srvDir = join(dir, "servers", serverId);
+    writeFileSync(join(srvDir, "comp1.txt"), "hello comp1", "utf8");
+    writeFileSync(join(srvDir, "comp2.txt"), "hello comp2", "utf8");
+
+    const compRes = await request(app)
+      .post(`/api/v3/servers/${serverId}/files/compress`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ root: "", files: ["comp1.txt", "comp2.txt"], archiveName: "bundle.tar.gz" });
+    expect(compRes.status).toBe(200);
+    expect(compRes.body.archive).toBe("bundle.tar.gz");
+
+    const decompRes = await request(app)
+      .post(`/api/v3/servers/${serverId}/files/decompress`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ path: "bundle.tar.gz", destination: "decomp" });
+    expect(decompRes.status).toBe(204);
+
+    const check = await request(app)
+      .get(`/api/v3/servers/${serverId}/files/content`)
+      .query({ path: "decomp/comp1.txt" })
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(check.status).toBe(200);
+    expect(check.body.content).toBe("hello comp1");
+  });
+
+  it("bulk deletes multiple files via API", async () => {
+    const srvDir = join(dir, "servers", serverId);
+    writeFileSync(join(srvDir, "bulk1.txt"), "b1", "utf8");
+    writeFileSync(join(srvDir, "bulk2.txt"), "b2", "utf8");
+
+    const delRes = await request(app)
+      .post(`/api/v3/servers/${serverId}/files/delete`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ paths: ["bulk1.txt", "bulk2.txt"] });
+    expect(delRes.status).toBe(204);
+
+    const check = await request(app)
+      .get(`/api/v3/servers/${serverId}/files/content`)
+      .query({ path: "bulk1.txt" })
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(check.status).toBe(404);
+  });
 });

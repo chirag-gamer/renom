@@ -9,6 +9,9 @@ import {
 } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { confinePath, PathEscapeError } from "./confinement.js";
+import { createArchive, extractArchiveSafe, ArchiveError } from "./archive.js";
+
+export { ArchiveError };
 
 export interface FileEntry {
   name: string;
@@ -99,6 +102,35 @@ export class FilesService {
       throw new PathEscapeError("refusing to delete server root itself");
     }
     rmSync(target, { recursive: true });
+  }
+
+  removeMany(serverRoot: string, relPaths: string[]): void {
+    for (const p of relPaths) {
+      this.remove(serverRoot, p);
+    }
+  }
+
+  async compress(
+    serverRoot: string,
+    baseRelDir: string,
+    files: string[],
+    archiveRelName?: string,
+  ): Promise<string> {
+    return createArchive(serverRoot, baseRelDir, files, archiveRelName);
+  }
+
+  async decompress(serverRoot: string, archiveRelPath: string, destRelDir = ""): Promise<void> {
+    const archiveFullPath = confinePath(serverRoot, archiveRelPath);
+    await extractArchiveSafe(archiveFullPath, serverRoot, destRelDir, 0, true);
+  }
+
+  resolveFile(
+    serverRoot: string,
+    relPath: string,
+  ): { fullPath: string; fileName: string; isDir: boolean } {
+    const full = confinePath(serverRoot, relPath);
+    const st = statSync(full);
+    return { fullPath: full, fileName: basename(full), isDir: st.isDirectory() };
   }
 
   resolve(serverRoot: string, relPath: string): string {

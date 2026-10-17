@@ -250,6 +250,23 @@ export class ServersRepo {
     return this.byId(id);
   }
 
+  updateBlueprint(
+    id: string,
+    blueprintId: string,
+    versionTag = "v1",
+    imageRef = "",
+  ): ServerRow | null {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE servers
+         SET blueprint_id = ?, blueprint_version_tag = ?, image_ref = CASE WHEN ? != '' THEN ? ELSE image_ref END, updated_at = ?
+         WHERE id = ? AND deleted_at IS NULL`,
+      )
+      .run(blueprintId, versionTag, imageRef, imageRef, now, id);
+    return this.byId(id);
+  }
+
   setStatus(id: string, status: string): void {
     this.db
       .prepare("UPDATE servers SET status = ?, updated_at = ? WHERE id = ?")

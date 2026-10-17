@@ -5,6 +5,14 @@ All notable changes to Renom are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page, sorted by Most Popular). Restricted strictly to plugins (`projectType: "plugin"`).
+- Version selection modal: prompt users to select a compatible version when multiple releases exist on Modrinth, with release-type badges and Minecraft version compatibility.
+- Dedicated Server Software tab: separated server software from the Plugins tab into its own dedicated view placed beneath Plugins.
+- Game Swapper: swap server software and entire game ecosystems (Minecraft Java, Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python) with an option to create a full backup of all current server files before swapping.
+- File manager bulk actions & multi-select: select-all directory checkbox, row checkboxes, and a floating bulk actions bar supporting bulk Download, Archive (compress), Extract (decompress), Delete, and Clear with path-confinement validation.
+
 ### Changed
 
 - Console: the log is a fixed, self-scrolling pane sized to the viewport instead of a box that kept

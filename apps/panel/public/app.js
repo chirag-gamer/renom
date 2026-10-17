@@ -261,6 +261,7 @@ const serverTabPermissions = {
   backups: "backup.read",
   schedules: "schedule.read",
   addons: "startup.read",
+  software: "startup.read",
   startup: "startup.read",
   network: "allocation.read",
   users: "user.read",
@@ -1147,7 +1148,11 @@ async function openServer(id, tab = "console", updateUrl = true) {
   if (canServer("backup.read")) tasks.push(refreshBackups(generation));
   if (canServer("schedule.read")) tasks.push(refreshSchedules(generation));
   if (canServer("startup.read")) {
-    tasks.push(refreshAddons(generation), refreshVariables(generation));
+    tasks.push(
+      refreshAddons(generation),
+      refreshSoftware(generation),
+      refreshVariables(generation),
+    );
   }
   if (canServer("allocation.read")) tasks.push(refreshNetwork(generation));
   if (canServer("user.read")) tasks.push(refreshSubusers(generation));
@@ -1366,6 +1371,7 @@ function setTab(name, updateUrl = true) {
     "backups",
     "schedules",
     "addons",
+    "software",
     "startup",
     "network",
     "users",
@@ -1791,11 +1797,34 @@ document.getElementById("form-console").addEventListener("submit", async (e) => 
 
 /* ----- files ----- */
 
+const selectedFiles = new Set();
+let currentDirItems = [];
+
+function updateBulkBar() {
+  const bar = document.getElementById("files-bulk-bar");
+  const countEl = document.getElementById("files-selected-count");
+  const selectAll = document.getElementById("file-select-all");
+  const count = selectedFiles.size;
+  if (!bar || !countEl) return;
+  countEl.textContent = `${count} item${count === 1 ? "" : "s"} selected`;
+  bar.hidden = count === 0;
+  if (selectAll) {
+    selectAll.checked = currentDirItems.length > 0 && count === currentDirItems.length;
+    selectAll.indeterminate = count > 0 && count < currentDirItems.length;
+  }
+}
+
 async function refreshFiles(generation) {
   const list = document.getElementById("file-list");
   const err = document.getElementById("files-error");
-  err.hidden = true;
+  const success = document.getElementById("files-success");
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
   list.innerHTML = "";
+  selectedFiles.clear();
+  currentDirItems = [];
+  updateBulkBar();
+
   const { status, data } = await api(
     `/servers/${currentServer.id}/files?path=${encodeURIComponent(filesDir)}`,
     { token: store.token },
@@ -1806,6 +1835,9 @@ async function refreshFiles(generation) {
     return;
   }
   document.getElementById("files-path").textContent = `/${filesDir}`;
+  currentDirItems = data.items;
+  updateBulkBar();
+
   if (filesDir) {
     const up = document.createElement("li");
     const btn = document.createElement("button");
@@ -1823,6 +1855,22 @@ async function refreshFiles(generation) {
   }
   for (const item of data.items) {
     const li = document.createElement("li");
+
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "file-item-check";
+    check.checked = selectedFiles.has(item.name);
+    check.setAttribute("aria-label", `Select ${item.name}`);
+    check.addEventListener("change", (e) => {
+      e.stopPropagation();
+      if (check.checked) {
+        selectedFiles.add(item.name);
+      } else {
+        selectedFiles.delete(item.name);
+      }
+      updateBulkBar();
+    });
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "linklike";
@@ -1852,6 +1900,9 @@ async function refreshFiles(generation) {
       actions.append(action);
     };
     const relative = filesDir ? `${filesDir}/${item.name}` : item.name;
+    if (!item.isDir && canServer("file.read")) {
+      addAction("Download", "file.read", () => downloadFile(relative), false);
+    }
     if (canServer("file.update")) {
       addAction("Rename", "file.update", () => renameFileTo(relative, dirOf(relative)), false);
       addAction("Move", "file.update", () => moveFileTo(relative), false);
@@ -1873,10 +1924,179 @@ async function refreshFiles(generation) {
         true,
       );
     }
-    li.append(btn, meta, actions);
+    li.append(check, btn, meta, actions);
     list.append(li);
   }
 }
+
+async function downloadFile(path) {
+  const err = document.getElementById("files-error");
+  if (err) err.hidden = true;
+  try {
+    const res = await fetch(
+      `${API}/servers/${currentServer.id}/files/download?path=${encodeURIComponent(path)}`,
+      {
+        headers: { Authorization: `Bearer ${store.token}` },
+      },
+    );
+    if (!res.ok) {
+      fail(err, `Download failed: HTTP ${res.status}`);
+      return;
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = basename(path);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  } catch {
+    fail(err, "Network error downloading file.");
+  }
+}
+
+document.getElementById("file-select-all")?.addEventListener("change", (e) => {
+  const checked = e.target.checked;
+  selectedFiles.clear();
+  if (checked) {
+    for (const item of currentDirItems) {
+      selectedFiles.add(item.name);
+    }
+  }
+  document.querySelectorAll(".file-item-check").forEach((cb) => {
+    cb.checked = checked;
+  });
+  updateBulkBar();
+});
+
+document.getElementById("btn-bulk-clear")?.addEventListener("click", () => {
+  selectedFiles.clear();
+  document.querySelectorAll(".file-item-check").forEach((cb) => {
+    cb.checked = false;
+  });
+  updateBulkBar();
+});
+
+document.getElementById("btn-bulk-delete")?.addEventListener("click", async () => {
+  if (selectedFiles.size === 0) return;
+  if (
+    !window.confirm(
+      `Delete ${selectedFiles.size} selected item${selectedFiles.size === 1 ? "" : "s"}? This cannot be undone.`,
+    )
+  )
+    return;
+  const err = document.getElementById("files-error");
+  const success = document.getElementById("files-success");
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  const paths = Array.from(selectedFiles).map((name) => (filesDir ? `${filesDir}/${name}` : name));
+  const res = await api(`/servers/${currentServer.id}/files/delete`, {
+    method: "POST",
+    token: store.token,
+    body: { paths },
+  });
+  if (res.status !== 204) {
+    fail(err, describeProblem(res.status, res.data));
+  } else {
+    selectedFiles.clear();
+    if (success) {
+      success.textContent = `Deleted ${paths.length} item${paths.length === 1 ? "" : "s"}.`;
+      success.hidden = false;
+    }
+    refreshFiles();
+  }
+});
+
+document.getElementById("btn-bulk-compress")?.addEventListener("click", async () => {
+  if (selectedFiles.size === 0) return;
+  const name = window.prompt("Archive name (e.g. backup.tar.gz):", "archive.tar.gz");
+  if (!name) return;
+  const err = document.getElementById("files-error");
+  const success = document.getElementById("files-success");
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  const paths = Array.from(selectedFiles).map((name) => (filesDir ? `${filesDir}/${name}` : name));
+  const archivePath = filesDir ? `${filesDir}/${name}` : name;
+  const res = await api(`/servers/${currentServer.id}/files/compress`, {
+    method: "POST",
+    token: store.token,
+    body: { paths, archiveName: archivePath },
+  });
+  if (res.status !== 200) {
+    fail(err, describeProblem(res.status, res.data));
+  } else {
+    selectedFiles.clear();
+    if (success) {
+      success.textContent = `Archive "${name}" created successfully.`;
+      success.hidden = false;
+    }
+    refreshFiles();
+  }
+});
+
+document.getElementById("btn-bulk-decompress")?.addEventListener("click", async () => {
+  if (selectedFiles.size === 0) return;
+  const archiveItem = Array.from(selectedFiles).find((name) =>
+    /\.(tar\.gz|tgz|zip|tar)$/i.test(name),
+  );
+  if (!archiveItem) {
+    window.alert("Please select an archive file (.tar.gz, .tgz, .zip, .tar) to extract.");
+    return;
+  }
+  const relative = filesDir ? `${filesDir}/${archiveItem}` : archiveItem;
+  const err = document.getElementById("files-error");
+  const success = document.getElementById("files-success");
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  const res = await api(`/servers/${currentServer.id}/files/decompress`, {
+    method: "POST",
+    token: store.token,
+    body: { path: relative },
+  });
+  if (res.status !== 200) {
+    fail(err, describeProblem(res.status, res.data));
+  } else {
+    selectedFiles.clear();
+    if (success) {
+      success.textContent = `Extracted "${archiveItem}" successfully.`;
+      success.hidden = false;
+    }
+    refreshFiles();
+  }
+});
+
+document.getElementById("btn-bulk-download")?.addEventListener("click", async () => {
+  if (selectedFiles.size === 0) return;
+  const items = Array.from(selectedFiles);
+  if (items.length === 1) {
+    const single = currentDirItems.find((i) => i.name === items[0]);
+    if (single && !single.isDir) {
+      const path = filesDir ? `${filesDir}/${single.name}` : single.name;
+      await downloadFile(path);
+      return;
+    }
+  }
+  const archiveName = filesDir ? `${filesDir}/download.tar.gz` : "download.tar.gz";
+  const paths = items.map((name) => (filesDir ? `${filesDir}/${name}` : name));
+  const res = await api(`/servers/${currentServer.id}/files/compress`, {
+    method: "POST",
+    token: store.token,
+    body: { paths, archiveName },
+  });
+  if (res.status === 200) {
+    await downloadFile(archiveName);
+    await api(`/servers/${currentServer.id}/files/delete`, {
+      method: "POST",
+      token: store.token,
+      body: { path: archiveName },
+    });
+    refreshFiles();
+  } else {
+    fail(document.getElementById("files-error"), describeProblem(res.status, res.data));
+  }
+});
 
 function basename(path) {
   return path.split("/").filter(Boolean).pop() ?? path;
@@ -2140,35 +2360,42 @@ function describeProblem(status, data) {
   return detail || "Something went wrong on our side. Try again.";
 }
 
-/* ----- addons ----- */
+/* ----- plugins (addons) ----- */
+
+let addonSearchQuery = "";
+let addonSearchPage = 1;
+const addonSearchLimit = 10;
+let addonSearchTotalPages = 1;
 
 async function refreshAddons(generation) {
   const list = document.getElementById("addon-list");
   const err = document.getElementById("addons-error");
-  err.hidden = true;
+  if (err) err.hidden = true;
+  if (!list) return;
   list.innerHTML = "";
   const { status, data } = await api(`/servers/${currentServer.id}/addons`, { token: store.token });
   if (isStaleLoad(generation)) return;
   if (status !== 200) {
-    fail(err, "You don't have permission to see addons.");
+    fail(err, "You don't have permission to see plugins.");
     return;
   }
   if (data.addons.length === 0) {
     const li = document.createElement("li");
-    li.textContent =
-      "No mods or plugins yet. Paper and Velocity servers use plugins/, Fabric and Forge use mods/.";
+    li.textContent = "No plugins installed yet. Search Modrinth above to install plugins.";
     list.append(li);
+    return;
   }
   for (const a of data.addons) {
     const li = document.createElement("li");
     const name = document.createElement("span");
-    name.textContent = `${a.name} (${a.folder}, ${Math.round(a.bytes / 1024)} KB)`;
+    name.textContent = `${a.name} (${Math.round(a.bytes / 1024)} KB)`;
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "linklike danger-text";
     remove.textContent = "Remove";
     remove.hidden = !canServer("startup.update");
     remove.addEventListener("click", async () => {
+      if (!window.confirm(`Remove plugin "${a.name}"?`)) return;
       const res = await api(
         `/servers/${currentServer.id}/addons/${a.folder}/${encodeURIComponent(a.name)}`,
         {
@@ -2177,18 +2404,21 @@ async function refreshAddons(generation) {
         },
       );
       if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
-      else refreshAddons();
+      else {
+        const success = document.getElementById("addons-alert-success");
+        if (success) {
+          success.textContent = `Removed plugin "${a.name}".`;
+          success.hidden = false;
+        }
+        refreshAddons();
+      }
     });
     li.append(name, remove);
     list.append(li);
   }
 }
 
-// What this server can load at all. Vanilla, Bedrock, and the generic
-// runtimes have no mod or plugin platform, so the Addons tab is hidden
-// rather than offering something that cannot work.
 async function refreshAddonCapability(generation) {
-  const results = document.getElementById("addon-search-results");
   const note = document.getElementById("addon-search-note");
   const { status, data } = await api(`/servers/${currentServer.id}/addons/capability`, {
     token: store.token,
@@ -2199,103 +2429,276 @@ async function refreshAddonCapability(generation) {
   const usable = supported && canServer("startup.read");
   if (navLink) navLink.hidden = !usable;
   if (!usable) {
-    // setTab() already ran before this check, so a deep link to
-    // /servers/:id/addons would leave the addons panel showing with no nav
-    // entry left to leave it. Move to a tab this server actually has.
     if (!document.getElementById("tab-addons").hidden) {
       setTab(availableServerTabs()[0] || "console");
     }
     return;
   }
-  const kind = data.projectType === "mod" ? "mods" : "plugins";
-  document.getElementById("addon-kind").textContent = kind;
-  document.getElementById("server-nav-addons-label").textContent =
-    kind === "mods" ? "Mods" : "Plugins";
-  results.innerHTML = "";
+  const eyebrow = document.getElementById("addon-kind-eyebrow");
+  if (eyebrow) eyebrow.textContent = "Plugins";
+  const navLabel = document.getElementById("server-nav-addons-label");
+  if (navLabel) navLabel.textContent = "Plugins";
   if (data.mcVersion) {
-    note.hidden = true;
+    if (note) note.hidden = true;
+    if (!addonSearchQuery) {
+      void executeAddonSearch("", 1);
+    }
   } else {
-    // The installer now records the version it resolved, so this only shows
-    // on a server that was created before that, or one still installing.
-    note.hidden = false;
-    note.textContent =
-      'Set an exact Minecraft version on the Startup tab first — "latest" cannot resolve addon files.';
+    if (note) {
+      note.hidden = false;
+      note.textContent =
+        'Set an exact Minecraft version on the Startup tab first — "latest" cannot resolve plugin files.';
+    }
   }
 }
 
-document.getElementById("form-addon-search").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const err = document.getElementById("addons-error");
-  const results = document.getElementById("addon-search-results");
-  const note = document.getElementById("addon-search-note");
-  err.hidden = true;
-  results.innerHTML = "";
-  const query = String(new FormData(e.target).get("q") || "").trim();
-  if (!query) {
-    note.hidden = false;
-    note.textContent = "Type something to search Modrinth.";
-    return;
-  }
-  // Pin the server this search is for. Without it a slow response can land
-  // after the user moved to another server, rendering the wrong hits and
-  // leaving Install buttons that would install into the new server.
-  const serverId = currentServer.id;
+async function executeAddonSearch(query, page = 1) {
+  addonSearchQuery = query;
+  addonSearchPage = page;
+  const serverId = currentServer?.id;
   const generation = serverGeneration;
-  const { status, data } = await api(
-    `/servers/${serverId}/addons/search?q=${encodeURIComponent(query)}`,
-    { token: store.token },
-  );
+  const container = document.getElementById("addon-cards-container");
+  const note = document.getElementById("addon-search-note");
+  const err = document.getElementById("addons-alert-error");
+  const pagination = document.getElementById("addons-pagination");
+  const prevBtn = document.getElementById("btn-addons-prev");
+  const nextBtn = document.getElementById("btn-addons-next");
+  const pageIndicator = document.getElementById("addons-page-indicator");
+
+  if (err) err.hidden = true;
+  if (!container) return;
+  container.innerHTML = "";
+
+  const qs = `?q=${encodeURIComponent(query)}&page=${page}&limit=${addonSearchLimit}`;
+  const { status, data } = await api(`/servers/${serverId}/addons/search${qs}`, {
+    token: store.token,
+  });
+
   if (generation !== serverGeneration || currentServer?.id !== serverId) return;
   if (status !== 200) {
-    note.hidden = false;
-    note.textContent = describeProblem(status, data);
+    if (note) {
+      note.hidden = false;
+      note.textContent = describeProblem(status, data);
+    }
+    if (pagination) pagination.hidden = true;
     return;
   }
-  note.hidden = true;
-  if (data.hits.length === 0) {
-    const empty = document.createElement("li");
-    empty.textContent = `Nothing on Modrinth matches "${query}" for ${data.mcVersion}.`;
-    results.append(empty);
+  if (note) note.hidden = true;
+
+  if (!data.hits || data.hits.length === 0) {
+    container.innerHTML = `<p class="empty-state">No plugins found${query ? ` matching "${query}"` : ""}.</p>`;
+    if (pagination) pagination.hidden = true;
     return;
   }
+
+  addonSearchTotalPages = data.totalPages || 1;
+  if (pagination) {
+    pagination.hidden = false;
+    if (prevBtn) prevBtn.disabled = page <= 1;
+    if (nextBtn) nextBtn.disabled = page >= addonSearchTotalPages;
+    if (pageIndicator) {
+      pageIndicator.textContent = `Page ${page} of ${addonSearchTotalPages} (${data.totalHits} plugins)`;
+    }
+  }
+
   for (const hit of data.hits) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = `${hit.title} — ${hit.description}`;
+    const card = document.createElement("div");
+    card.className = "addon-card";
+
+    const header = document.createElement("div");
+    header.className = "addon-card-header";
+
+    if (hit.iconUrl) {
+      const icon = document.createElement("img");
+      icon.className = "addon-card-icon";
+      icon.src = hit.iconUrl;
+      icon.alt = "";
+      header.append(icon);
+    } else {
+      const placeholder = document.createElement("div");
+      placeholder.className = "addon-card-icon";
+      placeholder.textContent = "✦";
+      header.append(placeholder);
+    }
+
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "addon-card-title-group";
+    const title = document.createElement("h4");
+    title.className = "addon-card-title";
+    title.textContent = hit.title;
+    const author = document.createElement("span");
+    author.className = "addon-card-author";
+    author.textContent = `by ${hit.author}`;
+    titleGroup.append(title, author);
+    header.append(titleGroup);
+
+    const desc = document.createElement("p");
+    desc.className = "addon-card-desc";
+    desc.textContent = hit.description || "No description provided.";
+
+    const footer = document.createElement("div");
+    footer.className = "addon-card-footer";
     const meta = document.createElement("span");
-    meta.className = "role";
-    meta.textContent = `${hit.author} · ${Math.round(hit.downloads / 1000)}k downloads`;
-    const install = document.createElement("button");
-    install.type = "button";
-    install.className = "linklike";
-    install.textContent = "Install";
-    install.hidden = !canServer("startup.update");
-    install.addEventListener("click", async () => {
-      install.disabled = true;
-      const res = await api(`/servers/${serverId}/addons`, {
+    meta.className = "addon-card-meta";
+    meta.textContent = `${Math.round(hit.downloads / 1000)}k downloads`;
+
+    const installBtn = document.createElement("button");
+    installBtn.type = "button";
+    installBtn.className = "secondary";
+    installBtn.textContent = "Install";
+    installBtn.hidden = !canServer("startup.update");
+
+    installBtn.addEventListener("click", () => void handleInstallAddon(hit, installBtn));
+
+    footer.append(meta, installBtn);
+    card.append(header, desc, footer);
+    container.append(card);
+  }
+}
+
+async function handleInstallAddon(hit, installBtn) {
+  const serverId = currentServer.id;
+  const successAlert = document.getElementById("addons-alert-success");
+  const errorAlert = document.getElementById("addons-alert-error");
+  if (successAlert) successAlert.hidden = true;
+  if (errorAlert) errorAlert.hidden = true;
+
+  installBtn.disabled = true;
+  installBtn.textContent = "Checking...";
+
+  const { status, data } = await api(`/servers/${serverId}/addons/versions/${hit.projectId}`, {
+    token: store.token,
+  });
+
+  if (status === 200 && data.versions && data.versions.length > 1) {
+    installBtn.disabled = false;
+    installBtn.textContent = "Install";
+    openAddonVersionDialog(hit, data.versions);
+    return;
+  }
+
+  const versionId = data?.versions?.[0]?.id;
+  installBtn.textContent = "Installing...";
+  const res = await api(`/servers/${serverId}/addons`, {
+    method: "POST",
+    token: store.token,
+    body: { projects: [hit.projectId], versionId },
+  });
+
+  installBtn.disabled = false;
+  installBtn.textContent = "Install";
+
+  if (res.status !== 201) {
+    if (errorAlert) fail(errorAlert, describeProblem(res.status, res.data));
+  } else {
+    if (successAlert) {
+      successAlert.textContent = `Plugin "${hit.title}" installed successfully! It will activate on the next server start.`;
+      successAlert.hidden = false;
+    }
+    refreshAddons();
+  }
+}
+
+function openAddonVersionDialog(hit, versions) {
+  const dialog = document.getElementById("addon-version-dialog");
+  const title = document.getElementById("version-dialog-title");
+  const subtitle = document.getElementById("version-dialog-subtitle");
+  const list = document.getElementById("version-list-container");
+  const err = document.getElementById("version-dialog-error");
+  if (!dialog || !list) return;
+
+  if (err) err.hidden = true;
+  if (title) title.textContent = `Install ${hit.title}`;
+  if (subtitle) subtitle.textContent = `Select a version for your server:`;
+  list.innerHTML = "";
+
+  for (const v of versions) {
+    const item = document.createElement("div");
+    item.className = "version-item";
+
+    const info = document.createElement("div");
+    info.className = "version-info";
+    const vName = document.createElement("span");
+    vName.className = "version-name";
+    vName.textContent = v.name || v.versionNumber;
+
+    const vMeta = document.createElement("div");
+    vMeta.className = "version-meta";
+    const typeChip = document.createElement("span");
+    typeChip.className = "chip";
+    typeChip.textContent = v.versionType || "release";
+    const gv = document.createElement("span");
+    gv.textContent = `MC ${v.gameVersions?.join(", ") || ""}`;
+    vMeta.append(typeChip, gv);
+    info.append(vName, vMeta);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Install";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Installing...";
+      const res = await api(`/servers/${currentServer.id}/addons`, {
         method: "POST",
         token: store.token,
-        body: { projects: [hit.projectId] },
+        body: { projects: [hit.projectId], versionId: v.id },
       });
+      btn.disabled = false;
+      btn.textContent = "Install";
       if (res.status !== 201) {
-        fail(err, describeProblem(res.status, res.data));
-        // Let the user retry this project without rerunning the search.
-        install.disabled = false;
-        return;
+        if (err) fail(err, describeProblem(res.status, res.data));
+      } else {
+        if (typeof dialog.close === "function") dialog.close();
+        else dialog.removeAttribute("open");
+        const successAlert = document.getElementById("addons-alert-success");
+        if (successAlert) {
+          successAlert.textContent = `Plugin "${hit.title}" (${v.versionNumber}) installed successfully! It will activate on the next server start.`;
+          successAlert.hidden = false;
+        }
+        refreshAddons();
       }
-      refreshAddons();
     });
-    li.append(name, meta, install);
-    results.append(li);
+
+    item.append(info, btn);
+    list.append(item);
   }
+
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+document.getElementById("btn-addon-version-close")?.addEventListener("click", () => {
+  const dialog = document.getElementById("addon-version-dialog");
+  if (dialog) {
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+});
+
+document.getElementById("btn-addons-prev")?.addEventListener("click", () => {
+  if (addonSearchPage > 1) {
+    void executeAddonSearch(addonSearchQuery, addonSearchPage - 1);
+  }
+});
+
+document.getElementById("btn-addons-next")?.addEventListener("click", () => {
+  if (addonSearchPage < addonSearchTotalPages) {
+    void executeAddonSearch(addonSearchQuery, addonSearchPage + 1);
+  }
+});
+
+document.getElementById("form-addon-search").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const query = String(new FormData(e.target).get("q") || "").trim();
+  void executeAddonSearch(query, 1);
 });
 
 document.getElementById("form-addon").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = document.getElementById("addons-error");
-  err.hidden = true;
-  // Modrinth ids are case-sensitive; only the surrounding whitespace and
-  // separators are ours to normalise.
+  const success = document.getElementById("addons-alert-success");
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
   const projects = String(new FormData(e.target).get("projects") || "")
     .split(/[\s,]+/)
     .map((p) => p.trim())
@@ -2308,7 +2711,252 @@ document.getElementById("form-addon").addEventListener("submit", async (e) => {
   if (status !== 201) fail(err, describeProblem(status, data));
   else {
     e.target.reset();
+    if (success) {
+      success.textContent = "Installed requested plugins.";
+      success.hidden = false;
+    }
     refreshAddons();
+  }
+});
+
+/* ----- server software & game swapper ----- */
+
+let softwarePage = 1;
+const softwareLimit = 10;
+let softwareTotalPages = 1;
+let softwareCategory = "";
+let pendingSwapSoftware = null;
+
+async function refreshSoftware(generation) {
+  if (!currentServer) return;
+  const container = document.getElementById("software-cards-container");
+  const curName = document.getElementById("current-software-name");
+  const curDesc = document.getElementById("current-software-desc");
+  const curBadge = document.getElementById("current-software-runtime-badge");
+  const err = document.getElementById("software-alert-error");
+  const pagination = document.getElementById("software-pagination");
+  const prevBtn = document.getElementById("btn-software-prev");
+  const nextBtn = document.getElementById("btn-software-next");
+  const pageIndicator = document.getElementById("software-page-indicator");
+
+  if (err) err.hidden = true;
+  if (!container) return;
+  container.innerHTML = "";
+
+  const qs = `?page=${softwarePage}&limit=${softwareLimit}&category=${encodeURIComponent(softwareCategory)}`;
+  const { status, data } = await api(`/servers/${currentServer.id}/software${qs}`, {
+    token: store.token,
+  });
+
+  if (isStaleLoad(generation)) return;
+  if (status !== 200) {
+    if (err) fail(err, describeProblem(status, data));
+    return;
+  }
+
+  if (curName) curName.textContent = `${data.current.name} (${data.current.slug})`;
+  if (curDesc) curDesc.textContent = data.current.description || "";
+  if (curBadge) {
+    const state = currentServer.runtimeState || "offline";
+    if (state === "offline") {
+      curBadge.textContent = "Offline — Safe to switch software";
+      curBadge.style.color = "var(--ok)";
+    } else {
+      curBadge.textContent = `${state} — Stop server to switch software`;
+      curBadge.style.color = "var(--accent)";
+    }
+  }
+
+  softwareTotalPages = data.totalPages || 1;
+  if (pagination) {
+    pagination.hidden = data.total <= softwareLimit;
+    if (prevBtn) prevBtn.disabled = softwarePage <= 1;
+    if (nextBtn) nextBtn.disabled = softwarePage >= softwareTotalPages;
+    if (pageIndicator) {
+      pageIndicator.textContent = `Page ${softwarePage} of ${softwareTotalPages} (${data.total} software options)`;
+    }
+  }
+
+  if (data.items.length === 0) {
+    container.innerHTML = '<p class="empty-state">No software found in this category.</p>';
+    return;
+  }
+
+  for (const s of data.items) {
+    const card = document.createElement("div");
+    card.className = "software-card" + (s.slug === data.current.slug ? " current" : "");
+
+    const body = document.createElement("div");
+    body.className = "software-card-body";
+    const category = document.createElement("span");
+    category.className = "eyebrow";
+    category.textContent = s.category;
+    const title = document.createElement("h4");
+    title.textContent = s.name;
+    const desc = document.createElement("p");
+    desc.className = "software-card-desc";
+    desc.textContent = s.description || "";
+    body.append(category, title, desc);
+
+    const footer = document.createElement("div");
+    footer.className = "software-card-footer";
+    const popularity = document.createElement("span");
+    popularity.className = "addon-card-meta";
+    popularity.textContent = `Popularity #${s.popularityRank}`;
+
+    if (s.slug === data.current.slug) {
+      const activeChip = document.createElement("span");
+      activeChip.className = "chip";
+      activeChip.textContent = "Active Software";
+      footer.append(popularity, activeChip);
+    } else {
+      const switchBtn = document.createElement("button");
+      switchBtn.type = "button";
+      switchBtn.className = "secondary";
+      switchBtn.textContent = `Switch to ${s.name}`;
+      switchBtn.hidden = !canServer("settings.reinstall");
+      switchBtn.addEventListener("click", () => openSoftwareSwapDialog(s, data.current));
+      footer.append(popularity, switchBtn);
+    }
+
+    card.append(body, footer);
+    container.append(card);
+  }
+}
+
+function openSoftwareSwapDialog(targetSoftware, currentSoftware) {
+  const dialog = document.getElementById("software-swap-dialog");
+  const targetNameEl = document.getElementById("swap-target-software-name");
+  const descEl = document.getElementById("swap-dialog-desc");
+  const backupCheckbox = document.getElementById("swap-backup-checkbox");
+  const err = document.getElementById("swap-dialog-error");
+  const confirmBtn = document.getElementById("btn-software-swap-confirm");
+
+  if (!dialog) return;
+  pendingSwapSoftware = targetSoftware;
+
+  if (err) err.hidden = true;
+  if (targetNameEl) targetNameEl.textContent = targetSoftware.name;
+  if (descEl) {
+    descEl.textContent = `You are about to swap from ${currentSoftware.name} to ${targetSoftware.name} (${targetSoftware.category}).`;
+  }
+  if (backupCheckbox) backupCheckbox.checked = true;
+
+  const isRunning = currentServer.runtimeState && currentServer.runtimeState !== "offline";
+  if (isRunning) {
+    if (err) {
+      fail(
+        err,
+        "The server is currently running. Please stop the server before switching software or swapping games.",
+      );
+    }
+    if (confirmBtn) confirmBtn.disabled = true;
+  } else {
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = `Switch to ${targetSoftware.name}`;
+    }
+  }
+
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+document.getElementById("btn-software-swap-close")?.addEventListener("click", () => {
+  const dialog = document.getElementById("software-swap-dialog");
+  if (dialog) {
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+});
+
+document.getElementById("btn-software-swap-cancel")?.addEventListener("click", () => {
+  const dialog = document.getElementById("software-swap-dialog");
+  if (dialog) {
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+});
+
+document.getElementById("btn-software-swap-confirm")?.addEventListener("click", async () => {
+  if (!pendingSwapSoftware || !currentServer) return;
+  const dialog = document.getElementById("software-swap-dialog");
+  const confirmBtn = document.getElementById("btn-software-swap-confirm");
+  const backupCheckbox = document.getElementById("swap-backup-checkbox");
+  const err = document.getElementById("swap-dialog-error");
+  const successAlert = document.getElementById("software-alert-success");
+
+  if (confirmBtn) {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Switching & Installing...";
+  }
+
+  const createBackup = backupCheckbox ? backupCheckbox.checked : true;
+  const res = await api(`/servers/${currentServer.id}/software`, {
+    method: "PUT",
+    token: store.token,
+    body: {
+      blueprintSlug: pendingSwapSoftware.slug,
+      createBackup,
+    },
+  });
+
+  if (confirmBtn) {
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = `Switch to ${pendingSwapSoftware.name}`;
+  }
+
+  if (res.status !== 200) {
+    if (err) fail(err, describeProblem(res.status, res.data));
+    return;
+  }
+
+  if (dialog) {
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  if (successAlert) {
+    const backupNotice = createBackup
+      ? " A complete backup of your previous files was created."
+      : "";
+    successAlert.textContent = `Successfully swapped to ${pendingSwapSoftware.name}!${backupNotice} You can now review your startup settings and start your server.`;
+    successAlert.hidden = false;
+  }
+
+  const srv = await api(`/servers/${currentServer.id}`, { token: store.token });
+  if (srv.status === 200) {
+    currentServer = srv.data.server;
+    renderServerHeader();
+    renderServerNav();
+  }
+  refreshSoftware();
+  refreshVariables();
+});
+
+document.querySelectorAll("#software-category-filters .filter-chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document
+      .querySelectorAll("#software-category-filters .filter-chip")
+      .forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    softwareCategory = btn.dataset.category || "";
+    softwarePage = 1;
+    refreshSoftware();
+  });
+});
+
+document.getElementById("btn-software-prev")?.addEventListener("click", () => {
+  if (softwarePage > 1) {
+    softwarePage -= 1;
+    refreshSoftware();
+  }
+});
+
+document.getElementById("btn-software-next")?.addEventListener("click", () => {
+  if (softwarePage < softwareTotalPages) {
+    softwarePage += 1;
+    refreshSoftware();
   }
 });
 

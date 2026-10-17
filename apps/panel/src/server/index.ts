@@ -188,6 +188,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
           auth,
           gateway: gatewayProxy,
           dataDir,
+          backups,
         }),
         powerRouter({ db, servers, engine, audit, auth }),
         subusersRouter({ db, users, audit, auth, gateway: gatewayProxy }),

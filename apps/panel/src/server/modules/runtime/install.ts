@@ -17,6 +17,7 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import type { BlueprintDoc, InstallOp } from "../blueprints/schema.js";
 import { substitute } from "./engine.js";
 import { EngineError } from "../../shared/errors.js";
+import { extractArchiveSafe, ArchiveError } from "../files/archive.js";
 
 export interface InstallContext {
   serverId: string;
@@ -525,88 +526,14 @@ async function extractArchive(
   strip: number,
   safe: boolean,
 ): Promise<void> {
-  if (!safe) throw new EngineError("Refusing archive extraction without safe=true");
-  const outDir = confine(serverDir, dest);
-  mkdirSync(outDir, { recursive: true });
-  const lower = src.toLowerCase();
-  const execFileAsync = promisify(execFileCb);
-  const runOut = async (cmd: string, args: string[]): Promise<string | null> => {
-    try {
-      const { stdout } = await execFileAsync(cmd, args, {
-        timeout: 5 * 60_000,
-        windowsHide: true,
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      return String(stdout);
-    } catch {
-      return null;
+  try {
+    await extractArchiveSafe(src, serverDir, dest, strip, safe);
+  } catch (err) {
+    if (err instanceof ArchiveError) {
+      throw new EngineError(err.message);
     }
-  };
-  const runOk = async (cmd: string, args: string[]): Promise<boolean> => {
-    try {
-      await execFileAsync(cmd, args, { timeout: 5 * 60_000, windowsHide: true });
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  // List members with the same tool family that will extract, then validate.
-  let members: string[] | null = null;
-  let extract: ((archive: string, out: string) => Promise<boolean>) | null = null;
-  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-    const listing = await runOut("tar", ["-tzf", src]);
-    if (listing !== null) {
-      members = listing.split(/\r?\n/).filter((l) => l.length > 0);
-      const stripArgs = strip > 0 ? [`--strip-components=${strip}`] : [];
-      extract = (a, o) => runOk("tar", ["-xzf", a, "-C", o, ...stripArgs]);
-    }
-  } else if (lower.endsWith(".zip")) {
-    const unzipList = await runOut("unzip", ["-Z1", src]);
-    if (unzipList !== null) {
-      members = unzipList.split(/\r?\n/).filter((l) => l.length > 0);
-      extract = (a, o) => runOk("unzip", ["-q", "-o", a, "-d", o]);
-    } else {
-      const sevenList = await runOut("7z", ["l", "-slt", src]);
-      if (sevenList !== null) {
-        members = sevenList
-          .split(/\r?\n/)
-          .filter((l) => l.startsWith("Path = "))
-          .map((l) => l.slice("Path = ".length).trim())
-          .filter((l) => l.length > 0 && l !== src.split(/[\\/]/).pop());
-        extract = (a, o) => runOk("7z", ["x", a, `-o${o}`, "-y"]);
-      } else {
-        const tarList = await runOut("tar", ["-tf", src]);
-        if (tarList !== null) {
-          members = tarList.split(/\r?\n/).filter((l) => l.length > 0);
-          extract = (a, o) => runOk("tar", ["-xf", a, "-C", o]);
-        }
-      }
-    }
-  } else {
-    throw new EngineError(`Unsupported archive format: ${src}`);
+    throw err;
   }
-  if (!members || !extract) {
-    throw new EngineError(`Could not list archive members of ${src} (no suitable tool found)`);
-  }
-  for (const m of members) {
-    // Strip tar's leading ./ the same way extraction sees it.
-    const cleaned = strip > 0 ? stripLeading(m, strip) : m.replace(/^\.\//, "");
-    if (cleaned === "" || cleaned === "." || cleaned.endsWith("/")) continue; // dir entries
-    const resolved = resolve(outDir, cleaned);
-    if (resolved !== outDir && !resolved.startsWith(outDir + sep)) {
-      throw new EngineError(`Archive member escapes destination: ${m}`);
-    }
-  }
-  if (!(await extract(src, outDir))) {
-    throw new EngineError(`Could not extract ${src} (extraction failed after validation)`);
-  }
-}
-
-/** Remove N leading path segments (mirrors tar --strip-components for validation). */
-function stripLeading(member: string, n: number): string {
-  const parts = member.replace(/^\.\//, "").split("/");
-  return parts.slice(n).join("/");
 }
 
 /**
@@ -619,6 +546,7 @@ export async function installModrinthProjects(
   fetchImpl: typeof fetch,
   ctx: InstallContext,
   projects: string[],
+  versionId?: string,
 ): Promise<void> {
   const slug = ctx.blueprintSlug ?? "";
   const platform = modrinthPlatform(slug);
@@ -645,6 +573,7 @@ export async function installModrinthProjects(
         `?loaders=${encodeURIComponent(JSON.stringify(platform.loaders))}` +
         `&game_versions=${encodeURIComponent(JSON.stringify([mcVersion]))}`,
     )) as Array<{
+      id: string;
       files: Array<{
         url: string;
         filename: string;
@@ -652,8 +581,9 @@ export async function installModrinthProjects(
         primary: boolean;
       }>;
     }>;
-    const newest = versions[0];
-    const file = newest?.files.find((f) => f.primary) ?? newest?.files[0];
+    const chosenVersion =
+      (versionId ? versions.find((v) => v.id === versionId) : null) ?? versions[0];
+    const file = chosenVersion?.files.find((f) => f.primary) ?? chosenVersion?.files[0];
     if (!file) throw new EngineError(`No ${mcVersion} file for '${id}' on Modrinth`);
     if (!/\.jar$/i.test(file.filename))
       throw new EngineError(`Refusing non-jar addon '${file.filename}'`);
@@ -678,6 +608,22 @@ export interface ModrinthHit {
   description: string;
   author: string;
   downloads: number;
+  iconUrl?: string | null;
+}
+
+export interface ModrinthVersionInfo {
+  id: string;
+  name: string;
+  versionNumber: string;
+  versionType: string;
+  datePublished: string;
+  downloads: number;
+  files: Array<{
+    filename: string;
+    url: string;
+    size: number;
+    primary: boolean;
+  }>;
 }
 
 /**
@@ -694,8 +640,9 @@ export async function searchModrinthProjects(
   platform: { loaders: string[]; projectType: "mod" | "plugin" },
   mcVersion: string,
   query: string,
-  limit = 20,
-): Promise<ModrinthHit[]> {
+  limit = 10,
+  offset = 0,
+): Promise<{ hits: ModrinthHit[]; totalHits: number }> {
   const facets = [
     platform.loaders.map((loader) => `categories:${loader}`),
     [`versions:${mcVersion}`],
@@ -706,25 +653,74 @@ export async function searchModrinthProjects(
     facets: JSON.stringify(facets),
     index: "downloads",
     limit: String(Math.min(Math.max(limit, 1), 50)),
+    offset: String(Math.max(offset, 0)),
   });
   const data = (await fetchJson(
     fetchImpl,
     `https://api.modrinth.com/v2/search?${params.toString()}`,
   )) as {
+    total_hits?: number;
     hits: Array<{
       project_id: string;
       title: string;
       description: string;
       author: string;
       downloads: number;
+      icon_url?: string | null;
     }>;
   };
-  return (data.hits ?? []).map((hit) => ({
+  const hits = (data.hits ?? []).map((hit) => ({
     projectId: hit.project_id,
     title: hit.title,
     description: hit.description,
     author: hit.author,
     downloads: hit.downloads,
+    iconUrl: hit.icon_url ?? null,
+  }));
+  return { hits, totalHits: data.total_hits ?? hits.length };
+}
+
+export async function fetchModrinthProjectVersions(
+  fetchImpl: typeof fetch,
+  platform: { loaders: string[] },
+  mcVersion: string,
+  projectId: string,
+): Promise<ModrinthVersionInfo[]> {
+  const id = projectId.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9-_]{1,63}$/.test(id)) {
+    throw new EngineError(`Not a Modrinth project id: '${projectId}'`);
+  }
+  const url =
+    `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +
+    `?loaders=${encodeURIComponent(JSON.stringify(platform.loaders))}` +
+    `&game_versions=${encodeURIComponent(JSON.stringify([mcVersion]))}`;
+  const data = (await fetchJson(fetchImpl, url)) as Array<{
+    id: string;
+    name: string;
+    version_number: string;
+    version_type: string;
+    date_published: string;
+    downloads: number;
+    files: Array<{
+      filename: string;
+      url: string;
+      size: number;
+      primary: boolean;
+    }>;
+  }>;
+  return (data ?? []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    versionNumber: v.version_number,
+    versionType: v.version_type,
+    datePublished: v.date_published,
+    downloads: v.downloads,
+    files: (v.files ?? []).map((f) => ({
+      filename: f.filename,
+      url: f.url,
+      size: f.size,
+      primary: f.primary,
+    })),
   }));
 }
 
