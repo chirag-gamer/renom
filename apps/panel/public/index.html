@@ -34,6 +34,10 @@
           <a href="#" data-server-tab="addons" id="server-nav-addons"
             ><span aria-hidden="true">✦</span> <span id="server-nav-addons-label">Plugins</span></a
           >
+          <a href="#" data-server-tab="software" id="server-nav-software"
+            ><span aria-hidden="true">⛭</span>
+            <span id="server-nav-software-label">Software</span></a
+          >
           <a href="#" data-server-tab="settings"><span aria-hidden="true">⚒</span> Settings</a>
         </nav>
 
@@ -522,8 +526,8 @@
                   <div>
                     <p class="eyebrow">File manager</p>
                     <p class="note">
-                      Browse, edit, rename, move, and delete. Editing opens a dialog — the list
-                      stays readable.
+                      Browse, edit, rename, move, and delete. Select multiple files for bulk
+                      actions.
                     </p>
                   </div>
                   <div class="btn-row">
@@ -535,12 +539,40 @@
                     </button>
                   </div>
                 </div>
-                <p class="note" id="files-path">/</p>
+
+                <div id="files-bulk-bar" class="bulk-actions-bar" hidden>
+                  <div class="bulk-info">
+                    <span id="files-selected-count">0 items selected</span>
+                  </div>
+                  <div class="btn-row bulk-actions">
+                    <button type="button" id="btn-bulk-download" class="secondary">Download</button>
+                    <button type="button" id="btn-bulk-compress" class="secondary">Archive</button>
+                    <button type="button" id="btn-bulk-decompress" class="secondary">
+                      Extract
+                    </button>
+                    <button type="button" id="btn-bulk-delete" class="danger">Delete</button>
+                    <button type="button" id="btn-bulk-clear" class="secondary">
+                      Deselect all
+                    </button>
+                  </div>
+                </div>
+
+                <div class="file-browser-bar">
+                  <div class="file-select-wrap">
+                    <input
+                      type="checkbox"
+                      id="file-select-all"
+                      aria-label="Select all files in directory"
+                    />
+                    <span class="file-path-label" id="files-path">/</span>
+                  </div>
+                </div>
                 <ul id="file-list" class="file-list"></ul>
                 <form id="form-file-read" class="inline-form">
                   <input name="path" placeholder="File to open, e.g. server.properties" />
                   <button type="submit" class="secondary">Open</button>
                 </form>
+                <p class="success-banner" id="files-success" role="status" hidden></p>
                 <p class="error" id="files-error" role="alert" hidden></p>
               </div>
 
@@ -585,27 +617,40 @@
               <div id="tab-addons" hidden>
                 <div class="page-header">
                   <div>
-                    <p class="eyebrow">Addons</p>
+                    <p class="eyebrow" id="addon-kind-eyebrow">Plugins</p>
                     <p class="note">
-                      Search Modrinth for <strong id="addon-kind">mods and plugins</strong>. Results
-                      are filtered to this server's software and exact Minecraft version, so nothing
-                      incompatible is offered. They activate on the next start.
+                      Search Modrinth for plugins compatible with this server. Results are filtered
+                      to this server's software and exact Minecraft version, sorted by most popular.
                     </p>
                   </div>
                   <form id="form-addon-search" class="inline-form">
                     <input
                       name="q"
                       id="addon-search-input"
-                      placeholder="Search Modrinth, e.g. performance"
+                      placeholder="Search plugins, e.g. Essentials, LuckPerms"
                       maxlength="64"
                       autocomplete="off"
                     />
                     <button type="submit">Search</button>
                   </form>
                 </div>
+                <p class="success-banner" id="addons-alert-success" role="status" hidden></p>
+                <p class="error" id="addons-alert-error" role="alert" hidden></p>
                 <p class="note" id="addon-search-note" hidden></p>
-                <ul id="addon-search-results" class="user-list"></ul>
-                <h3>Installed</h3>
+
+                <div id="addon-cards-container" class="addon-cards-grid"></div>
+
+                <div id="addons-pagination" class="pagination-bar" hidden>
+                  <button type="button" id="btn-addons-prev" class="secondary" disabled>
+                    ← Previous
+                  </button>
+                  <span id="addons-page-indicator" class="page-indicator">Page 1 of 1</span>
+                  <button type="button" id="btn-addons-next" class="secondary" disabled>
+                    Next →
+                  </button>
+                </div>
+
+                <h3 class="section-title">Installed Plugins</h3>
                 <ul id="addon-list" class="user-list"></ul>
                 <form id="form-addon" class="inline-form" hidden>
                   <input
@@ -617,6 +662,111 @@
                 </form>
                 <p class="error" id="addons-error" role="alert" hidden></p>
               </div>
+
+              <dialog id="addon-version-dialog" class="version-dialog">
+                <div class="dialog-header">
+                  <h3 id="version-dialog-title">Select Plugin Version</h3>
+                  <button type="button" id="btn-addon-version-close" class="secondary">
+                    Close
+                  </button>
+                </div>
+                <p id="version-dialog-subtitle" class="note"></p>
+                <div id="version-list-container" class="version-list"></div>
+                <p class="error" id="version-dialog-error" role="alert" hidden></p>
+              </dialog>
+
+              <div id="tab-software" hidden>
+                <div class="page-header">
+                  <div>
+                    <p class="eyebrow">Server Software & Game Swapper</p>
+                    <p class="note">
+                      Change server software (Paper, Purpur, Fabric, Vanilla) or swap the entire
+                      game engine (Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python).
+                    </p>
+                  </div>
+                </div>
+
+                <p class="success-banner" id="software-alert-success" role="status" hidden></p>
+                <p class="error" id="software-alert-error" role="alert" hidden></p>
+
+                <div id="current-software-card" class="current-software-card">
+                  <div class="current-software-header">
+                    <span class="eyebrow">Current Environment</span>
+                    <span id="current-software-runtime-badge" class="chip">Checking status...</span>
+                  </div>
+                  <h3 id="current-software-name">—</h3>
+                  <p id="current-software-desc" class="note">—</p>
+                  <p class="note software-offline-hint">
+                    <strong>Note:</strong> Changing software or swapping games requires the server
+                    to be offline. Make a backup before switching if you wish to preserve your
+                    current world and data.
+                  </p>
+                </div>
+
+                <div class="software-filters">
+                  <div class="filter-chips" id="software-category-filters">
+                    <button type="button" class="filter-chip active" data-category="">All</button>
+                    <button type="button" class="filter-chip" data-category="Minecraft Java">
+                      Minecraft Java
+                    </button>
+                    <button
+                      type="button"
+                      class="filter-chip"
+                      data-category="Minecraft Bedrock & PocketMine"
+                    >
+                      Bedrock & PocketMine
+                    </button>
+                    <button type="button" class="filter-chip" data-category="Generic / Custom">
+                      Generic / Custom
+                    </button>
+                  </div>
+                </div>
+
+                <div id="software-cards-container" class="software-cards-grid"></div>
+
+                <div id="software-pagination" class="pagination-bar" hidden>
+                  <button type="button" id="btn-software-prev" class="secondary" disabled>
+                    ← Previous
+                  </button>
+                  <span id="software-page-indicator" class="page-indicator">Page 1 of 1</span>
+                  <button type="button" id="btn-software-next" class="secondary" disabled>
+                    Next →
+                  </button>
+                </div>
+              </div>
+
+              <dialog id="software-swap-dialog" class="software-swap-dialog">
+                <div class="dialog-header">
+                  <h3 id="swap-dialog-title">Switch Server Software</h3>
+                  <button type="button" id="btn-software-swap-close" class="secondary">
+                    Close
+                  </button>
+                </div>
+                <div class="swap-dialog-body">
+                  <p id="swap-dialog-desc" class="note"></p>
+                  <div class="swap-warning-box">
+                    <p class="note">
+                      Switching to <strong id="swap-target-software-name"></strong> will update the
+                      server engine, install runtime binaries, and reset environment variables to
+                      defaults.
+                    </p>
+                    <label class="check-container">
+                      <input type="checkbox" id="swap-backup-checkbox" checked />
+                      <span
+                        ><strong>Create a full backup</strong> of all current server files before
+                        swapping (Recommended)</span
+                      >
+                    </label>
+                  </div>
+                  <p class="error" id="swap-dialog-error" role="alert" hidden></p>
+                  <div class="dialog-actions">
+                    <button type="button" id="btn-software-swap-confirm">Confirm Switch</button>
+                    <button type="button" id="btn-software-swap-cancel" class="secondary">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </dialog>
 
               <div id="tab-startup" hidden>
                 <p>

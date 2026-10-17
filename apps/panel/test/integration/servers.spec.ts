@@ -244,9 +244,44 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(gone.status).toBe(404);
   });
 
+  it("lists available software and swaps server software", async () => {
+    const srv = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "swap-test", blueprintSlug: "generic-python" });
+    expect(srv.status).toBe(201);
+    const testId = srv.body.server.id as string;
+
+    const swRes = await request(app)
+      .get(`/api/v3/servers/${testId}/software`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(swRes.status).toBe(200);
+    expect(swRes.body.current.blueprintSlug).toBe("generic-python");
+    expect(Array.isArray(swRes.body.software)).toBe(true);
+    expect(swRes.body.software.length).toBeGreaterThan(0);
+
+    const swapRes = await request(app)
+      .put(`/api/v3/servers/${testId}/software`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ blueprintSlug: "generic-nodejs", backupBeforeSwap: false });
+    expect(swapRes.status).toBe(200);
+    expect(swapRes.body.software).toBe("generic-nodejs");
+
+    const detail = await request(app)
+      .get(`/api/v3/servers/${testId}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(detail.body.server.blueprintSlug).toBe("generic-nodejs");
+  });
+
   it("audit trail records the server lifecycle", () => {
     const events = ctx.audit.query({ limit: 100 }).map((e) => e.event);
-    for (const want of ["server.create", "server.update", "server.suspend", "server.delete"]) {
+    for (const want of [
+      "server.create",
+      "server.update",
+      "server.suspend",
+      "server.delete",
+      "server.software.swap",
+    ]) {
       expect(events).toContain(want);
     }
   });
