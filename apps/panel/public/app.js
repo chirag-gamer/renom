@@ -2103,7 +2103,7 @@ document.getElementById("btn-bulk-download")?.addEventListener("click", async ()
       return;
     }
   }
-  const archiveBasename = "download.tar.gz";
+  const archiveBasename = `download-${Date.now()}-${Math.random().toString(36).slice(2)}.tar.gz`;
   const paths = items.map((name) => (filesDir ? `${filesDir}/${name}` : name));
   const res = await api(`/servers/${currentServer.id}/files/compress`, {
     method: "POST",
