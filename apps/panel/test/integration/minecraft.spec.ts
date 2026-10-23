@@ -5,7 +5,10 @@ import { mkdtempSync, rmSync, mkdirSync, readFileSync, existsSync } from "node:f
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildPanel } from "../../src/server/index.js";
-import { runInstallOps } from "../../src/server/modules/runtime/install.js";
+import {
+  runInstallOps,
+  installModrinthProjects,
+} from "../../src/server/modules/runtime/install.js";
 import {
   parsePublicAddress,
   scanHistoryForAddress,
@@ -162,6 +165,9 @@ describe("install executor", () => {
           },
         ],
       },
+      "https://api.modrinth.com/v2/project/lithium": {
+        json: { project_type: "mod" },
+      },
       "https://cdn.modrinth.com/lithium.jar": { bytes: addonBytes },
     });
     const srv = join(dir, "addons");
@@ -197,6 +203,9 @@ describe("install executor", () => {
           },
         ],
       },
+      "https://api.modrinth.com/v2/project/Vebnzrzj": {
+        json: { project_type: "plugin" },
+      },
       "https://cdn.modrinth.com/luckperms.jar": { bytes: addonBytes },
     });
     const srv = join(dir, "addons-case");
@@ -212,6 +221,43 @@ describe("install executor", () => {
       },
     );
     expect(readFileSync(join(srv, "plugins", "LuckPerms.jar"))).toEqual(addonBytes);
+  });
+
+  it("refuses to install a mod on a plugin-only platform", async () => {
+    const fetchImpl = stubFetch({
+      "https://api.modrinth.com/v2/project/lithium": {
+        json: { project_type: "mod" },
+      },
+    });
+    const srv = join(dir, "addons-mod-on-plugin");
+    mkdirSync(srv, { recursive: true });
+    await expect(
+      runInstallOps({ install: [{ op: "modrinth-install", projects: ["lithium"] }] } as never, {
+        serverId: "x",
+        dir: srv,
+        vars: { mcVersion: "1.21.1" },
+        blueprintSlug: "paper",
+        fetchImpl,
+      }),
+    ).rejects.toThrow(/Project 'lithium' is a mod, not a plugin/);
+  });
+
+  it("refuses versionId when installing multiple projects to prevent partial installs", async () => {
+    const srv = join(dir, "addons-multi-version");
+    mkdirSync(srv, { recursive: true });
+    await expect(
+      installModrinthProjects(
+        stubFetch({}),
+        {
+          serverId: "x",
+          dir: srv,
+          vars: { mcVersion: "1.21.1" },
+          blueprintSlug: "paper",
+        },
+        ["p1", "p2"],
+        "some-version-id",
+      ),
+    ).rejects.toThrow(/Cannot specify versionId when installing multiple projects/);
   });
 
   it("refuses Modrinth on vanilla (no mod platform)", async () => {

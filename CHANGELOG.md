@@ -5,6 +5,24 @@ All notable changes to Renom are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page, sorted by Most Popular). Restricted strictly to plugins (`projectType: "plugin"`).
+- Version selection modal: prompt users to select a compatible version when multiple releases exist on Modrinth, with release-type badges and Minecraft version compatibility.
+- Dedicated Server Software tab: separated server software from the Plugins tab into its own dedicated view placed beneath Plugins.
+- Game Swapper: swap server software and entire game ecosystems (Minecraft Java, Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python) with an option to create a full backup of all current server files before swapping.
+- File manager bulk actions & multi-select: select-all directory checkbox, row checkboxes, and a floating bulk actions bar supporting bulk Download, Archive (compress), Extract (decompress), Delete, and Clear with path-confinement validation.
+
+### Fixed
+
+- Archive & extraction security: Staging directory extraction, rejecting symlinks and path escapes, rejecting `strip > 0` for `.zip`, supporting `.tar` archives, preserving relative subdirectories, and terminating `tar` command arguments with `--`.
+- Software & Ecosystem swapping: Require explicit Minecraft EULA acceptance before swapping to EULA-governed software, update blueprint image references, prune incompatible startup variables on blueprint swap while preserving `tunnel.*` configurations for plugin-tunnel targets, and persist intentionally requested versions.
+- File manager & bulk actions: Granular permission gating for bulk actions (`file.read-content`, `file.archive`, `file.delete`), accept both `files` and `paths` schemas, idempotent multi-delete with confinement validation, send archive basename to handle nested directory archives properly, generate unique temporary archive filenames for bulk downloads, and handle 204 decompress responses.
+- Security audit: Updated Zod to 4.6.7 to fix high-severity vulnerability GHSA-mrhx-c7xc-m3w5.
+- Plugins & Addons: Restrict plugins search and capability strictly to plugin platforms (`projectType: "plugin"`), validate Modrinth metadata `project_type: "plugin"` in installer and version picker, pre-validate multi-project batches and reject single `versionId` across multiple projects to prevent partial installs, filter installed addons list to `folder === "plugins"`, add `totalPages` to Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely.
+- Responsive layout: Fix addon and software grid tracks on viewports narrower than 312px.
+- Test coverage: Assert all decompressed files survive extraction and assert 404 on all bulk-deleted paths in `files-authz.spec.ts`.
+
 ### Changed
 
 - Console: the log is a fixed, self-scrolling pane sized to the viewport instead of a box that kept

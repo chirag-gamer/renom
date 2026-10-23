@@ -25,6 +25,9 @@ import {
 } from "../../shared/errors.js";
 import { runInstallOps } from "../../modules/runtime/install.js";
 import { claimEndpointName, installPlugin } from "../../modules/tunnels/minekube.js";
+import { z } from "zod";
+import type { BackupsService } from "../../modules/backups/service.js";
+import { isTarAvailable } from "../../modules/backups/service.js";
 import {
   createServerSchema,
   patchServerSchema,
@@ -36,6 +39,35 @@ import { join } from "node:path";
 
 /** Unlimited CPU: a fresh server keeps every core the host has. */
 const DEFAULT_CPU_WEIGHT = 0;
+
+const softwareQuery = z.object({
+  q: z.string().max(64).default(""),
+  category: z.string().max(64).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+const switchSoftwareSchema = z.object({
+  blueprintSlug: z.string().min(1).max(64),
+  version: z.string().max(64).optional(),
+  backupBeforeSwap: z.boolean().optional(),
+  createBackup: z.boolean().optional(),
+  eulaAccepted: z.boolean().optional(),
+});
+
+const POPULARITY_RANK: Record<string, number> = {
+  paper: 100,
+  purpur: 90,
+  fabric: 80,
+  forge: 70,
+  vanilla: 60,
+  "bedrock-bds": 50,
+  "pocketmine-mp": 45,
+  endstone: 40,
+  velocity: 35,
+  "generic-nodejs": 20,
+  "generic-python": 15,
+};
 
 /**
  * Blueprints with a plugin loader that can run the Minekube Connect plugin.
@@ -56,9 +88,8 @@ const PLUGIN_TUNNEL_BLUEPRINTS: Record<string, true> = {
  * plugin. The installer writes the concrete build it downloaded back into its
  * variable map, and this is where that becomes durable.
  *
- * The write is conditional: installation is backgrounded, so an admin can set
- * a version on the Startup tab while it runs, and a blind write would undo
- * that with the value the install happened to download.
+ * If a specific version was requested by the user, persist it directly.
+ * Otherwise, conditionally update it to protect against concurrent edits.
  */
 function persistInstalledVersion(
   servers: ServersRepo,
@@ -66,9 +97,18 @@ function persistInstalledVersion(
   vars: Record<string, string> | null,
   requested: string | undefined,
 ): void {
-  const version = vars?.["mcVersion"];
+  const version = requested || vars?.["mcVersion"] || vars?.["bedrockVersion"];
   if (!version || version === "latest") return;
-  servers.setVariableIfUnchanged(serverId, "mcVersion", version, requested ?? null);
+  if (requested) {
+    if (vars?.["bedrockVersion"] !== undefined) {
+      servers.setVariable(serverId, "bedrockVersion", requested);
+    } else {
+      servers.setVariable(serverId, "mcVersion", requested);
+    }
+  } else {
+    const key = vars?.["bedrockVersion"] !== undefined ? "bedrockVersion" : "mcVersion";
+    servers.setVariableIfUnchanged(serverId, key, version, null);
+  }
 }
 
 export interface ServersDeps {
@@ -82,10 +122,11 @@ export interface ServersDeps {
   gateway?: ConsoleGateway;
   /** Resolved DATA_DIR; server directories live at <dataDir>/servers/<id>. */
   dataDir: string;
+  backups?: BackupsService;
 }
 
 export function serversRouter(deps: ServersDeps): Router {
-  const { users, servers, engine, blueprints, audit, auth, gateway, dataDir } = deps;
+  const { users, servers, engine, blueprints, audit, auth, gateway, dataDir, backups } = deps;
   const router = Router();
   router.use(requireAuth(auth));
 
@@ -425,6 +466,230 @@ export function serversRouter(deps: ServersDeps): Router {
         throw err;
       }
       res.json({ status: "ready" });
+    })().catch(next);
+  });
+
+  // Dedicated server software listing and current software status
+  router.get("/servers/:id/software", guard("startup.read"), (req, res, next) => {
+    try {
+      assertSuspendedReadable(req, res);
+      const id = req.params.id ?? "";
+      const s = servers.byId(id);
+      if (!s) throw new NotFoundError("Not found");
+      const q = parseQuery(softwareQuery, req);
+      const doc = blueprints.getDoc(s.blueprint_slug, s.blueprint_version_tag);
+      const vars = storedVariables(deps.db, id, doc.variables ?? []);
+      const rows = deps.db
+        .prepare(
+          "SELECT id, slug, name, category, latest_tag, docs_url FROM blueprints WHERE enabled = 1",
+        )
+        .all() as Array<{
+        id: string;
+        slug: string;
+        name: string;
+        category: string;
+        latest_tag: string;
+        docs_url: string | null;
+      }>;
+
+      const allSoftware = rows.map((r) => {
+        let desc = "";
+        try {
+          const d = blueprints.getDoc(r.slug, r.latest_tag);
+          desc = d.description;
+        } catch {
+          desc = r.name;
+        }
+        return {
+          slug: r.slug,
+          blueprintSlug: r.slug,
+          name: r.name,
+          category: r.category,
+          description: desc,
+          docsUrl: r.docs_url,
+          popularity: POPULARITY_RANK[r.slug] ?? 10,
+        };
+      });
+
+      const queryLower = q.q.toLowerCase().trim();
+      const filtered = allSoftware
+        .filter((sw) => {
+          if (q.category && sw.category !== q.category) return false;
+          if (!queryLower) return true;
+          return (
+            sw.name.toLowerCase().includes(queryLower) ||
+            sw.slug.toLowerCase().includes(queryLower) ||
+            sw.description.toLowerCase().includes(queryLower)
+          );
+        })
+        .sort((a, b) => b.popularity - a.popularity);
+
+      const offset = (q.page - 1) * q.limit;
+      const paged = filtered.slice(offset, offset + q.limit).map((item, idx) => ({
+        ...item,
+        popularityRank: offset + idx + 1,
+      }));
+
+      const totalPages = Math.ceil(filtered.length / q.limit) || 1;
+
+      res.json({
+        current: {
+          slug: s.blueprint_slug,
+          blueprintSlug: s.blueprint_slug,
+          name: doc.name,
+          category: doc.category,
+          version: vars["mcVersion"] ?? vars["bedrockVersion"] ?? "latest",
+          description: doc.description,
+        },
+        software: paged,
+        items: paged,
+        total: filtered.length,
+        totalHits: filtered.length,
+        totalPages,
+        page: q.page,
+        limit: q.limit,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Change server software or swap ecosystem with optional full backup
+  router.put("/servers/:id/software", guard("settings.reinstall"), (req, res, next) => {
+    (async () => {
+      assertNotSuspendedForMutation(req, res);
+      const body = parseBody(switchSoftwareSchema, req);
+      const id = req.params.id ?? "";
+      const s = servers.byId(id);
+      if (!s) throw new NotFoundError("Not found");
+      if (engine.stateOf(id) !== "offline") {
+        throw new ConflictError("Stop the server before changing software or ecosystem");
+      }
+      const bp = deps.db
+        .prepare(
+          "SELECT id, slug, name, category, latest_tag FROM blueprints WHERE slug = ? AND enabled = 1",
+        )
+        .get(body.blueprintSlug) as
+        | { id: string; slug: string; name: string; category: string; latest_tag: string }
+        | undefined;
+      if (!bp) {
+        throw new NotFoundError(`Software blueprint '${body.blueprintSlug}' not found`);
+      }
+
+      const doc = blueprints.getDoc(bp.slug, bp.latest_tag);
+
+      // Mojang's EULA must be accepted explicitly for blueprints with the eula feature
+      if (doc.features?.includes("eula") && body.eulaAccepted !== true) {
+        throw new BadRequestError("This server needs the Minecraft EULA accepted first");
+      }
+
+      const shouldBackup = body.backupBeforeSwap ?? body.createBackup ?? true;
+      let backedUp = false;
+      if (shouldBackup && backups && isTarAvailable()) {
+        try {
+          await backups.create(id, req.principal!.userId);
+          backedUp = true;
+        } catch (bErr) {
+          deps.audit.record({
+            event: "server.software.backup_failed",
+            serverId: id,
+            actorUserId: req.principal!.userId,
+            target: { error: bErr instanceof Error ? bErr.message : String(bErr) },
+          });
+        }
+      }
+
+      servers.updateBlueprint(id, bp.id, bp.latest_tag, doc.image);
+
+      if (doc.features?.includes("eula")) {
+        servers.recordEula(id, req.ip ?? null);
+      }
+
+      // Reset incompatible server_variables overrides that don't exist in target blueprint
+      const allowedKeys = new Set((doc.variables ?? []).map((v) => v.key));
+      allowedKeys.add("maxMemory");
+      allowedKeys.add("minekubeEndpoint");
+      allowedKeys.add("minekubeSecret");
+
+      const existingVars = deps.db
+        .prepare("SELECT key FROM server_variables WHERE server_id = ?")
+        .all(id) as Array<{ key: string }>;
+      for (const row of existingVars) {
+        if (
+          !allowedKeys.has(row.key) &&
+          !(PLUGIN_TUNNEL_BLUEPRINTS[bp.slug] && row.key.startsWith("tunnel."))
+        ) {
+          deps.db
+            .prepare("DELETE FROM server_variables WHERE server_id = ? AND key = ?")
+            .run(id, row.key);
+        }
+      }
+
+      if (body.version) {
+        if (allowedKeys.has("mcVersion")) {
+          servers.setVariable(id, "mcVersion", body.version);
+        } else if (allowedKeys.has("bedrockVersion")) {
+          servers.setVariable(id, "bedrockVersion", body.version);
+        } else if (allowedKeys.has("version")) {
+          servers.setVariable(id, "version", body.version);
+        }
+      }
+
+      const vars = storedVariables(deps.db, id, doc.variables ?? []);
+      const alloc = servers.primaryAllocation(id);
+      if (alloc) {
+        vars["allocation.ip"] = alloc.ip;
+        vars["allocation.port"] = String(alloc.port);
+      }
+      if (body.version) {
+        if ("mcVersion" in vars) vars["mcVersion"] = body.version;
+        if ("bedrockVersion" in vars) vars["bedrockVersion"] = body.version;
+        if ("version" in vars) vars["version"] = body.version;
+      }
+
+      servers.setStatus(id, "installing");
+      audit.record({
+        event: "server.software.swap",
+        actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
+        actorIp: req.ip,
+        requestId: req.requestId,
+        serverId: id,
+        target: {
+          from: s.blueprint_slug,
+          to: bp.slug,
+          category: bp.category,
+          version: body.version,
+          backedUp,
+        },
+      });
+
+      try {
+        await runInstallOps(doc, {
+          serverId: id,
+          dir: join(dataDir, "servers", id),
+          vars,
+          blueprintSlug: bp.slug,
+        });
+        persistInstalledVersion(servers, id, vars, body.version);
+        servers.setStatus(id, "ready");
+        audit.record({ event: "server.install.done", serverId: id });
+      } catch (err) {
+        servers.setStatus(id, "install_failed");
+        audit.record({
+          event: "server.install.failed",
+          serverId: id,
+          target: { error: err instanceof Error ? err.message : String(err) },
+        });
+        throw err;
+      }
+      res.json({
+        status: "ready",
+        software: bp.slug,
+        name: bp.name,
+        category: bp.category,
+        backedUp,
+      });
     })().catch(next);
   });
 

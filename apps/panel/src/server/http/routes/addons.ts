@@ -15,6 +15,7 @@ import {
 import { parseBody, parseQuery } from "../../shared/validate.js";
 import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import {
+  fetchModrinthProjectVersions,
   installModrinthProjects,
   modrinthPlatform,
   searchModrinthProjects,
@@ -23,11 +24,19 @@ import { storedVariables } from "./servers.js";
 
 const searchQuery = z.object({
   q: z.string().max(64).default(""),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 
-const addonsSchema = z.object({
-  projects: z.array(z.string().min(1).max(64)).min(1).max(10),
-});
+const addonsSchema = z
+  .object({
+    projects: z.array(z.string().min(1).max(64)).min(1).max(10).optional(),
+    project: z.string().min(1).max(64).optional(),
+    versionId: z.string().min(1).max(64).optional(),
+  })
+  .refine((d) => (d.projects && d.projects.length > 0) || Boolean(d.project), {
+    message: "Either project or projects must be provided",
+  });
 
 const ADDON_DIRS = ["mods", "plugins"] as const;
 
@@ -71,10 +80,11 @@ export function addonsRouter(deps: AddonsDeps): Router {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
+      const isPluginPlatform = platform !== null && platform.projectType === "plugin";
       res.json({
-        supported: platform !== null,
-        folder: platform?.dir ?? null,
-        projectType: platform?.projectType ?? null,
+        supported: isPluginPlatform,
+        folder: isPluginPlatform ? platform.dir : null,
+        projectType: isPluginPlatform ? platform.projectType : null,
         mcVersion: mcVersionOf(id),
       });
     } catch (e) {
@@ -82,16 +92,15 @@ export function addonsRouter(deps: AddonsDeps): Router {
     }
   });
 
-  // Search is filtered to this server's loader and exact Minecraft version, so
-  // a Fabric server never sees Paper plugins and a 1.20.1 server never sees a
-  // 1.21-only project.
+  // Search is filtered to this server's loader and exact Minecraft version.
+  // Restrict this tab to display ONLY plugins per FR.
   router.get("/servers/:id/addons/search", guard("startup.read"), (req, res, next) => {
     (async () => {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
-      if (!platform) {
-        throw new ConflictError("This server software has no mod or plugin platform");
+      if (!platform || platform.projectType !== "plugin") {
+        throw new ConflictError("This server software has no plugin platform");
       }
       const mcVersion = mcVersionOf(id);
       if (!mcVersion) {
@@ -100,13 +109,50 @@ export function addonsRouter(deps: AddonsDeps): Router {
         );
       }
       const q = parseQuery(searchQuery, req);
-      const hits = await searchModrinthProjects(
+      const offset = (q.page - 1) * q.limit;
+      const result = await searchModrinthProjects(
+        fetch,
+        { loaders: platform.loaders, projectType: "plugin" },
+        mcVersion,
+        q.q,
+        q.limit,
+        offset,
+      );
+      const totalPages = Math.ceil(result.totalHits / q.limit) || 1;
+      res.json({
+        hits: result.hits,
+        totalHits: result.totalHits,
+        totalPages,
+        page: q.page,
+        limit: q.limit,
+        mcVersion,
+        folder: platform.dir,
+      });
+    })().catch(next);
+  });
+
+  router.get("/servers/:id/addons/versions/:projectId", guard("startup.read"), (req, res, next) => {
+    (async () => {
+      assertSuspendedReadable(req, res);
+      const id = req.params.id ?? "";
+      const platform = platformOf(id);
+      if (!platform || platform.projectType !== "plugin") {
+        throw new ConflictError("This server software has no plugin platform");
+      }
+      const mcVersion = mcVersionOf(id);
+      if (!mcVersion) {
+        throw new BadRequestError(
+          "Set an exact Minecraft version on the Startup tab first — “latest” can't resolve addon files",
+        );
+      }
+      const projectId = req.params.projectId ?? "";
+      const versions = await fetchModrinthProjectVersions(
         fetch,
         { loaders: platform.loaders, projectType: platform.projectType },
         mcVersion,
-        q.q,
+        projectId,
       );
-      res.json({ hits, mcVersion, folder: platform.dir });
+      res.json({ versions, mcVersion, projectId });
     })().catch(next);
   });
 
@@ -145,11 +191,16 @@ export function addonsRouter(deps: AddonsDeps): Router {
       const id = req.params.id ?? "";
       const server = servers.byId(id);
       if (!server) throw new NotFoundError("Not found");
+      const platform = modrinthPlatform(server.blueprint_slug);
+      if (!platform || platform.projectType !== "plugin") {
+        throw new ConflictError("This server software has no plugin platform");
+      }
       const vars = storedVariables(db, id, []);
       const mcRow = db
         .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")
         .get(id) as { value: string } | undefined;
       if (mcRow) vars["mcVersion"] = mcRow.value;
+      const targets = body.projects && body.projects.length > 0 ? body.projects : [body.project!];
       await installModrinthProjects(
         fetch,
         {
@@ -158,7 +209,8 @@ export function addonsRouter(deps: AddonsDeps): Router {
           vars,
           blueprintSlug: server.blueprint_slug,
         },
-        body.projects,
+        targets,
+        body.versionId,
       );
       audit.record({
         event: "server.addons.install",
@@ -167,9 +219,9 @@ export function addonsRouter(deps: AddonsDeps): Router {
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
-        target: { projects: body.projects },
+        target: { projects: targets, versionId: body.versionId },
       });
-      res.status(201).json({ installed: body.projects });
+      res.status(201).json({ installed: targets, versionId: body.versionId ?? null });
     })().catch(next);
   });
 

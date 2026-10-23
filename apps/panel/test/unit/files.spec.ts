@@ -134,4 +134,40 @@ describe("files service", () => {
     expect(() => service.remove(root, "")).toThrow(/root/);
     expect(existsSync(join(root, "hello.txt"))).toBe(true);
   });
+
+  it("compresses and decompresses archives safely", async () => {
+    service.writeText(root, "sub/c.txt", "content c");
+    service.writeText(root, "sub/d.txt", "content d");
+    const archivePath = await service.compress(
+      root,
+      "sub",
+      ["c.txt", "d.txt"],
+      "test-archive.tar.gz",
+    );
+    expect(archivePath).toBe("sub/test-archive.tar.gz");
+    expect(existsSync(join(root, "sub", "test-archive.tar.gz"))).toBe(true);
+
+    mkdirSync(join(root, "extracted"), { recursive: true });
+    await service.decompress(root, "sub/test-archive.tar.gz", "extracted");
+    expect(service.readText(root, "extracted/c.txt").content).toBe("content c");
+    expect(service.readText(root, "extracted/d.txt").content).toBe("content d");
+  });
+
+  it("removeMany deletes multiple files", () => {
+    service.writeText(root, "del1.txt", "del1");
+    service.writeText(root, "del2.txt", "del2");
+    expect(existsSync(join(root, "del1.txt"))).toBe(true);
+    expect(existsSync(join(root, "del2.txt"))).toBe(true);
+    service.removeMany(root, ["del1.txt", "del2.txt"]);
+    expect(existsSync(join(root, "del1.txt"))).toBe(false);
+    expect(existsSync(join(root, "del2.txt"))).toBe(false);
+  });
+
+  it("resolveFile returns file info", () => {
+    service.writeText(root, "info.txt", "info");
+    const info = service.resolveFile(root, "info.txt");
+    expect(info.fileName).toBe("info.txt");
+    expect(info.isDir).toBe(false);
+    expect(info.fullPath).toContain("info.txt");
+  });
 });

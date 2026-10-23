@@ -9,7 +9,7 @@ import {
 import { requireAuth } from "../middleware/authn.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { parseQuery, parseBody } from "../../shared/validate.js";
-import { FilesService, BinaryFileError } from "../../modules/files/service.js";
+import { FilesService, BinaryFileError, ArchiveError } from "../../modules/files/service.js";
 import { PathEscapeError } from "../../modules/files/confinement.js";
 import { BadRequestError, NotFoundError } from "../../shared/errors.js";
 import { resolve as resolveFsPath, join } from "node:path";
@@ -20,13 +20,39 @@ const MAX_TEXT_WRITE = 2 * 1024 * 1024; // text editor writes bounded; uploads c
 
 const listQuery = z.object({ path: z.string().max(1024).default("") });
 const contentQuery = z.object({ path: z.string().min(1).max(1024) });
+const downloadQuery = z.object({ path: z.string().min(1).max(1024) });
 const contentBody = z.object({
   path: z.string().min(1).max(1024),
   content: z.string().max(MAX_TEXT_WRITE),
 });
 const mkdirBody = z.object({ path: z.string().min(1).max(1024) });
 const renameBody = z.object({ from: z.string().min(1).max(1024), to: z.string().min(1).max(1024) });
-const deleteBody = z.object({ path: z.string().min(1).max(1024) });
+const deleteBody = z
+  .object({
+    path: z.string().min(1).max(1024).optional(),
+    paths: z.array(z.string().min(1).max(1024)).optional(),
+  })
+  .refine((data) => Boolean(data.path) || Boolean(data.paths && data.paths.length > 0), {
+    message: "Either path or paths must be provided",
+  });
+const compressBody = z
+  .object({
+    root: z.string().max(1024).default(""),
+    files: z.array(z.string().min(1).max(1024)).min(1).optional(),
+    paths: z.array(z.string().min(1).max(1024)).min(1).optional(),
+    archiveName: z.string().max(255).optional(),
+  })
+  .refine(
+    (data) =>
+      Boolean((data.files && data.files.length > 0) || (data.paths && data.paths.length > 0)),
+    {
+      message: "Either files or paths must be provided",
+    },
+  );
+const decompressBody = z.object({
+  path: z.string().min(1).max(1024),
+  destination: z.string().max(1024).default(""),
+});
 
 /** Server file directories live at <DATA_DIR>/servers/<id> (matches JTG importer layout). */
 export function serverDataDir(env: Env, serverId: string): string {
@@ -142,19 +168,80 @@ export function filesRouter(
     }
   });
 
+  router.get("/servers/:id/files/download", guard("file.read-content"), (req, res, next) => {
+    try {
+      assertSuspendedReadable(req, res);
+      const q = parseQuery(downloadQuery, req);
+      const root = serverDataDir(env, req.params.id!);
+      const file = files.resolveFile(root, q.path);
+      if (file.isDir) {
+        throw new BadRequestError("Cannot download a directory directly; archive it first");
+      }
+      audit.record({
+        event: "file.download",
+        actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
+        serverId: req.params.id!,
+        requestId: req.requestId,
+        target: { path: q.path },
+      });
+      res.download(file.fullPath, file.fileName);
+    } catch (e) {
+      next(mapFileError(e));
+    }
+  });
+
+  router.post("/servers/:id/files/compress", guard("file.archive"), (req, res, next) => {
+    (async () => {
+      assertNotSuspendedForMutation(req, res);
+      const body = parseBody(compressBody, req);
+      const root = serverDataDir(env, req.params.id!);
+      const targetFiles = body.files ?? body.paths ?? [];
+      const archive = await files.compress(root, body.root, targetFiles, body.archiveName);
+      audit.record({
+        event: "file.compress",
+        actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
+        serverId: req.params.id!,
+        requestId: req.requestId,
+        target: { root: body.root, files: targetFiles, archive },
+      });
+      res.json({ archive });
+    })().catch((e) => next(mapFileError(e)));
+  });
+
+  router.post("/servers/:id/files/decompress", guard("file.archive"), (req, res, next) => {
+    (async () => {
+      assertNotSuspendedForMutation(req, res);
+      const body = parseBody(decompressBody, req);
+      const root = serverDataDir(env, req.params.id!);
+      await files.decompress(root, body.path, body.destination);
+      audit.record({
+        event: "file.decompress",
+        actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
+        serverId: req.params.id!,
+        requestId: req.requestId,
+        target: { path: body.path, destination: body.destination },
+      });
+      res.status(204).send();
+    })().catch((e) => next(mapFileError(e)));
+  });
+
   router.post("/servers/:id/files/delete", guard("file.delete"), (req, res, next) => {
     try {
       assertNotSuspendedForMutation(req, res);
       const body = parseBody(deleteBody, req);
       const root = serverDataDir(env, req.params.id!);
-      files.remove(root, body.path);
+      const targets = body.paths && body.paths.length > 0 ? body.paths : [body.path!];
+      files.removeMany(root, targets);
       audit.record({
         event: "file.delete",
         actorUserId: req.principal!.userId,
         actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
-        target: { path: body.path },
+        target: { paths: targets },
       });
       res.status(204).send();
     } catch (e) {
@@ -168,6 +255,7 @@ export function filesRouter(
 function mapFileError(e: unknown): unknown {
   if (e instanceof PathEscapeError) return new BadRequestError(e.message);
   if (e instanceof BinaryFileError) return new BadRequestError(e.message);
+  if (e instanceof ArchiveError) return new BadRequestError(e.message);
   if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return new NotFoundError("No such file");
   if ((e as NodeJS.ErrnoException)?.code === "EEXIST") return new BadRequestError("Already exists");
   return e;
