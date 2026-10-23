@@ -706,17 +706,13 @@
                 <div class="software-filters">
                   <div class="filter-chips" id="software-category-filters">
                     <button type="button" class="filter-chip active" data-category="">All</button>
-                    <button type="button" class="filter-chip" data-category="Minecraft Java">
+                    <button type="button" class="filter-chip" data-category="minecraft-java">
                       Minecraft Java
                     </button>
-                    <button
-                      type="button"
-                      class="filter-chip"
-                      data-category="Minecraft Bedrock & PocketMine"
-                    >
+                    <button type="button" class="filter-chip" data-category="minecraft-bedrock">
                       Bedrock & PocketMine
                     </button>
-                    <button type="button" class="filter-chip" data-category="Generic / Custom">
+                    <button type="button" class="filter-chip" data-category="generic-runtime">
                       Generic / Custom
                     </button>
                   </div>
@@ -755,6 +751,18 @@
                       <span
                         ><strong>Create a full backup</strong> of all current server files before
                         swapping (Recommended)</span
+                      >
+                    </label>
+                    <label class="check-container" id="swap-eula-container" hidden>
+                      <input type="checkbox" id="swap-eula-checkbox" />
+                      <span
+                        >I accept the
+                        <a
+                          href="https://account.mojang.com/documents/minecraft_eula"
+                          target="_blank"
+                          rel="noopener"
+                          >Minecraft End User License Agreement (EULA)</a
+                        ></span
                       >
                     </label>
                   </div>

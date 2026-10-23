@@ -581,8 +581,17 @@ export async function installModrinthProjects(
         primary: boolean;
       }>;
     }>;
-    const chosenVersion =
-      (versionId ? versions.find((v) => v.id === versionId) : null) ?? versions[0];
+    let chosenVersion: (typeof versions)[0] | undefined;
+    if (versionId) {
+      chosenVersion = versions.find((v) => v.id === versionId);
+      if (!chosenVersion) {
+        throw new EngineError(
+          `Requested version '${versionId}' for '${id}' is not available for ${mcVersion}`,
+        );
+      }
+    } else {
+      chosenVersion = versions[0];
+    }
     const file = chosenVersion?.files.find((f) => f.primary) ?? chosenVersion?.files[0];
     if (!file) throw new EngineError(`No ${mcVersion} file for '${id}' on Modrinth`);
     if (!/\.jar$/i.test(file.filename))

@@ -1132,6 +1132,12 @@ async function openServer(id, tab = "console", updateUrl = true) {
   tunnelAddress = "";
   if (updateUrl) history.pushState({}, "", `/servers/${id}/${tab}`);
   filesDir = "";
+  addonSearchQuery = "";
+  addonSearchPage = 1;
+  const addonInput = document.getElementById("addon-search-input");
+  if (addonInput) addonInput.value = "";
+  const addonContainer = document.getElementById("addon-cards-container");
+  if (addonContainer) addonContainer.innerHTML = "";
   // Never carry another server's file into this one: a save after switching
   // servers must not write stale contents to the new server.
   document.getElementById("file-dialog-path").textContent = "";
@@ -1186,6 +1192,12 @@ function leaveServer() {
   }
   currentServer = null;
   tunnelAddress = "";
+  addonSearchQuery = "";
+  addonSearchPage = 1;
+  const addonInput = document.getElementById("addon-search-input");
+  if (addonInput) addonInput.value = "";
+  const addonContainer = document.getElementById("addon-cards-container");
+  if (addonContainer) addonContainer.innerHTML = "";
   renderServerNav();
   resetStatSeries();
   // A different server is a different run namespace.
@@ -1808,6 +1820,17 @@ function updateBulkBar() {
   if (!bar || !countEl) return;
   countEl.textContent = `${count} item${count === 1 ? "" : "s"} selected`;
   bar.hidden = count === 0;
+
+  const btnDownload = document.getElementById("btn-bulk-download");
+  const btnArchive = document.getElementById("btn-bulk-compress");
+  const btnExtract = document.getElementById("btn-bulk-decompress");
+  const btnDelete = document.getElementById("btn-bulk-delete");
+
+  if (btnDownload) btnDownload.hidden = !canServer("file.read-content");
+  if (btnArchive) btnArchive.hidden = !canServer("file.archive");
+  if (btnExtract) btnExtract.hidden = !canServer("file.archive");
+  if (btnDelete) btnDelete.hidden = !canServer("file.delete");
+
   if (selectAll) {
     selectAll.checked = currentDirItems.length > 0 && count === currentDirItems.length;
     selectAll.indeterminate = count > 0 && count < currentDirItems.length;
@@ -1900,8 +1923,8 @@ async function refreshFiles(generation) {
       actions.append(action);
     };
     const relative = filesDir ? `${filesDir}/${item.name}` : item.name;
-    if (!item.isDir && canServer("file.read")) {
-      addAction("Download", "file.read", () => downloadFile(relative), false);
+    if (!item.isDir && canServer("file.read-content")) {
+      addAction("Download", "file.read-content", () => downloadFile(relative), false);
     }
     if (canServer("file.update")) {
       addAction("Rename", "file.update", () => renameFileTo(relative, dirOf(relative)), false);
@@ -2017,12 +2040,13 @@ document.getElementById("btn-bulk-compress")?.addEventListener("click", async ()
   const success = document.getElementById("files-success");
   if (err) err.hidden = true;
   if (success) success.hidden = true;
-  const paths = Array.from(selectedFiles).map((name) => (filesDir ? `${filesDir}/${name}` : name));
+  const filesList = Array.from(selectedFiles);
+  const paths = filesList.map((n) => (filesDir ? `${filesDir}/${n}` : n));
   const archivePath = filesDir ? `${filesDir}/${name}` : name;
   const res = await api(`/servers/${currentServer.id}/files/compress`, {
     method: "POST",
     token: store.token,
-    body: { paths, archiveName: archivePath },
+    body: { root: filesDir, files: filesList, paths, archiveName: archivePath },
   });
   if (res.status !== 200) {
     fail(err, describeProblem(res.status, res.data));
@@ -2055,7 +2079,7 @@ document.getElementById("btn-bulk-decompress")?.addEventListener("click", async 
     token: store.token,
     body: { path: relative },
   });
-  if (res.status !== 200) {
+  if (res.status !== 200 && res.status !== 204) {
     fail(err, describeProblem(res.status, res.data));
   } else {
     selectedFiles.clear();
@@ -2083,7 +2107,7 @@ document.getElementById("btn-bulk-download")?.addEventListener("click", async ()
   const res = await api(`/servers/${currentServer.id}/files/compress`, {
     method: "POST",
     token: store.token,
-    body: { paths, archiveName },
+    body: { root: filesDir, files: items, paths, archiveName },
   });
   if (res.status === 200) {
     await downloadFile(archiveName);
@@ -2379,13 +2403,14 @@ async function refreshAddons(generation) {
     fail(err, "You don't have permission to see plugins.");
     return;
   }
-  if (data.addons.length === 0) {
+  const plugins = (data.addons || []).filter((a) => a.folder === "plugins");
+  if (plugins.length === 0) {
     const li = document.createElement("li");
     li.textContent = "No plugins installed yet. Search Modrinth above to install plugins.";
     list.append(li);
     return;
   }
-  for (const a of data.addons) {
+  for (const a of plugins) {
     const li = document.createElement("li");
     const name = document.createElement("span");
     name.textContent = `${a.name} (${Math.round(a.bytes / 1024)} KB)`;
@@ -2486,7 +2511,10 @@ async function executeAddonSearch(query, page = 1) {
   if (note) note.hidden = true;
 
   if (!data.hits || data.hits.length === 0) {
-    container.innerHTML = `<p class="empty-state">No plugins found${query ? ` matching "${query}"` : ""}.</p>`;
+    const p = document.createElement("p");
+    p.className = "empty-state";
+    p.textContent = `No plugins found${query ? ` matching "${query}"` : ""}.`;
+    container.replaceChildren(p);
     if (pagination) pagination.hidden = true;
     return;
   }
@@ -2570,14 +2598,28 @@ async function handleInstallAddon(hit, installBtn) {
     token: store.token,
   });
 
-  if (status === 200 && data.versions && data.versions.length > 1) {
+  if (status !== 200) {
+    installBtn.disabled = false;
+    installBtn.textContent = "Install";
+    if (errorAlert) fail(errorAlert, describeProblem(status, data));
+    return;
+  }
+
+  if (!data.versions || data.versions.length === 0) {
+    installBtn.disabled = false;
+    installBtn.textContent = "Install";
+    if (errorAlert) fail(errorAlert, "No compatible versions found for this server.");
+    return;
+  }
+
+  if (data.versions.length > 1) {
     installBtn.disabled = false;
     installBtn.textContent = "Install";
     openAddonVersionDialog(hit, data.versions);
     return;
   }
 
-  const versionId = data?.versions?.[0]?.id;
+  const versionId = data.versions[0]?.id;
   installBtn.textContent = "Installing...";
   const res = await api(`/servers/${serverId}/addons`, {
     method: "POST",
@@ -2782,9 +2824,12 @@ async function refreshSoftware(generation) {
     return;
   }
 
-  for (const s of data.items) {
+  const activeSlug = data.current.blueprintSlug || data.current.slug;
+  const items = data.items || data.software || [];
+  for (const s of items) {
+    const isCurrent = s.slug === activeSlug || s.blueprintSlug === activeSlug;
     const card = document.createElement("div");
-    card.className = "software-card" + (s.slug === data.current.slug ? " current" : "");
+    card.className = "software-card" + (isCurrent ? " current" : "");
 
     const body = document.createElement("div");
     body.className = "software-card-body";
@@ -2802,9 +2847,9 @@ async function refreshSoftware(generation) {
     footer.className = "software-card-footer";
     const popularity = document.createElement("span");
     popularity.className = "addon-card-meta";
-    popularity.textContent = `Popularity #${s.popularityRank}`;
+    popularity.textContent = `Popularity #${s.popularityRank ?? 1}`;
 
-    if (s.slug === data.current.slug) {
+    if (isCurrent) {
       const activeChip = document.createElement("span");
       activeChip.className = "chip";
       activeChip.textContent = "Active Software";
@@ -2829,6 +2874,8 @@ function openSoftwareSwapDialog(targetSoftware, currentSoftware) {
   const targetNameEl = document.getElementById("swap-target-software-name");
   const descEl = document.getElementById("swap-dialog-desc");
   const backupCheckbox = document.getElementById("swap-backup-checkbox");
+  const eulaContainer = document.getElementById("swap-eula-container");
+  const eulaCheckbox = document.getElementById("swap-eula-checkbox");
   const err = document.getElementById("swap-dialog-error");
   const confirmBtn = document.getElementById("btn-software-swap-confirm");
 
@@ -2841,6 +2888,12 @@ function openSoftwareSwapDialog(targetSoftware, currentSoftware) {
     descEl.textContent = `You are about to swap from ${currentSoftware.name} to ${targetSoftware.name} (${targetSoftware.category}).`;
   }
   if (backupCheckbox) backupCheckbox.checked = true;
+
+  if (eulaContainer && eulaCheckbox) {
+    const needsEula = targetSoftware.category === "minecraft-java";
+    eulaContainer.hidden = !needsEula;
+    eulaCheckbox.checked = false;
+  }
 
   const isRunning = currentServer.runtimeState && currentServer.runtimeState !== "offline";
   if (isRunning) {
@@ -2883,8 +2936,15 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
   const dialog = document.getElementById("software-swap-dialog");
   const confirmBtn = document.getElementById("btn-software-swap-confirm");
   const backupCheckbox = document.getElementById("swap-backup-checkbox");
+  const eulaCheckbox = document.getElementById("swap-eula-checkbox");
   const err = document.getElementById("swap-dialog-error");
   const successAlert = document.getElementById("software-alert-success");
+
+  const needsEula = pendingSwapSoftware.category === "minecraft-java";
+  if (needsEula && eulaCheckbox && !eulaCheckbox.checked) {
+    if (err) fail(err, "You must accept the Minecraft EULA to switch to Minecraft software.");
+    return;
+  }
 
   if (confirmBtn) {
     confirmBtn.disabled = true;
@@ -2897,7 +2957,9 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
     token: store.token,
     body: {
       blueprintSlug: pendingSwapSoftware.slug,
+      backupBeforeSwap: createBackup,
       createBackup,
+      eulaAccepted: eulaCheckbox ? eulaCheckbox.checked : undefined,
     },
   });
 

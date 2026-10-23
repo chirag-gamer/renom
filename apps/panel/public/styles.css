@@ -1018,7 +1018,7 @@ textarea:focus {
 /* Addon Cards Grid & Card UI */
 .addon-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 16px;
   margin: 16px 0;
 }
@@ -1226,9 +1226,15 @@ textarea:focus {
 }
 .software-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 16px;
   margin: 16px 0;
+}
+@media (max-width: 340px) {
+  .addon-cards-grid,
+  .software-cards-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .software-card {
   display: flex;

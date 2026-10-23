@@ -35,11 +35,20 @@ const deleteBody = z
   .refine((data) => Boolean(data.path) || Boolean(data.paths && data.paths.length > 0), {
     message: "Either path or paths must be provided",
   });
-const compressBody = z.object({
-  root: z.string().max(1024).default(""),
-  files: z.array(z.string().min(1).max(1024)).min(1),
-  archiveName: z.string().max(255).optional(),
-});
+const compressBody = z
+  .object({
+    root: z.string().max(1024).default(""),
+    files: z.array(z.string().min(1).max(1024)).min(1).optional(),
+    paths: z.array(z.string().min(1).max(1024)).min(1).optional(),
+    archiveName: z.string().max(255).optional(),
+  })
+  .refine(
+    (data) =>
+      Boolean((data.files && data.files.length > 0) || (data.paths && data.paths.length > 0)),
+    {
+      message: "Either files or paths must be provided",
+    },
+  );
 const decompressBody = z.object({
   path: z.string().min(1).max(1024),
   destination: z.string().max(1024).default(""),
@@ -182,25 +191,26 @@ export function filesRouter(
     }
   });
 
-  router.post("/servers/:id/files/compress", guard("file.create"), (req, res, next) => {
+  router.post("/servers/:id/files/compress", guard("file.archive"), (req, res, next) => {
     (async () => {
       assertNotSuspendedForMutation(req, res);
       const body = parseBody(compressBody, req);
       const root = serverDataDir(env, req.params.id!);
-      const archive = await files.compress(root, body.root, body.files, body.archiveName);
+      const targetFiles = body.files ?? body.paths ?? [];
+      const archive = await files.compress(root, body.root, targetFiles, body.archiveName);
       audit.record({
         event: "file.compress",
         actorUserId: req.principal!.userId,
         actorApiKeyId: req.principal!.apiKeyId,
         serverId: req.params.id!,
         requestId: req.requestId,
-        target: { root: body.root, files: body.files, archive },
+        target: { root: body.root, files: targetFiles, archive },
       });
       res.json({ archive });
     })().catch((e) => next(mapFileError(e)));
   });
 
-  router.post("/servers/:id/files/decompress", guard("file.create"), (req, res, next) => {
+  router.post("/servers/:id/files/decompress", guard("file.archive"), (req, res, next) => {
     (async () => {
       assertNotSuspendedForMutation(req, res);
       const body = parseBody(decompressBody, req);

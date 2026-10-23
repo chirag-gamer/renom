@@ -80,10 +80,11 @@ export function addonsRouter(deps: AddonsDeps): Router {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
+      const isPluginPlatform = platform !== null && platform.projectType === "plugin";
       res.json({
-        supported: platform !== null,
-        folder: platform?.dir ?? null,
-        projectType: platform?.projectType ?? null,
+        supported: isPluginPlatform,
+        folder: isPluginPlatform ? platform.dir : null,
+        projectType: isPluginPlatform ? platform.projectType : null,
         mcVersion: mcVersionOf(id),
       });
     } catch (e) {
@@ -91,7 +92,6 @@ export function addonsRouter(deps: AddonsDeps): Router {
     }
   });
 
-  // Search is filtered to this server's loader and exact Minecraft version, so
   // Search is filtered to this server's loader and exact Minecraft version.
   // Restrict this tab to display ONLY plugins per FR.
   router.get("/servers/:id/addons/search", guard("startup.read"), (req, res, next) => {
@@ -99,8 +99,8 @@ export function addonsRouter(deps: AddonsDeps): Router {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
-      if (!platform) {
-        throw new ConflictError("This server software has no mod or plugin platform");
+      if (!platform || platform.projectType !== "plugin") {
+        throw new ConflictError("This server software has no plugin platform");
       }
       const mcVersion = mcVersionOf(id);
       if (!mcVersion) {
@@ -118,9 +118,11 @@ export function addonsRouter(deps: AddonsDeps): Router {
         q.limit,
         offset,
       );
+      const totalPages = Math.ceil(result.totalHits / q.limit) || 1;
       res.json({
         hits: result.hits,
         totalHits: result.totalHits,
+        totalPages,
         page: q.page,
         limit: q.limit,
         mcVersion,
@@ -134,8 +136,8 @@ export function addonsRouter(deps: AddonsDeps): Router {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
-      if (!platform) {
-        throw new ConflictError("This server software has no mod or plugin platform");
+      if (!platform || platform.projectType !== "plugin") {
+        throw new ConflictError("This server software has no plugin platform");
       }
       const mcVersion = mcVersionOf(id);
       if (!mcVersion) {
@@ -189,6 +191,10 @@ export function addonsRouter(deps: AddonsDeps): Router {
       const id = req.params.id ?? "";
       const server = servers.byId(id);
       if (!server) throw new NotFoundError("Not found");
+      const platform = modrinthPlatform(server.blueprint_slug);
+      if (!platform || platform.projectType !== "plugin") {
+        throw new ConflictError("This server software has no plugin platform");
+      }
       const vars = storedVariables(db, id, []);
       const mcRow = db
         .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")

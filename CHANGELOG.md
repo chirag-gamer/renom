@@ -13,6 +13,15 @@ All notable changes to Renom are documented here. Format based on
 - Game Swapper: swap server software and entire game ecosystems (Minecraft Java, Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python) with an option to create a full backup of all current server files before swapping.
 - File manager bulk actions & multi-select: select-all directory checkbox, row checkboxes, and a floating bulk actions bar supporting bulk Download, Archive (compress), Extract (decompress), Delete, and Clear with path-confinement validation.
 
+### Fixed
+
+- Archive & extraction security: Staging directory extraction, rejecting symlinks and path escapes, rejecting `strip > 0` for `.zip`, supporting `.tar` archives, preserving relative subdirectories, and terminating `tar` command arguments with `--`.
+- Software & Ecosystem swapping: Require explicit Minecraft EULA acceptance before swapping to EULA-governed software, update blueprint image references, prune incompatible startup variables on blueprint swap, and persist intentionally requested versions.
+- File manager & bulk actions: Granular permission gating for bulk actions (`file.read-content`, `file.archive`, `file.delete`), accept both `files` and `paths` schemas, idempotent multi-delete with confinement validation, and handle 204 decompress responses.
+- Plugins & Addons: Restrict plugins search and capability strictly to plugin platforms (`projectType: "plugin"`), filter installed addons list to `folder === "plugins"`, add `totalPages` to Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely.
+- Responsive layout: Fix addon and software grid tracks on viewports narrower than 312px.
+- Test coverage: Assert all decompressed files survive extraction and assert 404 on all bulk-deleted paths in `files-authz.spec.ts`.
+
 ### Changed
 
 - Console: the log is a fixed, self-scrolling pane sized to the viewport instead of a box that kept

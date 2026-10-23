@@ -215,6 +215,13 @@ describe("files API authorization + confinement", () => {
       .set("authorization", `Bearer ${ownerToken}`);
     expect(check.status).toBe(200);
     expect(check.body.content).toBe("hello comp1");
+
+    const check2 = await request(app)
+      .get(`/api/v3/servers/${serverId}/files/content`)
+      .query({ path: "decomp/comp2.txt" })
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(check2.status).toBe(200);
+    expect(check2.body.content).toBe("hello comp2");
   });
 
   it("bulk deletes multiple files via API", async () => {
@@ -233,5 +240,11 @@ describe("files API authorization + confinement", () => {
       .query({ path: "bulk1.txt" })
       .set("authorization", `Bearer ${ownerToken}`);
     expect(check.status).toBe(404);
+
+    const check2 = await request(app)
+      .get(`/api/v3/servers/${serverId}/files/content`)
+      .query({ path: "bulk2.txt" })
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(check2.status).toBe(404);
   });
 });

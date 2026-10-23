@@ -260,11 +260,20 @@ export class ServersRepo {
     this.db
       .prepare(
         `UPDATE servers
-         SET blueprint_id = ?, blueprint_version_tag = ?, image_ref = CASE WHEN ? != '' THEN ? ELSE image_ref END, updated_at = ?
+         SET blueprint_id = ?, blueprint_version_tag = ?, image_ref = ?, updated_at = ?
          WHERE id = ? AND deleted_at IS NULL`,
       )
-      .run(blueprintId, versionTag, imageRef, imageRef, now, id);
+      .run(blueprintId, versionTag, imageRef, now, id);
     return this.byId(id);
+  }
+
+  setVariable(id: string, key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO server_variables (server_id, key, value) VALUES (?,?,?)
+         ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(id, key, value);
   }
 
   setStatus(id: string, status: string): void {

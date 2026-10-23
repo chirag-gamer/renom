@@ -50,7 +50,9 @@ const softwareQuery = z.object({
 const switchSoftwareSchema = z.object({
   blueprintSlug: z.string().min(1).max(64),
   version: z.string().max(64).optional(),
-  backupBeforeSwap: z.boolean().default(true),
+  backupBeforeSwap: z.boolean().optional(),
+  createBackup: z.boolean().optional(),
+  eulaAccepted: z.boolean().optional(),
 });
 
 const POPULARITY_RANK: Record<string, number> = {
@@ -86,9 +88,8 @@ const PLUGIN_TUNNEL_BLUEPRINTS: Record<string, true> = {
  * plugin. The installer writes the concrete build it downloaded back into its
  * variable map, and this is where that becomes durable.
  *
- * The write is conditional: installation is backgrounded, so an admin can set
- * a version on the Startup tab while it runs, and a blind write would undo
- * that with the value the install happened to download.
+ * If a specific version was requested by the user, persist it directly.
+ * Otherwise, conditionally update it to protect against concurrent edits.
  */
 function persistInstalledVersion(
   servers: ServersRepo,
@@ -96,9 +97,18 @@ function persistInstalledVersion(
   vars: Record<string, string> | null,
   requested: string | undefined,
 ): void {
-  const version = vars?.["mcVersion"];
+  const version = requested || vars?.["mcVersion"] || vars?.["bedrockVersion"];
   if (!version || version === "latest") return;
-  servers.setVariableIfUnchanged(serverId, "mcVersion", version, requested ?? null);
+  if (requested) {
+    if (vars?.["bedrockVersion"] !== undefined) {
+      servers.setVariable(serverId, "bedrockVersion", requested);
+    } else {
+      servers.setVariable(serverId, "mcVersion", requested);
+    }
+  } else {
+    const key = vars?.["bedrockVersion"] !== undefined ? "bedrockVersion" : "mcVersion";
+    servers.setVariableIfUnchanged(serverId, key, version, null);
+  }
 }
 
 export interface ServersDeps {
@@ -492,6 +502,7 @@ export function serversRouter(deps: ServersDeps): Router {
         }
         return {
           slug: r.slug,
+          blueprintSlug: r.slug,
           name: r.name,
           category: r.category,
           description: desc,
@@ -514,10 +525,16 @@ export function serversRouter(deps: ServersDeps): Router {
         .sort((a, b) => b.popularity - a.popularity);
 
       const offset = (q.page - 1) * q.limit;
-      const paged = filtered.slice(offset, offset + q.limit);
+      const paged = filtered.slice(offset, offset + q.limit).map((item, idx) => ({
+        ...item,
+        popularityRank: offset + idx + 1,
+      }));
+
+      const totalPages = Math.ceil(filtered.length / q.limit) || 1;
 
       res.json({
         current: {
+          slug: s.blueprint_slug,
           blueprintSlug: s.blueprint_slug,
           name: doc.name,
           category: doc.category,
@@ -525,7 +542,10 @@ export function serversRouter(deps: ServersDeps): Router {
           description: doc.description,
         },
         software: paged,
+        items: paged,
+        total: filtered.length,
         totalHits: filtered.length,
+        totalPages,
         page: q.page,
         limit: q.limit,
       });
@@ -546,7 +566,9 @@ export function serversRouter(deps: ServersDeps): Router {
         throw new ConflictError("Stop the server before changing software or ecosystem");
       }
       const bp = deps.db
-        .prepare("SELECT id, slug, name, category, latest_tag FROM blueprints WHERE slug = ?")
+        .prepare(
+          "SELECT id, slug, name, category, latest_tag FROM blueprints WHERE slug = ? AND enabled = 1",
+        )
         .get(body.blueprintSlug) as
         | { id: string; slug: string; name: string; category: string; latest_tag: string }
         | undefined;
@@ -554,8 +576,16 @@ export function serversRouter(deps: ServersDeps): Router {
         throw new NotFoundError(`Software blueprint '${body.blueprintSlug}' not found`);
       }
 
+      const doc = blueprints.getDoc(bp.slug, bp.latest_tag);
+
+      // Mojang's EULA must be accepted explicitly for blueprints with the eula feature
+      if (doc.features?.includes("eula") && body.eulaAccepted !== true) {
+        throw new BadRequestError("This server needs the Minecraft EULA accepted first");
+      }
+
+      const shouldBackup = body.backupBeforeSwap ?? body.createBackup ?? true;
       let backedUp = false;
-      if (body.backupBeforeSwap && backups && isTarAvailable()) {
+      if (shouldBackup && backups && isTarAvailable()) {
         try {
           await backups.create(id, req.principal!.userId);
           backedUp = true;
@@ -569,9 +599,39 @@ export function serversRouter(deps: ServersDeps): Router {
         }
       }
 
-      servers.updateBlueprint(id, bp.id, bp.latest_tag);
+      servers.updateBlueprint(id, bp.id, bp.latest_tag, doc.image);
 
-      const doc = blueprints.getDoc(bp.slug, bp.latest_tag);
+      if (doc.features?.includes("eula")) {
+        servers.recordEula(id, req.ip ?? null);
+      }
+
+      // Reset incompatible server_variables overrides that don't exist in target blueprint
+      const allowedKeys = new Set((doc.variables ?? []).map((v) => v.key));
+      allowedKeys.add("maxMemory");
+      allowedKeys.add("minekubeEndpoint");
+      allowedKeys.add("minekubeSecret");
+
+      const existingVars = deps.db
+        .prepare("SELECT key FROM server_variables WHERE server_id = ?")
+        .all(id) as Array<{ key: string }>;
+      for (const row of existingVars) {
+        if (!allowedKeys.has(row.key)) {
+          deps.db
+            .prepare("DELETE FROM server_variables WHERE server_id = ? AND key = ?")
+            .run(id, row.key);
+        }
+      }
+
+      if (body.version) {
+        if (allowedKeys.has("mcVersion")) {
+          servers.setVariable(id, "mcVersion", body.version);
+        } else if (allowedKeys.has("bedrockVersion")) {
+          servers.setVariable(id, "bedrockVersion", body.version);
+        } else if (allowedKeys.has("version")) {
+          servers.setVariable(id, "version", body.version);
+        }
+      }
+
       const vars = storedVariables(deps.db, id, doc.variables ?? []);
       const alloc = servers.primaryAllocation(id);
       if (alloc) {
@@ -579,8 +639,9 @@ export function serversRouter(deps: ServersDeps): Router {
         vars["allocation.port"] = String(alloc.port);
       }
       if (body.version) {
-        vars["mcVersion"] = body.version;
-        vars["bedrockVersion"] = body.version;
+        if ("mcVersion" in vars) vars["mcVersion"] = body.version;
+        if ("bedrockVersion" in vars) vars["bedrockVersion"] = body.version;
+        if ("version" in vars) vars["version"] = body.version;
       }
 
       servers.setStatus(id, "installing");

@@ -105,8 +105,16 @@ export class FilesService {
   }
 
   removeMany(serverRoot: string, relPaths: string[]): void {
-    for (const p of relPaths) {
-      this.remove(serverRoot, p);
+    const rootPath = confinePath(serverRoot, "");
+    const targets = relPaths.map((p) => {
+      const target = confinePath(serverRoot, p);
+      if (target === rootPath) {
+        throw new PathEscapeError("refusing to delete server root itself");
+      }
+      return target;
+    });
+    for (const target of targets) {
+      rmSync(target, { recursive: true, force: true });
     }
   }
 
