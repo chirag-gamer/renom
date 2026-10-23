@@ -615,7 +615,10 @@ export function serversRouter(deps: ServersDeps): Router {
         .prepare("SELECT key FROM server_variables WHERE server_id = ?")
         .all(id) as Array<{ key: string }>;
       for (const row of existingVars) {
-        if (!allowedKeys.has(row.key)) {
+        if (
+          !allowedKeys.has(row.key) &&
+          !(PLUGIN_TUNNEL_BLUEPRINTS[bp.slug] && row.key.startsWith("tunnel."))
+        ) {
           deps.db
             .prepare("DELETE FROM server_variables WHERE server_id = ? AND key = ?")
             .run(id, row.key);

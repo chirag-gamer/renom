@@ -148,7 +148,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
       const projectId = req.params.projectId ?? "";
       const versions = await fetchModrinthProjectVersions(
         fetch,
-        { loaders: platform.loaders },
+        { loaders: platform.loaders, projectType: platform.projectType },
         mcVersion,
         projectId,
       );

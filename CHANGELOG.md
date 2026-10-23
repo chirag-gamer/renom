@@ -16,9 +16,9 @@ All notable changes to Renom are documented here. Format based on
 ### Fixed
 
 - Archive & extraction security: Staging directory extraction, rejecting symlinks and path escapes, rejecting `strip > 0` for `.zip`, supporting `.tar` archives, preserving relative subdirectories, and terminating `tar` command arguments with `--`.
-- Software & Ecosystem swapping: Require explicit Minecraft EULA acceptance before swapping to EULA-governed software, update blueprint image references, prune incompatible startup variables on blueprint swap, and persist intentionally requested versions.
-- File manager & bulk actions: Granular permission gating for bulk actions (`file.read-content`, `file.archive`, `file.delete`), accept both `files` and `paths` schemas, idempotent multi-delete with confinement validation, and handle 204 decompress responses.
-- Plugins & Addons: Restrict plugins search and capability strictly to plugin platforms (`projectType: "plugin"`), filter installed addons list to `folder === "plugins"`, add `totalPages` to Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely.
+- Software & Ecosystem swapping: Require explicit Minecraft EULA acceptance before swapping to EULA-governed software, update blueprint image references, prune incompatible startup variables on blueprint swap while preserving `tunnel.*` configurations for plugin-tunnel targets, and persist intentionally requested versions.
+- File manager & bulk actions: Granular permission gating for bulk actions (`file.read-content`, `file.archive`, `file.delete`), accept both `files` and `paths` schemas, idempotent multi-delete with confinement validation, send archive basename to handle nested directory archives properly, and handle 204 decompress responses.
+- Plugins & Addons: Restrict plugins search and capability strictly to plugin platforms (`projectType: "plugin"`), validate Modrinth metadata `project_type: "plugin"` in installer and version picker, pre-validate multi-project batches and reject single `versionId` across multiple projects to prevent partial installs, filter installed addons list to `folder === "plugins"`, add `totalPages` to Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely.
 - Responsive layout: Fix addon and software grid tracks on viewports narrower than 312px.
 - Test coverage: Assert all decompressed files survive extraction and assert 404 on all bulk-deleted paths in `files-authz.spec.ts`.
 

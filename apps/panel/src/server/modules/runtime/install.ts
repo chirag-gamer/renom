@@ -557,8 +557,20 @@ export async function installModrinthProjects(
   if (!mcVersion || mcVersion === "latest") {
     throw new EngineError("Pick an exact Minecraft version first (Startup tab), then add addons");
   }
-  const dir = join(ctx.dir, platform.dir);
-  mkdirSync(dir, { recursive: true });
+  if (versionId && projects.length > 1) {
+    throw new EngineError("Cannot specify versionId when installing multiple projects");
+  }
+
+  // Pre-validate all projects and versions before downloading to avoid partial installation
+  const planned: Array<{
+    id: string;
+    file: {
+      url: string;
+      filename: string;
+      hashes: { sha256?: string; sha512?: string };
+    };
+  }> = [];
+
   for (const project of projects) {
     const id = project.trim();
     // Modrinth project ids are case-sensitive base62 ('Vebnzrzj' is LuckPerms,
@@ -567,6 +579,19 @@ export async function installModrinthProjects(
     if (!/^[A-Za-z0-9][A-Za-z0-9-_]{1,63}$/.test(id)) {
       throw new EngineError(`Not a Modrinth project id: '${project}'`);
     }
+
+    if (platform.projectType) {
+      const proj = (await fetchJson(
+        fetchImpl,
+        `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}`,
+      )) as { project_type?: string };
+      if (proj?.project_type && proj.project_type !== platform.projectType) {
+        throw new EngineError(
+          `Project '${id}' is a ${proj.project_type}, not a ${platform.projectType}`,
+        );
+      }
+    }
+
     const versions = (await fetchJson(
       fetchImpl,
       `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +
@@ -602,11 +627,26 @@ export async function installModrinthProjects(
     if (safeName !== file.filename || safeName.includes("..")) {
       throw new EngineError(`Unsafe addon filename '${file.filename}'`);
     }
-    await downloadFile(fetchImpl, file.url, confine(ctx.dir, `${platform.dir}/${safeName}`), {
-      maxBytes: 256 * 1024 * 1024,
-      sha512: file.hashes.sha512,
-      sha256: file.hashes.sha256,
+    planned.push({
+      id,
+      file: { url: file.url, filename: safeName, hashes: file.hashes },
     });
+  }
+
+  const dir = join(ctx.dir, platform.dir);
+  mkdirSync(dir, { recursive: true });
+
+  for (const item of planned) {
+    await downloadFile(
+      fetchImpl,
+      item.file.url,
+      confine(ctx.dir, `${platform.dir}/${item.file.filename}`),
+      {
+        maxBytes: 256 * 1024 * 1024,
+        sha512: item.file.hashes.sha512,
+        sha256: item.file.hashes.sha256,
+      },
+    );
   }
 }
 
@@ -691,13 +731,24 @@ export async function searchModrinthProjects(
 
 export async function fetchModrinthProjectVersions(
   fetchImpl: typeof fetch,
-  platform: { loaders: string[] },
+  platform: { loaders: string[]; projectType?: "mod" | "plugin" },
   mcVersion: string,
   projectId: string,
 ): Promise<ModrinthVersionInfo[]> {
   const id = projectId.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9-_]{1,63}$/.test(id)) {
     throw new EngineError(`Not a Modrinth project id: '${projectId}'`);
+  }
+  if (platform.projectType) {
+    const proj = (await fetchJson(
+      fetchImpl,
+      `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}`,
+    )) as { project_type?: string };
+    if (proj?.project_type && proj.project_type !== platform.projectType) {
+      throw new EngineError(
+        `Project '${projectId}' is a ${proj.project_type}, not a ${platform.projectType}`,
+      );
+    }
   }
   const url =
     `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +

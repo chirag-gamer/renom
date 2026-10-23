@@ -2036,24 +2036,25 @@ document.getElementById("btn-bulk-compress")?.addEventListener("click", async ()
   if (selectedFiles.size === 0) return;
   const name = window.prompt("Archive name (e.g. backup.tar.gz):", "archive.tar.gz");
   if (!name) return;
+  const archiveBasename = basename(name);
+  if (!archiveBasename) return;
   const err = document.getElementById("files-error");
   const success = document.getElementById("files-success");
   if (err) err.hidden = true;
   if (success) success.hidden = true;
   const filesList = Array.from(selectedFiles);
   const paths = filesList.map((n) => (filesDir ? `${filesDir}/${n}` : n));
-  const archivePath = filesDir ? `${filesDir}/${name}` : name;
   const res = await api(`/servers/${currentServer.id}/files/compress`, {
     method: "POST",
     token: store.token,
-    body: { root: filesDir, files: filesList, paths, archiveName: archivePath },
+    body: { root: filesDir, files: filesList, paths, archiveName: archiveBasename },
   });
   if (res.status !== 200) {
     fail(err, describeProblem(res.status, res.data));
   } else {
     selectedFiles.clear();
     if (success) {
-      success.textContent = `Archive "${name}" created successfully.`;
+      success.textContent = `Archive "${archiveBasename}" created successfully.`;
       success.hidden = false;
     }
     refreshFiles();
@@ -2102,19 +2103,21 @@ document.getElementById("btn-bulk-download")?.addEventListener("click", async ()
       return;
     }
   }
-  const archiveName = filesDir ? `${filesDir}/download.tar.gz` : "download.tar.gz";
+  const archiveBasename = "download.tar.gz";
   const paths = items.map((name) => (filesDir ? `${filesDir}/${name}` : name));
   const res = await api(`/servers/${currentServer.id}/files/compress`, {
     method: "POST",
     token: store.token,
-    body: { root: filesDir, files: items, paths, archiveName },
+    body: { root: filesDir, files: items, paths, archiveName: archiveBasename },
   });
   if (res.status === 200) {
-    await downloadFile(archiveName);
+    const downloadPath =
+      res.data?.archive || (filesDir ? `${filesDir}/${archiveBasename}` : archiveBasename);
+    await downloadFile(downloadPath);
     await api(`/servers/${currentServer.id}/files/delete`, {
       method: "POST",
       token: store.token,
-      body: { path: archiveName },
+      body: { path: downloadPath },
     });
     refreshFiles();
   } else {
