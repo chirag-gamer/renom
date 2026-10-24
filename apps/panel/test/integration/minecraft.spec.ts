@@ -368,10 +368,13 @@ describe("minekube address scraping", () => {
     ).toBe("one.play.minekube.net");
   });
 
-  it("validates endpoint names against the Connect grammar", () => {
-    // 4-8 letters, then four digits, optionally joined by a second word.
-    expect(endpointValid("vivid-lagoon-9784")).toBe(true);
+  it("validates endpoint names against the Connect grammar and 16-char limit", () => {
+    // 4-8 letters, then four digits, optionally joined by a second word, max 16 chars.
+    expect(endpointValid("noble-fjord-2128")).toBe(true);
+    expect(endpointValid("calm-fjord-9784")).toBe(true);
     expect(endpointValid("amber-9784")).toBe(true);
+    expect(endpointValid("vivid-lagoon-9784")).toBe(false);
+    expect(endpointValid("mellow-atlas-9245")).toBe(false);
     expect(endpointValid("UPPER")).toBe(false);
     expect(endpointValid("a")).toBe(false);
     expect(endpointValid("has space")).toBe(false);
@@ -508,13 +511,13 @@ describe("EULA gate + variables + tunnel API", () => {
         "ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value",
     );
     setVar.run(serverId, "tunnel.provider", "minekube");
-    setVar.run(serverId, "tunnel.endpoint", "vivid-lagoon-9784");
+    setVar.run(serverId, "tunnel.endpoint", "noble-fjord-2128");
 
     const res = await request(app)
       .get(`/api/v3/servers/${serverId}/tunnel`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.address).toBe("vivid-lagoon-9784.play.minekube.net");
+    expect(res.body.address).toBe("noble-fjord-2128.play.minekube.net");
   });
 
   it("Minekube refuses Bedrock servers with directions", async () => {

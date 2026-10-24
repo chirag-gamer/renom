@@ -29,12 +29,13 @@ describe("database layer", () => {
       "blueprint-maturity",
       "schedule-lock-expiry",
       "tunnel-endpoint-unique",
+      "repair-overlong-tunnel-endpoints",
     ]);
 
     db.close();
     const again = openAndMigrate(file);
     const rows2 = again.prepare("SELECT COUNT(*) AS n FROM _migrations").get() as { n: number };
-    expect(Number(rows2.n)).toBe(4);
+    expect(Number(rows2.n)).toBe(5);
     again.close();
   });
 
@@ -116,6 +117,54 @@ describe("database layer", () => {
         .prepare("SELECT name FROM _migrations WHERE name = 'tunnel-endpoint-unique'")
         .get();
       expect(applied).toBeDefined();
+      const repaired = upgraded
+        .prepare(
+          "SELECT value FROM server_variables WHERE server_id = 'srv-z' AND key = 'tunnel.endpoint'",
+        )
+        .get() as { value: string };
+      expect(repaired.value.length).toBeLessThanOrEqual(16);
+    } finally {
+      upgraded.close();
+    }
+  });
+
+  it("repairs overlong tunnel endpoints (>= 17 chars) during migration", () => {
+    const file = tempDb();
+    const db = openDatabase(file);
+    runMigrations(db, allMigrations.slice(0, 4));
+    try {
+      db.prepare(
+        "INSERT INTO nodes (id,name,data_root,backup_root,status,created_at) VALUES ('local','Local','/d','/b','online',0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO users (id,username,role,created_at,updated_at) VALUES ('u1','alice','owner',0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO blueprints (id,slug,name,category,source,created_at,updated_at) VALUES ('b1','paper','Paper','minecraft-java','builtin',0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO servers (id,name,owner_id,blueprint_id,blueprint_version_tag,image_ref,memory_mb,disk_quota_mb,created_at,updated_at) VALUES ('s1','Server 1','u1','b1','v1','img',1024,1024,0,0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO server_variables (server_id,key,value) VALUES ('s1','tunnel.endpoint','mellow-atlas-9245')",
+      ).run();
+    } finally {
+      db.close();
+    }
+
+    const upgraded = openAndMigrate(file);
+    try {
+      const row = upgraded
+        .prepare(
+          "SELECT value FROM server_variables WHERE server_id = 's1' AND key = 'tunnel.endpoint'",
+        )
+        .get() as { value: string };
+      expect(row.value.length).toBeLessThanOrEqual(16);
+      expect(row.value).not.toBe("mellow-atlas-9245");
+      const migrationRecord = upgraded
+        .prepare("SELECT name FROM _migrations WHERE name = 'repair-overlong-tunnel-endpoints'")
+        .get();
+      expect(migrationRecord).toBeDefined();
     } finally {
       upgraded.close();
     }

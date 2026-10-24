@@ -84,16 +84,22 @@ export function scanHistoryForAddress(lines: Array<{ text: string }>): string | 
  * in, which is also what keeps the address on screen once the line scrolls out.
  */
 export function resolveJoinAddress(printed: string | null, endpoint: string | null): string | null {
+  if (endpoint !== null && !endpointValid(endpoint)) return null;
   const derived = endpoint ? addressForEndpoint(endpoint) : null;
   return printed && (derived === null || printed === derived) ? printed : derived;
 }
 
-// Connect's grammar: 4-8 letters, then 4 digits, joined by single dashes —
-// e.g. `vivid-lagoon-9784`. Validating against the real shape (rather than any
-// lowercase string) means a stored endpoint can actually come up, instead of
-// failing silently in the connector log on first boot.
+// Connect's grammar: 4-8 letters, then 4 digits, joined by single dashes, max 16 chars —
+// e.g. `noble-fjord-2128` or `amber-9784`. Minekube Connect's WatchService strictly enforces
+// a 16-character maximum length limit; names >= 17 chars are refused with HTTP 400
+// "invalid endpoint name format". Validating the 16-character bound ensures a stored
+// endpoint can connect instead of triggering an endless reconnect loop.
 export function endpointValid(endpoint: string): boolean {
-  return /^[a-z][a-z]{3,7}(?:-[a-z][a-z]{3,7})?-\d{4}$/.test(endpoint);
+  return (
+    endpoint.length >= 4 &&
+    endpoint.length <= 16 &&
+    /^[a-z][a-z]{3,7}(?:-[a-z][a-z]{3,7})?-\d{4}$/.test(endpoint)
+  );
 }
 
 /**
@@ -204,8 +210,11 @@ function randomInt(max: number): number {
  * name is taken by a different token.
  */
 export function generateEndpointName(): string {
-  const suffix = String(randomInt(10_000)).padStart(4, "0");
-  return `${pick(ADJECTIVES)}-${pick(NOUNS)}-${suffix}`;
+  while (true) {
+    const suffix = String(randomInt(10_000)).padStart(4, "0");
+    const candidate = `${pick(ADJECTIVES)}-${pick(NOUNS)}-${suffix}`;
+    if (candidate.length <= 16) return candidate;
+  }
 }
 
 /** Download the plugin jar into <serverDir>/plugins (offline servers only, by route guard). */
