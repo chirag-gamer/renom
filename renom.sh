@@ -113,9 +113,20 @@ do_update() {
   info "Reinstalling dependencies and rebuilding..."
   npm install --no-audit --no-fund || die "npm install failed."
   npm run build || die "Build failed."
-  if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service; then
+  if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
     sudo systemctl restart renom.service || die "Update built, but the Renom service restart failed."
     ok "Updated and restarted the Renom background service."
+  elif command -v pm2 >/dev/null 2>&1 && pm2 list 2>/dev/null | grep -qi renom; then
+    pm2 restart renom || warn "Could not restart pm2 process automatically."
+    ok "Updated and restarted the Renom pm2 process."
+  elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then
+    ok "Updated."
+    info "Stopping previous panel process, if running..."
+    pkill -f "dist/server/index.js" 2>/dev/null || true
+    sleep 1
+    say "Starting Renom server now..."
+    say ""
+    exec npm start --workspace @renom/panel
   else
     ok "Updated. Restart the panel to run the new code."
     say "  If you run it by hand:  npm start --workspace @renom/panel"
@@ -138,7 +149,7 @@ do_delete() {
     info "Stopping pm2 process..."
     pm2 delete renom 2>/dev/null || true
   fi
-  pkill -f "apps/panel/dist/server/index.js" 2>/dev/null || true
+  pkill -f "dist/server/index.js" 2>/dev/null || true
   info "Stopped panel processes, if any were running."
 
   if [ "$purge" = "yes" ] || [ "$purge" = "YES" ]; then
