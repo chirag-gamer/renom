@@ -61,6 +61,85 @@ is_systemd_active() {
   return 1
 }
 
+# Stop any running panel process scoped specifically to this checkout directory.
+# Waits up to 30 seconds for the panel and any managed game servers to shut down cleanly
+# before the listening port is released.
+stop_panel_processes() {
+  local cur_dir
+  cur_dir="$(pwd -P 2>/dev/null || pwd)"
+  local candidate_pids=""
+
+  if command -v pgrep >/dev/null 2>&1; then
+    candidate_pids="$(pgrep -f "dist/server/index.js" 2>/dev/null || true)"
+  elif command -v ps >/dev/null 2>&1; then
+    candidate_pids="$(ps -eo pid,args 2>/dev/null | grep "dist/server/index.js" | grep -v grep | awk '{print $1}' || true)"
+  fi
+  [ -n "$candidate_pids" ] || return 0
+
+  local target_pids=""
+  for pid in $candidate_pids; do
+    [ -n "$pid" ] || continue
+    local matched=0
+    if [ -d "/proc/$pid" ]; then
+      local proc_cwd proc_cmd
+      proc_cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+      proc_cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+      case "$proc_cwd" in
+        "$cur_dir"*) matched=1 ;;
+      esac
+      case "$proc_cmd" in
+        *"$cur_dir"*) matched=1 ;;
+      esac
+    elif command -v pwdx >/dev/null 2>&1; then
+      local proc_cwd
+      proc_cwd="$(pwdx "$pid" 2>/dev/null | cut -d: -f2- | tr -d ' ' || true)"
+      case "$proc_cwd" in
+        "$cur_dir"*) matched=1 ;;
+      esac
+    elif command -v lsof >/dev/null 2>&1; then
+      if lsof -a -p "$pid" -d cwd 2>/dev/null | grep -F -q "$cur_dir"; then
+        matched=1
+      fi
+    fi
+
+    if [ "$matched" -eq 1 ]; then
+      target_pids="${target_pids} $pid"
+    fi
+  done
+
+  [ -n "$target_pids" ] || return 0
+
+  info "Stopping previous panel process (PID(s):$target_pids)..."
+  for pid in $target_pids; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+
+  # The panel's SIGTERM handler gracefully stops running game servers first
+  # (which can take up to 15s) before closing the HTTP server.
+  # Poll up to 30s for processes to exit.
+  local i=0
+  while [ "$i" -lt 30 ]; do
+    local any_alive=0
+    for pid in $target_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        any_alive=1
+        break
+      fi
+    done
+    [ "$any_alive" -eq 1 ] || break
+    sleep 1
+    i=$((i + 1))
+  done
+
+  # Force kill if still lingering after timeout
+  for pid in $target_pids; do
+    if kill -0 "$pid" 2>/dev/null; then
+      warn "Process $pid did not exit cleanly within 30s; sending SIGKILL..."
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
 # Prompts must read from the terminal even when this script arrives via a pipe.
 TTY="/dev/tty"
 if [ -t 0 ]; then TTY="/dev/stdin"; fi
@@ -116,14 +195,15 @@ do_update() {
   if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
     sudo systemctl restart renom.service || die "Update built, but the Renom service restart failed."
     ok "Updated and restarted the Renom background service."
-  elif command -v pm2 >/dev/null 2>&1 && pm2 list 2>/dev/null | grep -qi renom; then
-    pm2 restart renom || warn "Could not restart pm2 process automatically."
-    ok "Updated and restarted the Renom pm2 process."
+  elif command -v pm2 >/dev/null 2>&1 && pm2 describe renom >/dev/null 2>&1; then
+    if pm2 restart renom; then
+      ok "Updated and restarted the Renom pm2 process."
+    else
+      warn "Could not restart pm2 process automatically. Run: pm2 restart renom"
+    fi
   elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then
     ok "Updated."
-    info "Stopping previous panel process, if running..."
-    pkill -f "dist/server/index.js" 2>/dev/null || true
-    sleep 1
+    stop_panel_processes
     say "Starting Renom server now..."
     say ""
     exec npm start --workspace @renom/panel
@@ -145,11 +225,11 @@ do_delete() {
 
   # Stop anything obviously ours before deleting files out from under it.
   # (.env is parsed, never sourced: executing it would run attacker text.)
-  if command -v pm2 >/dev/null 2>&1 && pm2 list 2>/dev/null | grep -qi renom; then
+  if command -v pm2 >/dev/null 2>&1 && pm2 describe renom >/dev/null 2>&1; then
     info "Stopping pm2 process..."
     pm2 delete renom 2>/dev/null || true
   fi
-  pkill -f "dist/server/index.js" 2>/dev/null || true
+  stop_panel_processes
   info "Stopped panel processes, if any were running."
 
   if [ "$purge" = "yes" ] || [ "$purge" = "YES" ]; then
