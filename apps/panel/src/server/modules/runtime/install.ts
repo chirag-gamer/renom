@@ -541,9 +541,16 @@ async function extractArchive(
   }
 }
 
+let latestMcVersionCache: { version: string; expiresAt: number } | null = null;
+
+export function clearResolvedMinecraftVersionCache(): void {
+  latestMcVersionCache = null;
+}
+
 /**
  * Resolves a Minecraft version target. If the version is "latest" or empty,
  * it resolves the latest stable release from PaperMC (falling back to Vanilla manifest).
+ * Results for "latest" are memoized for 30 minutes to reduce network roundtrips.
  */
 export async function resolveMinecraftVersion(
   fetchImpl: typeof fetch,
@@ -551,10 +558,17 @@ export async function resolveMinecraftVersion(
 ): Promise<string> {
   const v = version?.trim();
   if (v && v !== "" && v !== "latest") return v;
+  const now = Date.now();
+  if (latestMcVersionCache && latestMcVersionCache.expiresAt > now) {
+    return latestMcVersionCache.version;
+  }
   try {
-    return await resolvePaperVersion(fetchImpl, "latest");
+    const resolved = await resolvePaperVersion(fetchImpl, "latest");
+    latestMcVersionCache = { version: resolved, expiresAt: now + 30 * 60 * 1000 };
+    return resolved;
   } catch {
     const vanilla = await resolveVanilla(fetchImpl, "latest");
+    latestMcVersionCache = { version: vanilla.version, expiresAt: now + 30 * 60 * 1000 };
     return vanilla.version;
   }
 }

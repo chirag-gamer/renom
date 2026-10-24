@@ -97,18 +97,11 @@ function persistInstalledVersion(
   vars: Record<string, string> | null,
   requested: string | undefined,
 ): void {
-  const version = requested || vars?.["mcVersion"] || vars?.["bedrockVersion"];
+  const isExplicit = Boolean(requested && requested !== "latest");
+  const version = isExplicit ? requested! : vars?.["mcVersion"] || vars?.["bedrockVersion"];
   if (!version || version === "latest") return;
-  if (requested) {
-    if (vars?.["bedrockVersion"] !== undefined) {
-      servers.setVariable(serverId, "bedrockVersion", requested);
-    } else {
-      servers.setVariable(serverId, "mcVersion", requested);
-    }
-  } else {
-    const key = vars?.["bedrockVersion"] !== undefined ? "bedrockVersion" : "mcVersion";
-    servers.setVariableIfUnchanged(serverId, key, version, null);
-  }
+  const key = vars?.["bedrockVersion"] !== undefined ? "bedrockVersion" : "mcVersion";
+  servers.setVariable(serverId, key, version);
 }
 
 export interface ServersDeps {

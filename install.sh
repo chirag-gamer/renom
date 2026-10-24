@@ -407,8 +407,8 @@ say ""
 # Auto-start: remove requirement to manually cd and run the start command
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
   say "Starting Renom background service..."
-  sudo systemctl start renom.service || warn "Could not start renom.service automatically. Run: npm start --workspace @renom/panel"
-elif [ -t 0 ] && [ -t 1 ]; then
+  sudo systemctl restart renom.service || warn "Could not restart renom.service automatically. Run: npm start --workspace @renom/panel"
+elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then
   say "Starting Renom server now..."
   say ""
   exec npm start --workspace @renom/panel

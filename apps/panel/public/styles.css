@@ -165,8 +165,8 @@ body {
   gap: 28px;
   padding: 28px 32px 48px;
 }
-/* No width cap: views fill the column. Readability on long-form pages is
-   handled by the form-level max-widths (.account-form, .permission-form). */
+/* Main content layout: centered card containers with max-width: 1360px.
+   Form-level max-widths (.account-form, .permission-form) maintain readability. */
 .brand {
   display: none;
 }
@@ -876,8 +876,36 @@ textarea:focus {
 .page-header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 24px;
   margin-bottom: 24px;
+}
+.page-header .inline-form {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.page-header .inline-form input {
+  width: 320px;
+  min-width: 240px;
+  margin: 0;
+}
+.page-header .inline-form button {
+  white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .page-header:has(.inline-form) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .page-header .inline-form {
+    width: 100%;
+  }
+  .page-header .inline-form input {
+    width: 100%;
+    min-width: 0;
+  }
 }
 .eyebrow {
   margin: 0 0 4px;
@@ -954,11 +982,6 @@ textarea:focus {
   }
   .user-editor fieldset {
     grid-template-columns: 1fr;
-  }
-  .dashboard {
-    margin: 0 auto;
-    width: 100%;
-    max-width: 1360px;
   }
   .dashboard-header {
     align-items: start;

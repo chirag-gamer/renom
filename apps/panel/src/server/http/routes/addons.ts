@@ -66,7 +66,15 @@ export function addonsRouter(deps: AddonsDeps): Router {
       .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")
       .get(id) as { value: string } | undefined;
     const version = row?.value?.trim();
-    return await resolveMinecraftVersion(fetch, version);
+    if (!version) {
+      throw new BadRequestError(
+        "Set an exact Minecraft version on the Startup tab first — version variable is missing.",
+      );
+    }
+    if (version === "latest") {
+      return await resolveMinecraftVersion(fetch, version);
+    }
+    return version;
   };
 
   const platformOf = (id: string) => {
@@ -82,7 +90,14 @@ export function addonsRouter(deps: AddonsDeps): Router {
       const id = req.params.id ?? "";
       const platform = platformOf(id);
       const isPluginPlatform = platform !== null && platform.projectType === "plugin";
-      const mcVersion = isPluginPlatform ? await mcVersionOf(id) : null;
+      let mcVersion: string | null = null;
+      if (isPluginPlatform) {
+        try {
+          mcVersion = await mcVersionOf(id);
+        } catch {
+          mcVersion = null;
+        }
+      }
       res.json({
         supported: isPluginPlatform,
         folder: isPluginPlatform ? platform.dir : null,

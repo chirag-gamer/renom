@@ -263,7 +263,8 @@ describe("install executor", () => {
   it("resolves 'latest' version target when installing plugins", async () => {
     const addonBytes = Buffer.from("fake-latest-plugin");
     const addonSha512 = createHash("sha512").update(addonBytes).digest("hex");
-    const fetchImpl = stubFetch({
+    const requestedUrls: string[] = [];
+    const baseFetch = stubFetch({
       "https://fill.papermc.io/v3/projects/paper/versions": {
         json: {
           versions: [{ version: { id: "1.21.4" }, support: { status: "SUPPORTED" } }],
@@ -288,6 +289,11 @@ describe("install executor", () => {
       },
       "https://cdn.modrinth.com/luckperms.jar": { bytes: addonBytes },
     });
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      requestedUrls.push(String(url));
+      return baseFetch(url, init);
+    }) as typeof fetch;
+
     const srv = join(dir, "addons-latest-version");
     mkdirSync(srv, { recursive: true });
     await installModrinthProjects(
@@ -301,6 +307,10 @@ describe("install executor", () => {
       ["luckperms"],
     );
     expect(readFileSync(join(srv, "plugins", "LuckPerms.jar"))).toEqual(addonBytes);
+    const modrinthVersionCall = requestedUrls.find((u) => u.includes("/luckperms/version"));
+    expect(modrinthVersionCall).toBeDefined();
+    expect(decodeURIComponent(modrinthVersionCall!)).toContain('"1.21.4"');
+    expect(decodeURIComponent(modrinthVersionCall!)).not.toContain('"latest"');
   });
 
   it("refuses Modrinth on vanilla (no mod platform)", async () => {

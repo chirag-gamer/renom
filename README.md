@@ -25,7 +25,7 @@ installer works on a bare machine, asks for a port and an admin account,
 then prints the exact address to open. Re-running keeps your data and
 settings.
 
-Start the panel with:
+The installer automatically starts Renom upon completion. To start or restart the panel manually:
 
 ```bash
 npm start --workspace @renom/panel

@@ -1,3 +1,6 @@
+"use strict";
+/* Renom web client — no build step. Talks to /api/v3 on the same origin. */
+
 /* ----- action notifications (toasts) ----- */
 
 function showToast(message, type = "success", duration = 3500) {
@@ -36,8 +39,6 @@ function showToast(message, type = "success", duration = 3500) {
   }, duration);
 }
 
-("use strict");
-/* Renom web client — no build step. Talks to /api/v3 on the same origin. */
 const API = "/api/v3";
 const tokenKey = "renom.token";
 
@@ -1442,7 +1443,7 @@ function setTab(name, updateUrl = true) {
   // Power and the live graphs belong to the console: the console owns the
   // full width of the middle column, and the rail is empty anywhere else.
   document.getElementById("server-rail").hidden = name !== "console";
-  if (name === "files" && currentServer && canServer("file.read")) {
+  if (updateUrl && name === "files" && currentServer && canServer("file.read")) {
     void refreshFiles(serverGeneration);
   }
 }
@@ -2670,11 +2671,16 @@ async function handleInstallAddon(hit, installBtn) {
 
   if (res.status !== 201) {
     if (errorAlert) fail(errorAlert, describeProblem(res.status, res.data));
+    showToast(
+      `Failed to install "${hit.title}": ${describeProblem(res.status, res.data)}`,
+      "error",
+    );
   } else {
     if (successAlert) {
       successAlert.textContent = `Plugin "${hit.title}" installed successfully! It will activate on the next server start.`;
       successAlert.hidden = false;
     }
+    showToast(`Plugin "${hit.title}" installed successfully!`, "success");
     refreshAddons();
   }
 }
@@ -2727,6 +2733,10 @@ function openAddonVersionDialog(hit, versions) {
       btn.textContent = "Install";
       if (res.status !== 201) {
         if (err) fail(err, describeProblem(res.status, res.data));
+        showToast(
+          `Failed to install "${hit.title}": ${describeProblem(res.status, res.data)}`,
+          "error",
+        );
       } else {
         if (typeof dialog.close === "function") dialog.close();
         else dialog.removeAttribute("open");
@@ -2735,6 +2745,7 @@ function openAddonVersionDialog(hit, versions) {
           successAlert.textContent = `Plugin "${hit.title}" (${v.versionNumber}) installed successfully! It will activate on the next server start.`;
           successAlert.hidden = false;
         }
+        showToast(`Plugin "${hit.title}" installed successfully!`, "success");
         refreshAddons();
       }
     });

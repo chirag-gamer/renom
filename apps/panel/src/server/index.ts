@@ -46,6 +46,7 @@ export interface PanelContext {
   auth: AuthService;
   audit: AuditService;
   gateway: ConsoleGateway;
+  blueprints: BlueprintRegistry;
 }
 
 /**
@@ -220,7 +221,20 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
   Object.assign(gatewayProxy, gateway);
 
   return {
-    ctx: { env, db, users, servers, engine, backups, scheduler, apiKeys, auth, audit, gateway },
+    ctx: {
+      env,
+      db,
+      users,
+      servers,
+      engine,
+      backups,
+      scheduler,
+      apiKeys,
+      auth,
+      audit,
+      gateway,
+      blueprints,
+    },
     server,
     app,
   };

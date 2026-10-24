@@ -273,7 +273,7 @@ export class LocalProcessEngine {
     // which throws `spawn bedrock_server ENOENT`.
     try {
       const localCandidate = resolve(dir, cmd);
-      if (existsSync(localCandidate)) {
+      if (localCandidate.startsWith(`${dir}${sep}`) && existsSync(localCandidate)) {
         cmd = localCandidate;
         if (process.platform !== "win32") {
           try {

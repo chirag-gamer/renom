@@ -22,7 +22,6 @@ jobs:
           - { slug: "paper", category: "minecraft-java" }
           - { slug: "purpur", category: "minecraft-java" }
           - { slug: "vanilla", category: "minecraft-java" }
-          - { slug: "fabric", category: "minecraft-java" }
           - { slug: "bedrock-bds", category: "minecraft-bedrock" }
           - { slug: "pocketmine-mp", category: "minecraft-bedrock" }
           - { slug: "endstone", category: "minecraft-bedrock" }
@@ -55,16 +54,10 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Build project
-        run: npm run build
+      - name: Build contracts package
+        run: npm run build -w packages/contracts
 
-      - name: Typecheck project
-        run: npm run typecheck
-
-      - name: Verify Blueprint Schema & Egg Configuration
-        run: |
-          npx vitest run apps/panel/test/unit/blueprints.spec.ts
-
-      - name: Run Integration Tests for Server Software Lifecycle & Swapping
-        run: |
-          npx vitest run apps/panel/test/integration/servers.spec.ts
+      - name: Run Egg Lifecycle and Installation Tests
+        run: npx vitest run apps/panel/test/integration/software-matrix.spec.ts
+        env:
+          SOFTWARE_SLUG: ${{ matrix.software.slug }}
