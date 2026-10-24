@@ -260,6 +260,49 @@ describe("install executor", () => {
     ).rejects.toThrow(/Cannot specify versionId when installing multiple projects/);
   });
 
+  it("resolves 'latest' version target when installing plugins", async () => {
+    const addonBytes = Buffer.from("fake-latest-plugin");
+    const addonSha512 = createHash("sha512").update(addonBytes).digest("hex");
+    const fetchImpl = stubFetch({
+      "https://fill.papermc.io/v3/projects/paper/versions": {
+        json: {
+          versions: [{ version: { id: "1.21.4" }, support: { status: "SUPPORTED" } }],
+        },
+      },
+      "https://api.modrinth.com/v2/project/luckperms/version": {
+        json: [
+          {
+            files: [
+              {
+                url: "https://cdn.modrinth.com/luckperms.jar",
+                filename: "LuckPerms.jar",
+                hashes: { sha512: addonSha512 },
+                primary: true,
+              },
+            ],
+          },
+        ],
+      },
+      "https://api.modrinth.com/v2/project/luckperms": {
+        json: { project_type: "plugin" },
+      },
+      "https://cdn.modrinth.com/luckperms.jar": { bytes: addonBytes },
+    });
+    const srv = join(dir, "addons-latest-version");
+    mkdirSync(srv, { recursive: true });
+    await installModrinthProjects(
+      fetchImpl,
+      {
+        serverId: "x",
+        dir: srv,
+        vars: { mcVersion: "latest" },
+        blueprintSlug: "paper",
+      },
+      ["luckperms"],
+    );
+    expect(readFileSync(join(srv, "plugins", "LuckPerms.jar"))).toEqual(addonBytes);
+  });
+
   it("refuses Modrinth on vanilla (no mod platform)", async () => {
     const srv = join(dir, "addons-vanilla");
     mkdirSync(srv, { recursive: true });

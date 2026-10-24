@@ -266,11 +266,20 @@ describe("servers CRUD + ownership + quotas", () => {
       .send({ blueprintSlug: "generic-nodejs", backupBeforeSwap: false });
     expect(swapRes.status).toBe(200);
     expect(swapRes.body.software).toBe("generic-nodejs");
+    expect("backedUp" in swapRes.body).toBe(true);
 
     const detail = await request(app)
       .get(`/api/v3/servers/${testId}`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(detail.body.server.blueprintSlug).toBe("generic-nodejs");
+
+    // Switching back with explicit version override and verifying variable handling
+    const swapBack = await request(app)
+      .put(`/api/v3/servers/${testId}/software`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ blueprintSlug: "generic-python", version: "3.12", backupBeforeSwap: false });
+    expect(swapBack.status).toBe(200);
+    expect(swapBack.body.software).toBe("generic-python");
   });
 
   it("audit trail records the server lifecycle", () => {

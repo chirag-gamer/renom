@@ -228,6 +228,11 @@ export async function runInstallOps(doc: BlueprintDoc, ctx: InstallContext): Pro
         });
         await extractArchive(join(ctx.dir, "bedrock-server.zip"), ctx.dir, ".", 0, true);
         rmSync(join(ctx.dir, "bedrock-server.zip"), { force: true });
+        // On Linux, the bedrock_server binary requires execute permissions
+        const bdsBinary = confine(ctx.dir, "bedrock_server");
+        if (existsSync(bdsBinary) && process.platform !== "win32") {
+          chmodSync(bdsBinary, 0o755);
+        }
         break;
       }
       case "fetch-pocketmine": {
@@ -537,6 +542,24 @@ async function extractArchive(
 }
 
 /**
+ * Resolves a Minecraft version target. If the version is "latest" or empty,
+ * it resolves the latest stable release from PaperMC (falling back to Vanilla manifest).
+ */
+export async function resolveMinecraftVersion(
+  fetchImpl: typeof fetch,
+  version?: string | null,
+): Promise<string> {
+  const v = version?.trim();
+  if (v && v !== "" && v !== "latest") return v;
+  try {
+    return await resolvePaperVersion(fetchImpl, "latest");
+  } catch {
+    const vanilla = await resolveVanilla(fetchImpl, "latest");
+    return vanilla.version;
+  }
+}
+
+/**
  * Modrinth addons (mods + plugins, the JTG-era workflow): resolve each project
  * to its newest compatible file for this server's loader + MC version and drop
  * the jar into `mods/` (loaders) or `plugins/` (paper-likes, velocity).
@@ -553,9 +576,10 @@ export async function installModrinthProjects(
   if (!platform) {
     throw new EngineError(`Modrinth addons are not supported on '${slug || "this blueprint"}'`);
   }
-  const mcVersion = ctx.vars["mcVersion"];
+  let mcVersion = ctx.vars["mcVersion"];
   if (!mcVersion || mcVersion === "latest") {
-    throw new EngineError("Pick an exact Minecraft version first (Startup tab), then add addons");
+    mcVersion = await resolveMinecraftVersion(fetchImpl, mcVersion);
+    ctx.vars["mcVersion"] = mcVersion;
   }
   if (versionId && projects.length > 1) {
     throw new EngineError("Cannot specify versionId when installing multiple projects");
@@ -692,9 +716,10 @@ export async function searchModrinthProjects(
   limit = 10,
   offset = 0,
 ): Promise<{ hits: ModrinthHit[]; totalHits: number }> {
+  const resolvedVersion = await resolveMinecraftVersion(fetchImpl, mcVersion);
   const facets = [
     platform.loaders.map((loader) => `categories:${loader}`),
-    [`versions:${mcVersion}`],
+    [`versions:${resolvedVersion}`],
     [`project_type:${platform.projectType}`],
   ];
   const params = new URLSearchParams({
@@ -750,10 +775,11 @@ export async function fetchModrinthProjectVersions(
       );
     }
   }
+  const resolvedVersion = await resolveMinecraftVersion(fetchImpl, mcVersion);
   const url =
     `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +
     `?loaders=${encodeURIComponent(JSON.stringify(platform.loaders))}` +
-    `&game_versions=${encodeURIComponent(JSON.stringify([mcVersion]))}`;
+    `&game_versions=${encodeURIComponent(JSON.stringify([resolvedVersion]))}`;
   const data = (await fetchJson(fetchImpl, url)) as Array<{
     id: string;
     name: string;

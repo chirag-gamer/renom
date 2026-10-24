@@ -585,10 +585,15 @@ export function serversRouter(deps: ServersDeps): Router {
 
       const shouldBackup = body.backupBeforeSwap ?? body.createBackup ?? true;
       let backedUp = false;
-      if (shouldBackup && backups && isTarAvailable()) {
+      let backupId: string | null = null;
+      if (shouldBackup) {
+        if (!backups || !isTarAvailable()) {
+          throw new ConflictError("Backup tool (tar) is not available to create a pre-swap backup");
+        }
         try {
-          await backups.create(id, req.principal!.userId);
+          const b = await backups.create(id, req.principal!.userId);
           backedUp = true;
+          backupId = b.id;
         } catch (bErr) {
           deps.audit.record({
             event: "server.software.backup_failed",
@@ -596,6 +601,9 @@ export function serversRouter(deps: ServersDeps): Router {
             actorUserId: req.principal!.userId,
             target: { error: bErr instanceof Error ? bErr.message : String(bErr) },
           });
+          throw new ConflictError(
+            `Failed to create pre-swap backup: ${bErr instanceof Error ? bErr.message : String(bErr)}`,
+          );
         }
       }
 
@@ -623,6 +631,19 @@ export function serversRouter(deps: ServersDeps): Router {
             .prepare("DELETE FROM server_variables WHERE server_id = ? AND key = ?")
             .run(id, row.key);
         }
+      }
+
+      // When switching software ecosystem (e.g. from Java to Bedrock), reset the version variable
+      // if an explicit version wasn't provided, so the target blueprint defaults to "latest".
+      const prevBp = deps.db
+        .prepare("SELECT category FROM blueprints WHERE slug = ?")
+        .get(s.blueprint_slug) as { category: string } | undefined;
+      if (s.blueprint_slug !== bp.slug && prevBp?.category !== bp.category && !body.version) {
+        deps.db
+          .prepare(
+            "DELETE FROM server_variables WHERE server_id = ? AND key IN ('mcVersion', 'bedrockVersion', 'version')",
+          )
+          .run(id);
       }
 
       if (body.version) {
@@ -689,6 +710,7 @@ export function serversRouter(deps: ServersDeps): Router {
         name: bp.name,
         category: bp.category,
         backedUp,
+        backupId,
       });
     })().catch(next);
   });

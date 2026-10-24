@@ -1,4 +1,42 @@
-"use strict";
+/* ----- action notifications (toasts) ----- */
+
+function showToast(message, type = "success", duration = 3500) {
+  let container = document.getElementById("toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toast-container";
+    container.className = "toast-container";
+    container.setAttribute("aria-live", "polite");
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement("div");
+  toast.className = "toast-item toast-" + type;
+  const icon = document.createElement("span");
+  icon.className = "toast-icon";
+  icon.textContent = type === "error" ? "⚠" : type === "info" ? "ℹ" : "✓";
+  const text = document.createElement("span");
+  text.className = "toast-message";
+  text.textContent = message;
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "toast-close";
+  closeBtn.textContent = "×";
+  closeBtn.setAttribute("aria-label", "Dismiss");
+  closeBtn.addEventListener("click", () => {
+    toast.classList.add("toast-exit");
+    setTimeout(() => toast.remove(), 250);
+  });
+  toast.append(icon, text, closeBtn);
+  container.appendChild(toast);
+  setTimeout(() => {
+    if (toast.parentElement) {
+      toast.classList.add("toast-exit");
+      setTimeout(() => toast.remove(), 250);
+    }
+  }, duration);
+}
+
+("use strict");
 /* Renom web client — no build step. Talks to /api/v3 on the same origin. */
 const API = "/api/v3";
 const tokenKey = "renom.token";
@@ -1246,7 +1284,6 @@ function applyServerPermissions() {
   document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
   document.getElementById("btn-backup").hidden = !canServer("backup.create");
   document.getElementById("form-schedule").hidden = !canServer("schedule.create");
-  document.getElementById("form-addon").hidden = !canServer("startup.update");
   document.getElementById("form-variables").hidden = !canServer("startup.update");
   document.getElementById("form-tunnel").hidden = !canServer("allocation.update");
   document.getElementById("form-subuser").hidden = !canServer("user.create");
@@ -1405,6 +1442,9 @@ function setTab(name, updateUrl = true) {
   // Power and the live graphs belong to the console: the console owns the
   // full width of the middle column, and the rail is empty anywhere else.
   document.getElementById("server-rail").hidden = name !== "console";
+  if (name === "files" && currentServer && canServer("file.read")) {
+    void refreshFiles(serverGeneration);
+  }
 }
 
 /* ----- console ----- */
@@ -2211,9 +2251,12 @@ document.getElementById("btn-file-dialog-save").addEventListener("click", async 
     token: store.token,
     body: { path, content: document.getElementById("file-dialog-content").value },
   });
-  if (status !== 204) fail(err, describeProblem(status, data));
-  else {
+  if (status !== 204) {
+    fail(err, describeProblem(status, data));
+    showToast(describeProblem(status, data), "error");
+  } else {
     err.hidden = true;
+    showToast("File saved successfully.", "success");
   }
 });
 
@@ -2466,17 +2509,9 @@ async function refreshAddonCapability(generation) {
   if (eyebrow) eyebrow.textContent = "Plugins";
   const navLabel = document.getElementById("server-nav-addons-label");
   if (navLabel) navLabel.textContent = "Plugins";
-  if (data.mcVersion) {
-    if (note) note.hidden = true;
-    if (!addonSearchQuery) {
-      void executeAddonSearch("", 1);
-    }
-  } else {
-    if (note) {
-      note.hidden = false;
-      note.textContent =
-        'Set an exact Minecraft version on the Startup tab first — "latest" cannot resolve plugin files.';
-    }
+  if (note) note.hidden = true;
+  if (!addonSearchQuery) {
+    void executeAddonSearch("", 1);
   }
 }
 
@@ -2738,32 +2773,6 @@ document.getElementById("form-addon-search").addEventListener("submit", (e) => {
   void executeAddonSearch(query, 1);
 });
 
-document.getElementById("form-addon").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const err = document.getElementById("addons-error");
-  const success = document.getElementById("addons-alert-success");
-  if (err) err.hidden = true;
-  if (success) success.hidden = true;
-  const projects = String(new FormData(e.target).get("projects") || "")
-    .split(/[\s,]+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-  const { status, data } = await api(`/servers/${currentServer.id}/addons`, {
-    method: "POST",
-    token: store.token,
-    body: { projects },
-  });
-  if (status !== 201) fail(err, describeProblem(status, data));
-  else {
-    e.target.reset();
-    if (success) {
-      success.textContent = "Installed requested plugins.";
-      success.hidden = false;
-    }
-    refreshAddons();
-  }
-});
-
 /* ----- server software & game swapper ----- */
 
 let softwarePage = 1;
@@ -2987,6 +2996,7 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
       : "";
     successAlert.textContent = `Successfully swapped to ${pendingSwapSoftware.name}!${backupNotice} You can now review your startup settings and start your server.`;
     successAlert.hidden = false;
+    showToast(`Swapped to ${pendingSwapSoftware.name}.`, "success");
   }
 
   const srv = await api(`/servers/${currentServer.id}`, { token: store.token });

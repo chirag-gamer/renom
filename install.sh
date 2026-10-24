@@ -396,10 +396,22 @@ if [ "$HOST" = "0.0.0.0" ]; then
 fi
 say "== Done. Renom is installed. =="
 say ""
-say "Start it with:   npm start --workspace @renom/panel"
-say "Then open:       http://${DISPLAY_HOST}:${PORT}"
+say "Open:            http://${DISPLAY_HOST}:${PORT}"
 say ""
 say "Keep it running with systemd, pm2, or screen — see README.md."
 say "Back up ${DATA_DIR}/panel.db and you can rebuild everything else from this folder."
 say "Forgot the admin password? Re-run ./install.sh — it will offer a new one."
 say "Use ./renom.sh option 2 to update code only; it does not reset passwords."
+say ""
+
+# Auto-start: remove requirement to manually cd and run the start command
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
+  say "Starting Renom background service..."
+  sudo systemctl start renom.service || warn "Could not start renom.service automatically. Run: npm start --workspace @renom/panel"
+elif [ -t 0 ] && [ -t 1 ]; then
+  say "Starting Renom server now..."
+  say ""
+  exec npm start --workspace @renom/panel
+else
+  say "Start it with:   npm start --workspace @renom/panel"
+fi
