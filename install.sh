@@ -58,6 +58,33 @@ banner() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Verify systemd is booted and active as PID 1 / live init manager.
+# Avoid false positives in containers or chroots where /run/systemd/system may be exposed
+# or mock systemctl is installed, but systemd is not actively managing services.
+is_systemd_active() {
+  have systemctl || return 1
+  [ -d "/run/systemd/system" ] || return 1
+
+  # Check if PID 1 is systemd
+  if [ -r /proc/1/comm ] && [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ]; then
+    return 0
+  fi
+  if [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]; then
+    return 0
+  fi
+
+  # Or verify systemd manager liveness via communication
+  local state
+  state="$(systemctl is-system-running 2>/dev/null || true)"
+  case "$state" in
+    running|degraded|maintenance|starting|initializing)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 java_binary_major() {
   "$1" -version 2>&1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
@@ -214,7 +241,7 @@ open_firewall() {
 }
 
 install_background_service() {
-  have systemctl || return 0
+  is_systemd_active || return 0
   if ! systemctl list-unit-files >/dev/null 2>&1; then return 0; fi
   local service="/etc/systemd/system/renom.service"
   local node_bin
@@ -404,8 +431,11 @@ say "Forgot the admin password? Re-run ./install.sh — it will offer a new one.
 say "Use ./renom.sh option 2 to update code only; it does not reset passwords."
 say ""
 
-# Auto-start: remove requirement to manually cd and run the start command
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
+# Auto-start: remove requirement to manually cd and run the start command.
+# On hosts with real systemd (where systemd is booted and active as PID 1),
+# manage through the systemd unit. In containers or hosts where systemd is absent or
+# inactive (such as Docker/devcontainers with mock systemctl), start the panel directly.
+if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
   say "Starting Renom background service..."
   sudo systemctl restart renom.service || warn "Could not restart renom.service automatically. Run: npm start --workspace @renom/panel"
 elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then

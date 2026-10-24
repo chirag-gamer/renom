@@ -32,6 +32,35 @@ ok() { printf "${GREEN}[ok]${NC} %s\n" "$*"; }
 warn() { printf "${YELLOW}[warn]${NC} %s\n" "$*"; }
 die() { printf "${RED}[error]${NC} %s\n" "$*"; exit 1; }
 
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Verify systemd is booted and active as PID 1 / live init manager.
+# Avoid false positives in containers or chroots where /run/systemd/system may be exposed
+# or mock systemctl is installed, but systemd is not actively managing services.
+is_systemd_active() {
+  have systemctl || return 1
+  [ -d "/run/systemd/system" ] || return 1
+
+  # Check if PID 1 is systemd
+  if [ -r /proc/1/comm ] && [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ]; then
+    return 0
+  fi
+  if [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]; then
+    return 0
+  fi
+
+  # Or verify systemd manager liveness via communication
+  local state
+  state="$(systemctl is-system-running 2>/dev/null || true)"
+  case "$state" in
+    running|degraded|maintenance|starting|initializing)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 # Prompts must read from the terminal even when this script arrives via a pipe.
 TTY="/dev/tty"
 if [ -t 0 ]; then TTY="/dev/stdin"; fi
@@ -84,7 +113,7 @@ do_update() {
   info "Reinstalling dependencies and rebuilding..."
   npm install --no-audit --no-fund || die "npm install failed."
   npm run build || die "Build failed."
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service; then
+  if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service; then
     sudo systemctl restart renom.service || die "Update built, but the Renom service restart failed."
     ok "Updated and restarted the Renom background service."
   else
