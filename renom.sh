@@ -85,21 +85,23 @@ stop_panel_processes() {
       proc_cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
       proc_cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
       case "$proc_cwd" in
-        "$cur_dir"*) matched=1 ;;
+        "$cur_dir"|"$cur_dir"/*) matched=1 ;;
       esac
       case "$proc_cmd" in
-        *"$cur_dir"*) matched=1 ;;
+        *"$cur_dir/"*|*"$cur_dir "*) matched=1 ;;
       esac
     elif command -v pwdx >/dev/null 2>&1; then
       local proc_cwd
       proc_cwd="$(pwdx "$pid" 2>/dev/null | cut -d: -f2- | tr -d ' ' || true)"
       case "$proc_cwd" in
-        "$cur_dir"*) matched=1 ;;
+        "$cur_dir"|"$cur_dir"/*) matched=1 ;;
       esac
     elif command -v lsof >/dev/null 2>&1; then
-      if lsof -a -p "$pid" -d cwd 2>/dev/null | grep -F -q "$cur_dir"; then
-        matched=1
-      fi
+      local lsof_cwd
+      lsof_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true)"
+      case "$lsof_cwd" in
+        "$cur_dir"|"$cur_dir"/*) matched=1 ;;
+      esac
     fi
 
     if [ "$matched" -eq 1 ]; then
@@ -114,9 +116,8 @@ stop_panel_processes() {
     kill -TERM "$pid" 2>/dev/null || true
   done
 
-  # The panel's SIGTERM handler gracefully stops running game servers first
-  # (which can take up to 15s) before closing the HTTP server.
-  # Poll up to 30s for processes to exit.
+  # The panel's SIGTERM handler terminates its child game server processes, then closes the HTTP server.
+  # Poll up to 30s for the process to exit so port 8080 is freed before starting the new instance.
   local i=0
   while [ "$i" -lt 30 ]; do
     local any_alive=0
