@@ -438,7 +438,14 @@ say ""
 if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
   say "Starting Renom background service..."
   sudo systemctl restart renom.service || warn "Could not restart renom.service automatically. Run: npm start --workspace @renom/panel"
+elif command -v pm2 >/dev/null 2>&1 && pm2 list 2>/dev/null | grep -qi renom; then
+  say "Restarting Renom under pm2..."
+  pm2 restart renom || warn "Could not restart pm2 process automatically. Run: npm start --workspace @renom/panel"
 elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then
+  # If an existing panel was already running (e.g. re-running install.sh to reset password or update port),
+  # stop the old instance so the port is freed.
+  pkill -f "dist/server/index.js" 2>/dev/null || true
+  sleep 1
   say "Starting Renom server now..."
   say ""
   exec npm start --workspace @renom/panel
