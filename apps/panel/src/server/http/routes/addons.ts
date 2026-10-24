@@ -18,6 +18,7 @@ import {
   fetchModrinthProjectVersions,
   installModrinthProjects,
   modrinthPlatform,
+  resolveMinecraftVersion,
   searchModrinthProjects,
 } from "../../modules/runtime/install.js";
 import { storedVariables } from "./servers.js";
@@ -59,13 +60,21 @@ export function addonsRouter(deps: AddonsDeps): Router {
   router.use(requireAuth(auth));
   const guard = (perm: string) => requireServerPermission(perm, db);
 
-  /** The server's exact Minecraft version, or null when it is unresolved. */
-  const mcVersionOf = (id: string): string | null => {
+  /** The server's exact Minecraft version, resolving "latest" dynamically when needed. */
+  const mcVersionOf = async (id: string): Promise<string> => {
     const row = db
       .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")
       .get(id) as { value: string } | undefined;
     const version = row?.value?.trim();
-    return version && version !== "latest" ? version : null;
+    if (!version) {
+      throw new BadRequestError(
+        "Set an exact Minecraft version on the Startup tab first — version variable is missing.",
+      );
+    }
+    if (version === "latest") {
+      return await resolveMinecraftVersion(fetch, version);
+    }
+    return version;
   };
 
   const platformOf = (id: string) => {
@@ -76,20 +85,26 @@ export function addonsRouter(deps: AddonsDeps): Router {
 
   // What the client needs to decide whether to show the Addons tab at all.
   router.get("/servers/:id/addons/capability", guard("startup.read"), (req, res, next) => {
-    try {
+    (async () => {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
       const isPluginPlatform = platform !== null && platform.projectType === "plugin";
+      let mcVersion: string | null = null;
+      if (isPluginPlatform) {
+        try {
+          mcVersion = await mcVersionOf(id);
+        } catch {
+          mcVersion = null;
+        }
+      }
       res.json({
         supported: isPluginPlatform,
         folder: isPluginPlatform ? platform.dir : null,
         projectType: isPluginPlatform ? platform.projectType : null,
-        mcVersion: mcVersionOf(id),
+        mcVersion,
       });
-    } catch (e) {
-      next(e);
-    }
+    })().catch(next);
   });
 
   // Search is filtered to this server's loader and exact Minecraft version.
@@ -102,12 +117,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
       if (!platform || platform.projectType !== "plugin") {
         throw new ConflictError("This server software has no plugin platform");
       }
-      const mcVersion = mcVersionOf(id);
-      if (!mcVersion) {
-        throw new BadRequestError(
-          "Set an exact Minecraft version on the Startup tab first — “latest” can't resolve addon files",
-        );
-      }
+      const mcVersion = await mcVersionOf(id);
       const q = parseQuery(searchQuery, req);
       const offset = (q.page - 1) * q.limit;
       const result = await searchModrinthProjects(
@@ -139,12 +149,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
       if (!platform || platform.projectType !== "plugin") {
         throw new ConflictError("This server software has no plugin platform");
       }
-      const mcVersion = mcVersionOf(id);
-      if (!mcVersion) {
-        throw new BadRequestError(
-          "Set an exact Minecraft version on the Startup tab first — “latest” can't resolve addon files",
-        );
-      }
+      const mcVersion = await mcVersionOf(id);
       const projectId = req.params.projectId ?? "";
       const versions = await fetchModrinthProjectVersions(
         fetch,

@@ -1,0 +1,63 @@
+name: Software & Eggs Matrix Test
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  group: software-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-software:
+    name: Egg ${{ matrix.software.slug }} (${{ matrix.software.category }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        software:
+          - { slug: "paper", category: "minecraft-java" }
+          - { slug: "purpur", category: "minecraft-java" }
+          - { slug: "vanilla", category: "minecraft-java" }
+          - { slug: "bedrock-bds", category: "minecraft-bedrock" }
+          - { slug: "pocketmine-mp", category: "minecraft-bedrock" }
+          - { slug: "endstone", category: "minecraft-bedrock" }
+          - { slug: "generic-nodejs", category: "generic-runtime" }
+          - { slug: "generic-python", category: "generic-runtime" }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Java (for Java-based software)
+        if: matrix.software.category == 'minecraft-java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Set up Python (for Python & Endstone software)
+        if: matrix.software.slug == 'generic-python' || matrix.software.slug == 'endstone'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build contracts package
+        run: npm run build -w packages/contracts
+
+      - name: Run Egg Lifecycle and Installation Tests
+        run: npx vitest run apps/panel/test/integration/software-matrix.spec.ts
+        env:
+          SOFTWARE_SLUG: ${{ matrix.software.slug }}

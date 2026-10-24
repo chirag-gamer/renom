@@ -7,6 +7,9 @@ All notable changes to Renom are documented here. Format based on
 
 ### Added
 
+- Toast notification system: Lightweight, non-intrusive alert toasts (`success`, `error`, `info`) positioned top-right for async user feedback across file saves, software swapping, and addon installations.
+- Automated software matrix CI/CD workflow: `.github/workflows/software-matrix.yml` running test matrices across all locally supported Minecraft software engines (Paper, Purpur, Vanilla, Bedrock BDS, PocketMine-MP, Endstone) and generic engines (Node.js, Python).
+- Dynamic Minecraft "latest" version resolution: Added `resolveMinecraftVersion` querying PaperMC version registry with fallback to Mojang version manifest to resolve "latest" when searching or installing plugins.
 - Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page, sorted by Most Popular). Restricted strictly to plugins (`projectType: "plugin"`).
 - Version selection modal: prompt users to select a compatible version when multiple releases exist on Modrinth, with release-type badges and Minecraft version compatibility.
 - Dedicated Server Software tab: separated server software from the Plugins tab into its own dedicated view placed beneath Plugins.
@@ -15,16 +18,23 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
+- Bedrock BDS server boot: Fixed `spawn bedrock_server ENOENT` on Linux and Windows by resolving binaries to local absolute paths in the server directory, applying `0o755` permissions on POSIX hosts, and setting `LD_LIBRARY_PATH` so the dynamic linker finds required libraries (`libcrypto.so.1.1`).
+- Software swapper pre-swap backup: Enforced creating a full backup before initiating an in-place software swap; failure to create a requested backup now aborts the swap to prevent unrecoverable data loss.
+- Software swapper cross-ecosystem variable cleanup: Automatically cleans up incompatible engine version variables (such as stale Java `mcVersion` when swapping to Bedrock BDS) so Bedrock servers cleanly resolve to "latest".
+- File manager auto-refresh: Automatically queries and renders directory file listing whenever the Files tab is activated.
 - Archive & extraction security: Staging directory extraction, rejecting symlinks and path escapes, rejecting `strip > 0` for `.zip`, supporting `.tar` archives, preserving relative subdirectories, and terminating `tar` command arguments with `--`.
 - Software & Ecosystem swapping: Require explicit Minecraft EULA acceptance before swapping to EULA-governed software, update blueprint image references, prune incompatible startup variables on blueprint swap while preserving `tunnel.*` configurations for plugin-tunnel targets, and persist intentionally requested versions.
 - File manager & bulk actions: Granular permission gating for bulk actions (`file.read-content`, `file.archive`, `file.delete`), accept both `files` and `paths` schemas, idempotent multi-delete with confinement validation, send archive basename to handle nested directory archives properly, generate unique temporary archive filenames for bulk downloads, and handle 204 decompress responses.
-- Security audit: Updated Zod to 4.6.7 to fix high-severity vulnerability GHSA-mrhx-c7xc-m3w5.
+- Security audit: Updated Zod to 4.6.7 to fix high-severity vulnerability GHSA-mrhx-c7xc-m3w5, and updated body-parser to fix high-severity vulnerability GHSA-27r3-jxmh-p828.
 - Plugins & Addons: Restrict plugins search and capability strictly to plugin platforms (`projectType: "plugin"`), validate Modrinth metadata `project_type: "plugin"` in installer and version picker, pre-validate multi-project batches and reject single `versionId` across multiple projects to prevent partial installs, filter installed addons list to `folder === "plugins"`, add `totalPages` to Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely.
 - Responsive layout: Fix addon and software grid tracks on viewports narrower than 312px.
 - Test coverage: Assert all decompressed files survive extraction and assert 404 on all bulk-deleted paths in `files-authz.spec.ts`.
 
 ### Changed
 
+- Plugins tab layout: Unified plugin search and installation into a single top search bar, eliminating the redundant secondary form while preserving the installed plugins list.
+- Modern card-based UI layout: Centered main container layout (`max-width: 1360px` - `1440px`) with subtle borders, border-radius (`12px`), elevation, and backdrop contrast for cards and settings tabs while keeping the console full-bleed.
+- Installer auto-start: `install.sh` now automatically starts the Renom daemon via systemd (or starts the panel directly in interactive shells) upon completing the setup.
 - Console: the log is a fixed, self-scrolling pane sized to the viewport instead of a box that kept
   growing. A long-running server no longer pushes the page down, and the view follows the newest
   lines only while it is already at the bottom, so scrolling back through history is not yanked away

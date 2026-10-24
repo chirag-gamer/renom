@@ -266,11 +266,62 @@ describe("servers CRUD + ownership + quotas", () => {
       .send({ blueprintSlug: "generic-nodejs", backupBeforeSwap: false });
     expect(swapRes.status).toBe(200);
     expect(swapRes.body.software).toBe("generic-nodejs");
+    expect(swapRes.body.backedUp).toBe(false);
 
     const detail = await request(app)
       .get(`/api/v3/servers/${testId}`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(detail.body.server.blueprintSlug).toBe("generic-nodejs");
+
+    // Register a version-bearing blueprint to verify explicit version variable handling on swap
+    ctx.blueprints.importDoc({
+      schemaVersion: 1,
+      slug: "test-versioned-software",
+      name: "Test Versioned Software",
+      category: "generic-runtime",
+      description: "Test versioned software",
+      tag: "v1",
+      maturity: "stable",
+      requirements: { engine: "process", arch: ["amd64", "arm64"], hostOs: ["linux", "windows"] },
+      resolvers: [],
+      versions: {},
+      image: "ghcr.io/renom/test:1.0",
+      install: [{ op: "mkdir", path: "app" }],
+      run: {
+        command: ["node", "app.js"],
+        workdir: "/data/app",
+        stop: { kind: "signal", signal: "SIGTERM", timeoutSec: 5 },
+        envCanon: {},
+      },
+      variables: [
+        {
+          key: "mcVersion",
+          label: "Version",
+          type: "string",
+          default: "1.0.0",
+          userViewable: true,
+          userEditable: true,
+          internal: false,
+        },
+      ],
+      features: [],
+    });
+
+    const swapVersion = await request(app)
+      .put(`/api/v3/servers/${testId}/software`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        blueprintSlug: "test-versioned-software",
+        version: "2.5.0",
+        backupBeforeSwap: false,
+      });
+    expect(swapVersion.status).toBe(200);
+    expect(swapVersion.body.software).toBe("test-versioned-software");
+
+    const varRow = ctx.db
+      .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")
+      .get(testId) as { value: string } | undefined;
+    expect(varRow?.value).toBe("2.5.0");
   });
 
   it("audit trail records the server lifecycle", () => {

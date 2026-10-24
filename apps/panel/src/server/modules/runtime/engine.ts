@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { Database } from "../../infra/db/database.js";
 import type { ServersRepo } from "../servers/repo.js";
@@ -268,6 +268,25 @@ export class LocalProcessEngine {
       }
     }
 
+    // When the binary resides inside the server root (such as bedrock_server or PocketMine PHP),
+    // resolve it to an absolute path. On Linux, POSIX execvp ignores cwd when cmd has no slash,
+    // which throws `spawn bedrock_server ENOENT`.
+    try {
+      const localCandidate = resolve(dir, cmd);
+      if (localCandidate.startsWith(`${dir}${sep}`) && existsSync(localCandidate)) {
+        cmd = localCandidate;
+        if (process.platform !== "win32") {
+          try {
+            chmodSync(cmd, 0o755);
+          } catch {
+            // keep permissions if not mutable
+          }
+        }
+      }
+    } catch {
+      // keep cmd as-is
+    }
+
     // Bare hosts disagree on the Python name: prefer `python3`, take `python`.
     // A blueprint that installed its own virtualenv (Endstone) must run with
     // that interpreter — the system Python has no endstone. The path is
@@ -332,6 +351,13 @@ export class LocalProcessEngine {
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
     const tunnelEndpoint = vars["tunnel.endpoint"];
     if (tunnelEndpoint) childEnv.CONNECT_ENDPOINT = tunnelEndpoint;
+    // Mojang Bedrock Dedicated Server on Linux dynamically links against bundled .so libraries
+    // (e.g. libcrypto.so.1.1) located in the server root directory.
+    if (cmd.includes("bedrock_server") && process.platform !== "win32") {
+      childEnv.LD_LIBRARY_PATH = childEnv.LD_LIBRARY_PATH
+        ? `${dir}:${childEnv.LD_LIBRARY_PATH}`
+        : dir;
+    }
     try {
       proc = spawn(cmd, args, {
         cwd,
