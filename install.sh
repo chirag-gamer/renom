@@ -85,6 +85,86 @@ is_systemd_active() {
   return 1
 }
 
+# Stop any running panel process scoped specifically to this checkout directory.
+# Waits up to 30 seconds for the panel and any managed game servers to shut down cleanly
+# before the listening port is released.
+stop_panel_processes() {
+  local cur_dir
+  cur_dir="$(pwd -P 2>/dev/null || pwd)"
+  local candidate_pids=""
+
+  if command -v pgrep >/dev/null 2>&1; then
+    candidate_pids="$(pgrep -f "dist/server/index.js" 2>/dev/null || true)"
+  elif command -v ps >/dev/null 2>&1; then
+    candidate_pids="$(ps -eo pid,args 2>/dev/null | grep "dist/server/index.js" | grep -v grep | awk '{print $1}' || true)"
+  fi
+  [ -n "$candidate_pids" ] || return 0
+
+  local target_pids=""
+  for pid in $candidate_pids; do
+    [ -n "$pid" ] || continue
+    local matched=0
+    if [ -d "/proc/$pid" ]; then
+      local proc_cwd proc_cmd
+      proc_cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+      proc_cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+      case "$proc_cwd" in
+        "$cur_dir"|"$cur_dir"/*) matched=1 ;;
+      esac
+      case "$proc_cmd" in
+        *"$cur_dir/"*|*"$cur_dir "*) matched=1 ;;
+      esac
+    elif command -v pwdx >/dev/null 2>&1; then
+      local proc_cwd
+      proc_cwd="$(pwdx "$pid" 2>/dev/null | cut -d: -f2- | tr -d ' ' || true)"
+      case "$proc_cwd" in
+        "$cur_dir"|"$cur_dir"/*) matched=1 ;;
+      esac
+    elif command -v lsof >/dev/null 2>&1; then
+      local lsof_cwd
+      lsof_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true)"
+      case "$lsof_cwd" in
+        "$cur_dir"|"$cur_dir"/*) matched=1 ;;
+      esac
+    fi
+
+    if [ "$matched" -eq 1 ]; then
+      target_pids="${target_pids} $pid"
+    fi
+  done
+
+  [ -n "$target_pids" ] || return 0
+
+  info "Stopping previous panel process (PID(s):$target_pids)..."
+  for pid in $target_pids; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+
+  # The panel's SIGTERM handler terminates its child game server processes, then closes the HTTP server.
+  # Poll up to 30s for the process to exit so port 8080 is freed before starting the new instance.
+  local i=0
+  while [ "$i" -lt 30 ]; do
+    local any_alive=0
+    for pid in $target_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        any_alive=1
+        break
+      fi
+    done
+    [ "$any_alive" -eq 1 ] || break
+    sleep 1
+    i=$((i + 1))
+  done
+
+  # Force kill if still lingering after timeout
+  for pid in $target_pids; do
+    if kill -0 "$pid" 2>/dev/null; then
+      warn "Process $pid did not exit cleanly within 30s; sending SIGKILL..."
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
 java_binary_major() {
   "$1" -version 2>&1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
@@ -438,14 +518,17 @@ say ""
 if is_systemd_active && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
   say "Starting Renom background service..."
   sudo systemctl restart renom.service || warn "Could not restart renom.service automatically. Run: npm start --workspace @renom/panel"
-elif command -v pm2 >/dev/null 2>&1 && pm2 list 2>/dev/null | grep -qi renom; then
+elif command -v pm2 >/dev/null 2>&1 && pm2 describe renom >/dev/null 2>&1; then
   say "Restarting Renom under pm2..."
-  pm2 restart renom || warn "Could not restart pm2 process automatically. Run: npm start --workspace @renom/panel"
+  if pm2 restart renom; then
+    ok "Restarted Renom under pm2."
+  else
+    warn "Could not restart pm2 process automatically. Run: pm2 restart renom"
+  fi
 elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then
   # If an existing panel was already running (e.g. re-running install.sh to reset password or update port),
   # stop the old instance so the port is freed.
-  pkill -f "dist/server/index.js" 2>/dev/null || true
-  sleep 1
+  stop_panel_processes
   say "Starting Renom server now..."
   say ""
   exec npm start --workspace @renom/panel
