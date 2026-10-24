@@ -18,7 +18,7 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
-- Bedrock BDS server boot: Fixed `spawn bedrock_server ENOENT` on Linux/POSIX hosts by resolving binaries to local absolute paths in the server directory, applying `0o755` permissions on POSIX hosts, and setting `LD_LIBRARY_PATH` so the dynamic linker finds required libraries (`libcrypto.so.1.1`).
+- Bedrock BDS server boot: Fixed `spawn bedrock_server ENOENT` on Linux and Windows by resolving binaries to local absolute paths in the server directory, applying `0o755` permissions on POSIX hosts, and setting `LD_LIBRARY_PATH` so the dynamic linker finds required libraries (`libcrypto.so.1.1`).
 - Software swapper pre-swap backup: Enforced creating a full backup before initiating an in-place software swap; failure to create a requested backup now aborts the swap to prevent unrecoverable data loss.
 - Software swapper cross-ecosystem variable cleanup: Automatically cleans up incompatible engine version variables (such as stale Java `mcVersion` when swapping to Bedrock BDS) so Bedrock servers cleanly resolve to "latest".
 - File manager auto-refresh: Automatically queries and renders directory file listing whenever the Files tab is activated.

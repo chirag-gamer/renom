@@ -892,6 +892,7 @@ textarea:focus {
   margin: 0;
 }
 .page-header .inline-form button {
+  margin-top: 0;
   white-space: nowrap;
 }
 @media (max-width: 768px) {

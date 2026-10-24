@@ -6,7 +6,24 @@ import { createHash } from "node:crypto";
 import { BUILTIN_BLUEPRINTS } from "../../src/server/modules/blueprints/builtin-catalog.js";
 import { runInstallOps } from "../../src/server/modules/runtime/install.js";
 
+const SUPPORTED_SLUGS = [
+  "paper",
+  "purpur",
+  "vanilla",
+  "bedrock-bds",
+  "pocketmine-mp",
+  "endstone",
+  "generic-nodejs",
+  "generic-python",
+] as const;
+
 const TARGET_SLUG = process.env.SOFTWARE_SLUG?.trim();
+
+if (TARGET_SLUG && !SUPPORTED_SLUGS.includes(TARGET_SLUG as (typeof SUPPORTED_SLUGS)[number])) {
+  throw new Error(
+    `Unsupported SOFTWARE_SLUG: '${TARGET_SLUG}'. Expected one of: ${SUPPORTED_SLUGS.join(", ")}`,
+  );
+}
 
 function shouldRun(slug: string): boolean {
   return !TARGET_SLUG || TARGET_SLUG === slug;
