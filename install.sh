@@ -214,6 +214,7 @@ open_firewall() {
 }
 
 install_background_service() {
+  [ -d "/run/systemd/system" ] || return 0
   have systemctl || return 0
   if ! systemctl list-unit-files >/dev/null 2>&1; then return 0; fi
   local service="/etc/systemd/system/renom.service"
@@ -404,8 +405,11 @@ say "Forgot the admin password? Re-run ./install.sh — it will offer a new one.
 say "Use ./renom.sh option 2 to update code only; it does not reset passwords."
 say ""
 
-# Auto-start: remove requirement to manually cd and run the start command
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
+# Auto-start: remove requirement to manually cd and run the start command.
+# On hosts with real systemd (where systemd is booted and active as PID 1),
+# manage through the systemd unit. In containers or hosts where systemd is absent or
+# inactive (such as Docker/devcontainers with mock systemctl), start the panel directly.
+if [ -d "/run/systemd/system" ] && command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service 2>/dev/null; then
   say "Starting Renom background service..."
   sudo systemctl restart renom.service || warn "Could not restart renom.service automatically. Run: npm start --workspace @renom/panel"
 elif [ -t 1 ] && { [ -t 0 ] || (exec </dev/tty) 2>/dev/null; }; then

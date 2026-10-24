@@ -84,7 +84,7 @@ do_update() {
   info "Reinstalling dependencies and rebuilding..."
   npm install --no-audit --no-fund || die "npm install failed."
   npm run build || die "Build failed."
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service; then
+  if [ -d "/run/systemd/system" ] && command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files >/dev/null 2>&1 && systemctl is-enabled --quiet renom.service; then
     sudo systemctl restart renom.service || die "Update built, but the Renom service restart failed."
     ok "Updated and restarted the Renom background service."
   else

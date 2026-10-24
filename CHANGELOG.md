@@ -32,6 +32,7 @@ All notable changes to Renom are documented here. Format based on
 
 ### Changed
 
+- Installer container auto-start: `install.sh` and `renom.sh` now verify that systemd is booted and active via `[ -d /run/systemd/system ]` before attempting background service setup or restarts. In container environments without systemd (such as Dev Containers or Codespaces with mock systemctl), the installer starts the panel process directly.
 - Plugins tab layout: Unified plugin search and installation into a single top search bar, eliminating the redundant secondary form while preserving the installed plugins list.
 - Modern card-based UI layout: Centered main container layout (`max-width: 1360px` - `1440px`) with subtle borders, border-radius (`12px`), elevation, and backdrop contrast for cards and settings tabs while keeping the console full-bleed.
 - Installer auto-start: `install.sh` now automatically starts the Renom daemon via systemd (or starts the panel directly in interactive shells) upon completing the setup.
