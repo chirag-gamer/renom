@@ -74,5 +74,7 @@ describe("tunnel join address selection", () => {
   it("returns null when the reserved endpoint is overlong or invalid", () => {
     expect(resolveJoinAddress(printed, "mellow-atlas-9245")).toBe(null);
     expect(resolveJoinAddress(null, "vivid-lagoon-9784")).toBe(null);
+    expect(resolveJoinAddress(printed, "")).toBe(null);
+    expect(resolveJoinAddress(null, "")).toBe(null);
   });
 });

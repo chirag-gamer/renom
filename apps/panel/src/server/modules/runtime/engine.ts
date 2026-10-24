@@ -361,7 +361,8 @@ export class LocalProcessEngine {
           )
           .run(serverId, tunnelEndpoint);
       } catch {
-        // Best-effort: keep existing value if repair could not claim a name
+        tunnelEndpoint = undefined;
+        // Best-effort: omit the invalid value if repair could not claim a name
       }
     }
     if (tunnelEndpoint) childEnv.CONNECT_ENDPOINT = tunnelEndpoint;

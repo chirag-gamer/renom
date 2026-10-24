@@ -84,7 +84,7 @@ export function scanHistoryForAddress(lines: Array<{ text: string }>): string | 
  * in, which is also what keeps the address on screen once the line scrolls out.
  */
 export function resolveJoinAddress(printed: string | null, endpoint: string | null): string | null {
-  if (endpoint && !endpointValid(endpoint)) return null;
+  if (endpoint !== null && !endpointValid(endpoint)) return null;
   const derived = endpoint ? addressForEndpoint(endpoint) : null;
   return printed && (derived === null || printed === derived) ? printed : derived;
 }
