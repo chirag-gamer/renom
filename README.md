@@ -25,7 +25,10 @@ installer works on a bare machine, asks for a port and an admin account,
 then prints the exact address to open. Re-running keeps your data and
 settings.
 
-The installer automatically starts Renom upon completion. To restart a systemd-managed panel, run `sudo systemctl restart renom.service`; to start it manually when no panel is running:
+The installer starts Renom automatically on hosts with systemd or in interactive terminals. For non-interactive installs on hosts without systemd, or to manage the panel manually:
+
+- Restart a systemd-managed panel: `sudo systemctl restart renom.service`
+- Start manually when no panel is running:
 
 ```bash
 npm start --workspace @renom/panel
