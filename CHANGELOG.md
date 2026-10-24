@@ -18,6 +18,7 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
+- Minekube Connect 16-character endpoint limit: Enforced a strict 16-character maximum length limit on generated and validated tunnel endpoint names to comply with Minekube WatchService's hostname rules, preventing HTTP 400 "invalid endpoint name format" WebSocket errors and infinite reconnect loops. Added database migration `0005-repair-overlong-tunnel-endpoints` to repair existing overlong endpoints and runtime self-healing in `LocalProcessEngine`.
 - Bedrock BDS server boot: Fixed `spawn bedrock_server ENOENT` on Linux and Windows by resolving binaries to local absolute paths in the server directory, applying `0o755` permissions on POSIX hosts, and setting `LD_LIBRARY_PATH` so the dynamic linker finds required libraries (`libcrypto.so.1.1`).
 - Software swapper pre-swap backup: Enforced creating a full backup before initiating an in-place software swap; failure to create a requested backup now aborts the swap to prevent unrecoverable data loss.
 - Software swapper cross-ecosystem variable cleanup: Automatically cleans up incompatible engine version variables (such as stale Java `mcVersion` when swapping to Bedrock BDS) so Bedrock servers cleanly resolve to "latest".

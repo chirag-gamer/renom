@@ -6,6 +6,7 @@ import type { ServersRepo } from "../servers/repo.js";
 import type { BlueprintRegistry } from "../blueprints/registry.js";
 import type { BlueprintVariable } from "../blueprints/schema.js";
 import { EngineError } from "../../shared/errors.js";
+import { claimEndpointName, endpointValid } from "../tunnels/minekube.js";
 import { perSecond, readNetworkCounters, readProcessReading } from "./stats.js";
 
 export type PowerAction = "start" | "stop" | "restart" | "kill";
@@ -349,7 +350,20 @@ export class LocalProcessEngine {
     // Tunnel opt-in: the Minekube endpoint travels by environment (documented
     // precedence over the plugin's config file), never baked into argv.
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
-    const tunnelEndpoint = vars["tunnel.endpoint"];
+    let tunnelEndpoint = vars["tunnel.endpoint"];
+    if (tunnelEndpoint && !endpointValid(tunnelEndpoint)) {
+      try {
+        tunnelEndpoint = claimEndpointName(this.db, serverId);
+        this.db
+          .prepare(
+            `INSERT INTO server_variables (server_id, key, value) VALUES (?, 'tunnel.endpoint', ?)
+             ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
+          )
+          .run(serverId, tunnelEndpoint);
+      } catch {
+        // Best-effort: keep existing value if repair could not claim a name
+      }
+    }
     if (tunnelEndpoint) childEnv.CONNECT_ENDPOINT = tunnelEndpoint;
     // Mojang Bedrock Dedicated Server on Linux dynamically links against bundled .so libraries
     // (e.g. libcrypto.so.1.1) located in the server root directory.

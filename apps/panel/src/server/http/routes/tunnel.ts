@@ -24,8 +24,8 @@ import {
 import { join } from "node:path";
 
 const tunnelSchema = z.object({
-  /** Omit to have the panel mint a random Connect endpoint name. */
-  endpoint: z.string().min(2).max(63).optional(),
+  /** Omit to have the panel mint a random Connect endpoint name (max 16 chars). */
+  endpoint: z.string().min(4).max(16).optional(),
 });
 
 export interface TunnelDeps {
@@ -104,7 +104,7 @@ export function tunnelRouter(deps: TunnelDeps): Router {
       if (body.endpoint) {
         if (!endpointValid(body.endpoint)) {
           throw new BadRequestError(
-            "Endpoint must look like vivid-lagoon-9784 (words, then four digits)",
+            "Endpoint must look like calm-fjord-9784 (words, then four digits, max 16 chars)",
           );
         }
         if (endpointTaken(db, body.endpoint, id)) {
