@@ -3,10 +3,11 @@ import request from "supertest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildPanel } from "../../src/server/index.js";
+import type { Express } from "express";
+import { buildPanel, type PanelContext } from "../../src/server/index.js";
 
-let app: ReturnType<typeof buildPanel>["app"];
-let ctx: ReturnType<typeof buildPanel>["ctx"];
+let app: Express;
+let ctx: PanelContext;
 let dir: string;
 let ownerToken = "";
 let limitedToken = "";
@@ -118,7 +119,7 @@ describe("GET /servers/:id/activity", () => {
     expect(olderItems.some((item) => item.id === cursor)).toBe(false);
   });
 
-  it("names the panel itself System rows come back with a null actor", async () => {
+  it("renders null-actor rows with a resolvable system attribution", async () => {
     ctx.audit.record({ event: "server.install.start", serverId, target: {} });
     const res = await request(app)
       .get(`/api/v3/servers/${serverId}/activity`)
