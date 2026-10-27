@@ -98,4 +98,76 @@ export class AuditService {
       target_json: string;
     }>;
   }
+
+  /**
+   * Newest-first page of one server's events, with the actor resolved.
+   *
+   * `query()` walks forward from a cursor, which suits tests and exports but
+   * not a feed: the Activity tab shows the latest actions first and pages
+   * backwards, so the cursor here is exclusive-descending (`id < ?`).
+   * ULIDs are monotonic per writer, so id order tracks ts order.
+   */
+  activityForServer(args: {
+    serverId: string;
+    limit: number;
+    /** Id of the last row already shown; the next page starts below it. */
+    before?: string;
+  }): Array<{
+    id: string;
+    ts: number;
+    event: string;
+    actorUserId: string | null;
+    actorUsername: string | null;
+    actorIp: string | null;
+    target: Record<string, unknown>;
+  }> {
+    const where = ["a.server_id = ?"];
+    const params: unknown[] = [args.serverId];
+    if (args.before) {
+      where.push("a.id < ?");
+      params.push(args.before);
+    }
+    // Clamped at 101, not 100: the route asks for one row beyond the page as a
+    // "more pages exist" sentinel, and clamping to 100 silently swallowed it
+    // whenever the caller wanted a full 100-row page.
+    params.push(Math.min(Math.max(args.limit, 1), 101));
+    const rows = this.db
+      .prepare(
+        `SELECT a.id, a.ts, a.event, a.actor_user_id, a.actor_ip, a.target_json,
+                COALESCE(NULLIF(u.display_name, ''), u.username) AS actor_username
+           FROM audit_log a LEFT JOIN users u ON u.id = a.actor_user_id
+          WHERE ${where.join(" AND ")}
+          ORDER BY a.id DESC LIMIT ?`,
+      )
+      .all(...params) as Array<{
+      id: string;
+      ts: number;
+      event: string;
+      actor_user_id: string | null;
+      actor_ip: string | null;
+      target_json: string;
+      actor_username: string | null;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      ts: row.ts,
+      event: row.event,
+      actorUserId: row.actor_user_id,
+      actorUsername: row.actor_username,
+      actorIp: row.actor_ip,
+      target: parseTarget(row.target_json),
+    }));
+  }
+}
+
+/** Stored targets are JSON; a corrupted row must not break the whole feed. */
+function parseTarget(json: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }

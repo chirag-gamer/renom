@@ -11,6 +11,8 @@ export interface ServerRow {
   owner_username: string;
   blueprint_id: string;
   blueprint_slug: string;
+  /** Blueprint category ('minecraft-java', 'minecraft-bedrock', …): drives tab visibility. */
+  blueprint_category: string;
   blueprint_version_tag: string;
   image_ref: string;
   node_id: string;
@@ -25,6 +27,7 @@ export interface ServerRow {
 }
 
 const PUBLIC_COLUMNS = `s.id, s.name, s.description, s.owner_id, u.username AS owner_username, s.blueprint_id, b.slug AS blueprint_slug,
+  b.category AS blueprint_category,
   s.blueprint_version_tag, s.image_ref, s.node_id, s.status, s.runtime_state,
   s.memory_mb, s.cpu_weight, s.disk_quota_mb, s.eula_accepted_at, s.created_at, s.updated_at`;
 
@@ -370,6 +373,7 @@ export function toPublicServer(
     ownerId: s.owner_id,
     ownerUsername: s.owner_username,
     blueprintSlug: s.blueprint_slug,
+    blueprintCategory: s.blueprint_category,
     status: s.status as PublicServer["status"],
     runtimeState: s.runtime_state as PublicServer["runtimeState"],
     memoryMb: s.memory_mb,

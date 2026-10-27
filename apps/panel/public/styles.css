@@ -644,14 +644,6 @@ button:disabled {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.rail-power {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.rail-power button {
-  margin: 0;
-}
 .stat-value {
   margin: 0 0 6px;
   font-size: 13px;
@@ -1462,4 +1454,744 @@ textarea:focus {
     transform: translateY(-12px) scale(0.96);
     opacity: 0;
   }
+}
+
+/* ---------- server shell: grouped nav ---------- */
+/* The rail groups tabs the way the work is done: see state, play, manage,
+   configure. */
+.side-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
+}
+.side-nav-group-label {
+  margin: 0 0 6px 12px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.side-nav a .nav-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+}
+.side-nav a .nav-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.side-nav a.active .nav-icon,
+.side-nav a:hover .nav-icon {
+  color: currentColor;
+}
+.side-nav a {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ---------- persistent server card ---------- */
+/* Sits above every tab so state, address, and power never need a navigation.
+   Geometry follows the reference: identity left, meta row under the name,
+   power cluster pinned right. */
+.srv-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 24px;
+  padding: 18px 22px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04);
+}
+.srv-card-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  background: var(--accent-soft);
+  border-radius: 10px;
+  color: var(--accent-strong);
+  font: 400 24px/1 var(--serif);
+}
+.srv-card-body {
+  min-width: 0;
+}
+.srv-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.srv-card-title h2 {
+  margin: 0;
+  font: 400 26px/1.2 var(--serif);
+}
+.srv-card-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.srv-card-state .status-dot {
+  box-shadow: none;
+}
+.srv-card-state--running {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--card));
+  border-color: color-mix(in srgb, var(--ok) 32%, var(--border));
+}
+.srv-card-state--running .status-dot {
+  background: var(--ok);
+}
+.srv-card-state--starting .status-dot,
+.srv-card-state--stopping .status-dot,
+.srv-card-state--installing .status-dot {
+  background: var(--primary-container);
+}
+.srv-card-state--suspended .status-dot,
+.srv-card-state--install-failed .status-dot {
+  background: var(--danger);
+}
+/* Meta is a row of labelled pairs, like the reference's IP / PORT chips. */
+.srv-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+.srv-card-meta-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: 500 12px/1.4 var(--mono);
+}
+.srv-card-meta-label {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.srv-card-power {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.srv-card-power button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+.srv-card-power svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+.srv-card-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .srv-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .srv-card-power {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+/* ---------- panel lede (section title + subtitle) ---------- */
+.panel-lede {
+  margin: 0 0 18px;
+}
+.panel-lede-title {
+  margin: 0;
+  font: 600 16px/1.3 var(--mono);
+}
+.panel-lede-sub {
+  margin: 4px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* ---------- tab transitions ---------- */
+/* Tabs swap by unhiding, which no transition can animate, so the entering
+   panel animates itself. Motion is transform+opacity under 160ms and is off
+   entirely for reduced-motion users. */
+@keyframes panelEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.server-content > div.panel-enter {
+  animation: panelEnter 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.side-nav a,
+.side-nav a .nav-icon {
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .server-content > div.panel-enter {
+    animation: none;
+  }
+  .side-nav a,
+  .side-nav a .nav-icon {
+    transition: none;
+  }
+}
+
+/* ---------- overview ---------- */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 26px;
+}
+.overview-tile {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.overview-tile dt {
+  margin: 0 0 5px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.overview-tile dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.overview-join {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.overview-join-label {
+  margin: 0 0 8px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.overview-address {
+  margin: 0 0 6px;
+  padding: 12px 14px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: 600 15px/1.5 var(--mono);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* ---------- activity feed ---------- */
+/* Avatar column, then the sentence, then the event id and time: the id is
+   what a support conversation cites, so it stays visible. */
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.activity-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.activity-item:last-child {
+  border-bottom: 0;
+}
+.activity-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+  border-radius: 50%;
+  color: var(--accent-strong);
+  font: 700 13px/1 var(--mono);
+  text-transform: uppercase;
+}
+.activity-body {
+  min-width: 0;
+}
+.activity-summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.activity-summary strong {
+  font-weight: 700;
+}
+.activity-event {
+  margin-left: 8px;
+  color: var(--faint);
+  font: 400 11px/1.5 var(--mono);
+}
+.activity-meta {
+  margin: 4px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* ---------- properties ---------- */
+/* Two-column grid of card fields, toggles right-aligned. Group headings are
+   plain labels, not cards, so the page reads as one form. */
+.properties-group {
+  margin-bottom: 28px;
+}
+.properties-group-title {
+  margin: 0 0 14px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.properties-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+.property-field {
+  padding: 16px 18px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.property-field label {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.property-field input[type="text"],
+.property-field select,
+.property-field input[type="number"] {
+  margin-top: 10px;
+  background: var(--field);
+}
+.property-help {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font: 400 11px/1.55 var(--mono);
+}
+.property-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 14px;
+}
+.property-toggle input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  accent-color: var(--accent);
+}
+.property-toggle .property-help {
+  flex-basis: 100%;
+}
+
+/* ---------- plugin browse ---------- */
+.addon-browse-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 18px;
+}
+.addon-source-chips {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.addon-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 7px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.addon-source-chip svg {
+  width: 13px;
+  height: 13px;
+  color: var(--ok);
+}
+.addon-source-chip.active {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+.addon-search-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.addon-search-field svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--faint);
+}
+.addon-search-field input {
+  width: 100%;
+  margin: 0;
+  padding: 11px 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: 400 13px/1.4 var(--mono);
+}
+.addon-search-field input:focus {
+  outline: none;
+}
+.addon-search-field:focus-within {
+  border-color: var(--accent);
+}
+.addon-browse-filter {
+  padding: 10px 16px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .addon-browse-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .addon-browse-filter {
+    text-align: center;
+  }
+}
+
+/* Installed plugins: icon + name + filename + actions per row, two across. */
+.addon-installed-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.addon-installed {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.addon-installed-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  overflow: hidden;
+  background: var(--card-container);
+  border-radius: 8px;
+  color: var(--accent-strong);
+  font-size: 16px;
+}
+.addon-installed-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.addon-installed-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+.addon-installed-meta {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--faint);
+  font: 400 11px/1.5 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.addon-installed-pagination {
+  justify-content: center;
+  margin: 14px 0 30px;
+}
+.addon-install-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.addon-install-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+/* Plugin cards: icon, title + author, description, then metrics + install. */
+.addon-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+.addon-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  background: var(--card-low);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.addon-card:hover {
+  border-color: var(--outline-variant);
+}
+.addon-card-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.addon-card-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  place-items: center;
+  overflow: hidden;
+  background: var(--card-container);
+  border-radius: 9px;
+  color: var(--accent-strong);
+  font-size: 18px;
+}
+.addon-card-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.addon-card-title-group {
+  min-width: 0;
+}
+.addon-card-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.addon-card-author {
+  display: block;
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.addon-card-desc {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.addon-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.addon-card-meta {
+  color: var(--faint);
+  font: 400 11px/1.5 var(--mono);
+}
+.addon-card-footer button {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+}
+
+/* ---------- file context menu ---------- */
+/* Attached to <body> with fixed positioning from app.js, so no scrolling or
+   flex ancestor can clip or displace it. */
+.context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--outline);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgb(26 26 24 / 18%);
+  display: flex;
+  flex-direction: column;
+}
+.context-menu button {
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.context-menu button:hover {
+  background: var(--card-container);
+}
+
+/* ---------- iOS-style visibility switch (item 14) ---------- */
+/* Checkbox is visually hidden; the track renders the state so keyboard focus
+   still lands on the real input. */
+.server-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.switch-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  background: var(--card-container);
+  border: 1px solid var(--outline);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+  transition: transform 140ms ease;
+}
+.switch input:checked + .switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch input:checked + .switch-track::after {
+  transform: translateX(18px);
+}
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch-track,
+  .switch-track::after {
+    transition: none;
+  }
+}
+
+/* ---------- files list rows (context-menu host styling) ---------- */
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.file-row:hover {
+  background: var(--card-container);
+}
+
+/* ---------- read-only property fields ---------- */
+.property-readonly input {
+  background: var(--card-container);
+  color: var(--faint, var(--ink));
+  cursor: not-allowed;
 }

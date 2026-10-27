@@ -7,6 +7,23 @@ All notable changes to Renom are documented here. Format based on
 
 ### Added
 
+- Overview landing tab: opening a server now lands on a new Overview panel (status tiles, join address, recent-activity summary) instead of the Console; the dashboard's server cards and detail links navigate there directly.
+- Persistent server status card: every server page carries a header card with the server name, software, join address, live state chip (e.g. "Paper · running"), and the Start/Restart/Stop/Kill power controls, replacing the old side-rail power block.
+- Activity audit tab: new per-server feed (GET `/servers/:id/activity`, gated on the previously unused `activity.read` permission) listing who did what and when, newest first with cursor paging and resolved actor display names; panel-authored rows render as "System".
+- server.properties manager: new Properties tab (Minecraft Java servers only) rendering the file as grouped typed fields — booleans as switches, numbers with bounds, enums as selects — while unknown keys and comments round-trip untouched on save; `server-port` is panel-owned (read-only field, rejected by `PUT /servers/:id/properties`) and only changed keys are sent.
+- Egg Swapper tab: swapping to a different game ecosystem (Minecraft Java → Bedrock, Node.js, Python, …) moved to its own tab; `GET /servers/:id/software?scope=software|egg` splits same-ecosystem replacements from cross-ecosystem swaps.
+- File context menu: right-click (or the keyboard menu key) on any file row opens Download, Compress, Rename, Move, Dearchive and Delete, each gated by the same file permissions as the side panel.
+- Server visibility toggle: the server list defaults to "servers I own", with an iOS-style switch revealing everything the user can access; preference persists in localStorage.
+- Tab navigation polish: grouped side navigation with per-tab SVG icons and a smooth panel transition when switching tabs.
+- `blueprintCategory` added to the public server shape (`packages/contracts`), driving tab visibility per game ecosystem.
+
+### Fixed
+
+- Plugin/Mod misdetection: Modrinth's `project_type` now reads `mod` for real plugins (EssentialsX, LuckPerms, WorldEdit, VeinMiner), so the equality gate rejected every plugin install with "Project '…' is a mod, not a plugin". Compatibility is now decided by the loader-filtered `/version` list: a Paper plugin has paper/spigot builds, a Fabric-only mod does not.
+- Plugin icons: the CSP `img-src 'self' data:` blocked `https://cdn.modrinth.com`, blanking every browse-card icon; the CDN host is now allowed for images only, and a failed icon load falls back to a project mark instead of an empty gap.
+- Plugin search bar position: the search form moved directly under the Plugins header/intro instead of the bottom of the page.
+- Software tab scope: same-ecosystem blueprints only (Java server → Java options, Bedrock → Bedrock), popularity ranking removed in favour of name ordering.
+
 - Toast notification system: Lightweight, non-intrusive alert toasts (`success`, `error`, `info`) positioned top-right for async user feedback across file saves, software swapping, and addon installations.
 - Automated software matrix CI/CD workflow: `.github/workflows/software-matrix.yml` running test matrices across all locally supported Minecraft software engines (Paper, Purpur, Vanilla, Bedrock BDS, PocketMine-MP, Endstone) and generic engines (Node.js, Python).
 - Dynamic Minecraft "latest" version resolution: Added `resolveMinecraftVersion` querying PaperMC version registry with fallback to Mojang version manifest to resolve "latest" when searching or installing plugins.

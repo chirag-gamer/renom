@@ -10,6 +10,11 @@ import { requireAuth } from "../middleware/authn.js";
 import type { AuthService } from "../../modules/auth/service.js";
 import { parseQuery, parseBody } from "../../shared/validate.js";
 import { FilesService, BinaryFileError, ArchiveError } from "../../modules/files/service.js";
+import {
+  applyPropertyChanges,
+  coercePropertyValue,
+  parseProperties,
+} from "../../modules/files/properties.js";
 import { PathEscapeError } from "../../modules/files/confinement.js";
 import { BadRequestError, NotFoundError } from "../../shared/errors.js";
 import { resolve as resolveFsPath, join } from "node:path";
@@ -52,6 +57,10 @@ const compressBody = z
 const decompressBody = z.object({
   path: z.string().min(1).max(1024),
   destination: z.string().max(1024).default(""),
+});
+const propertiesBody = z.object({
+  /** Key -> new value; only keys present in the file (or defined here) are written. */
+  values: z.record(z.string().max(64), z.string().max(1024)),
 });
 
 /** Server file directories live at <DATA_DIR>/servers/<id> (matches JTG importer layout). */
@@ -242,6 +251,83 @@ export function filesRouter(
         serverId: req.params.id!,
         requestId: req.requestId,
         target: { paths: targets },
+      });
+      res.status(204).send();
+    } catch (e) {
+      next(mapFileError(e));
+    }
+  });
+
+  // server.properties as typed fields rather than one textarea. The file is read
+  // for real on every request (Minecraft rewrites it on each start), and only
+  // the keys sent back are changed — unknown keys and comments survive.
+  router.get("/servers/:id/properties", guard("file.read-content"), (req, res, next) => {
+    try {
+      assertSuspendedReadable(req, res);
+      const root = serverDataDir(env, req.params.id!);
+      const { content } = files.readText(root, "server.properties");
+      const parsed = parseProperties(content);
+      res.json({
+        properties: parsed.properties.map((p) => ({
+          key: p.key,
+          value: p.value,
+          label: p.definition?.label ?? p.key,
+          kind: p.definition?.kind ?? "text",
+          help: p.definition?.help ?? null,
+          group: p.definition?.group ?? "Other",
+          options: p.definition?.options ?? null,
+          min: p.definition?.min ?? null,
+          max: p.definition?.max ?? null,
+          readonly: p.definition?.readonly === true,
+        })),
+      });
+    } catch (e) {
+      next(mapFileError(e));
+    }
+  });
+
+  router.put("/servers/:id/properties", guard("file.update"), (req, res, next) => {
+    try {
+      assertNotSuspendedForMutation(req, res);
+      const body = parseBody(propertiesBody, req);
+      const root = serverDataDir(env, req.params.id!);
+      const { content } = files.readText(root, "server.properties");
+      const parsed = parseProperties(content);
+      // Validate every submitted key before writing anything: a rejected value
+      // must not leave the file half-updated.
+      const accepted: Record<string, string> = {};
+      for (const [key, raw] of Object.entries(body.values)) {
+        const existing = parsed.properties.find((p) => p.key === key);
+        if (existing?.definition) {
+          if (existing.definition.readonly === true) {
+            // The engine, allocation table and tunnel all derive the port from
+            // the panel's allocation; a hand edit here would desync them.
+            throw new BadRequestError(
+              `'${key}' is managed by the panel — change it on the Network tab`,
+            );
+          }
+          try {
+            accepted[key] = coercePropertyValue(existing.definition, raw);
+          } catch (err) {
+            throw new BadRequestError(err instanceof Error ? err.message : String(err));
+          }
+        } else if (existing) {
+          // Unknown key: free text, but still no newline injection.
+          if (/[\r\n]/.test(raw)) throw new BadRequestError(`'${key}' must be a single line`);
+          accepted[key] = raw;
+        }
+        // A key the file does not contain is ignored rather than invented: the
+        // server writes its own defaults and would fight an appended guess.
+      }
+      files.writeText(root, "server.properties", applyPropertyChanges(content, accepted));
+      audit.record({
+        event: "server.properties.update",
+        actorUserId: req.principal!.userId,
+        actorApiKeyId: req.principal!.apiKeyId,
+        actorIp: req.ip,
+        serverId: req.params.id!,
+        requestId: req.requestId,
+        target: { keys: Object.keys(accepted) },
       });
       res.status(204).send();
     } catch (e) {

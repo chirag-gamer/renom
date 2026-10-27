@@ -618,18 +618,12 @@ export async function installModrinthProjects(
       throw new EngineError(`Not a Modrinth project id: '${project}'`);
     }
 
-    if (platform.projectType) {
-      const proj = (await fetchJson(
-        fetchImpl,
-        `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}`,
-      )) as { project_type?: string };
-      if (proj?.project_type && proj.project_type !== platform.projectType) {
-        throw new EngineError(
-          `Project '${id}' is a ${proj.project_type}, not a ${platform.projectType}`,
-        );
-      }
-    }
-
+    // A project is loaded only if it publishes a file for this server's
+    // loader. Modrinth's `project_type` field cannot answer this: it reports
+    // "mod" for every plugin (EssentialsX, LuckPerms, WorldEdit all say mod),
+    // so an equality check against "plugin" rejected every real plugin. The
+    // loader-filtered version list is the honest test — a Paper plugin has
+    // paper/spigot builds, a Fabric mod does not.
     const versions = (await fetchJson(
       fetchImpl,
       `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +
@@ -644,6 +638,13 @@ export async function installModrinthProjects(
         primary: boolean;
       }>;
     }>;
+    if (versions.length === 0) {
+      throw new EngineError(
+        `Project '${id}' has no ${mcVersion} build for ${platform.loaders.join("/")}, ` +
+          `so this ${platform.projectType === "plugin" ? "plugin server" : "mod loader"} cannot load it`,
+      );
+    }
+
     let chosenVersion: (typeof versions)[0] | undefined;
     if (versionId) {
       chosenVersion = versions.find((v) => v.id === versionId);
@@ -778,17 +779,9 @@ export async function fetchModrinthProjectVersions(
   if (!/^[A-Za-z0-9][A-Za-z0-9-_]{1,63}$/.test(id)) {
     throw new EngineError(`Not a Modrinth project id: '${projectId}'`);
   }
-  if (platform.projectType) {
-    const proj = (await fetchJson(
-      fetchImpl,
-      `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}`,
-    )) as { project_type?: string };
-    if (proj?.project_type && proj.project_type !== platform.projectType) {
-      throw new EngineError(
-        `Project '${projectId}' is a ${proj.project_type}, not a ${platform.projectType}`,
-      );
-    }
-  }
+  // No `project_type` check here either (see installModrinthProjects): that
+  // field reads "mod" for plugins, so the loader-filtered list below is what
+  // decides compatibility. An empty list means this server cannot load it.
   const resolvedVersion = await resolveMinecraftVersion(fetchImpl, mcVersion);
   const url =
     `https://api.modrinth.com/v2/project/${encodeURIComponent(id)}/version` +
