@@ -260,6 +260,39 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(Array.isArray(swRes.body.software)).toBe(true);
     expect(swRes.body.software.length).toBeGreaterThan(0);
 
+    // scope=software: same game ecosystem only — a generic-runtime server must
+    // not be offered Minecraft or proxy blueprints, and the popularity rank is
+    // gone (replaced by name ordering).
+    const sameEcosystem = await request(app)
+      .get(`/api/v3/servers/${testId}/software?scope=software`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(sameEcosystem.status).toBe(200);
+    const sameItems = sameEcosystem.body.software as Array<{ name: string; category: string }>;
+    // Non-empty: an empty list would satisfy every "for each item" assertion
+    // below and hide a broken filter.
+    expect(sameItems.length).toBeGreaterThan(0);
+    for (const item of sameItems) {
+      expect(item.category).toBe("generic-runtime");
+    }
+    for (const item of sameEcosystem.body.software) {
+      expect(item.popularity).toBeUndefined();
+      expect(item.popularityRank).toBeUndefined();
+    }
+    // The listing is ordered by name, which replaced the popularity rank.
+    const sortedNames = [...sameItems.map((i) => i.name)].sort((a, b) => a.localeCompare(b));
+    expect(sameItems.map((i) => i.name)).toEqual(sortedNames);
+
+    // scope=egg: everything EXCEPT the current ecosystem — the game-swap page.
+    const otherEcosystems = await request(app)
+      .get(`/api/v3/servers/${testId}/software?scope=egg`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(otherEcosystems.status).toBe(200);
+    const eggCategories = new Set(
+      otherEcosystems.body.software.map((s: { category: string }) => s.category),
+    );
+    expect(eggCategories.has("generic-runtime")).toBe(false);
+    expect(eggCategories.size).toBeGreaterThan(0);
+
     const swapRes = await request(app)
       .put(`/api/v3/servers/${testId}/software`)
       .set("authorization", `Bearer ${ownerToken}`)

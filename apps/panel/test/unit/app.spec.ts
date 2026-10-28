@@ -57,6 +57,16 @@ describe("http skeleton", () => {
     expect(allowed.headers["access-control-allow-origin"]).toBe("https://panel.example");
   });
 
+  it("allows Modrinth CDN images in the CSP (plugin icons)", async () => {
+    // Icon URLs are https://cdn.modrinth.com/... rendered as plain <img>; a
+    // regression to img-src 'self' data: silently blanks every plugin icon
+    // while the suite stays green.
+    const csp = String(
+      (await request(makeApp()).get("/healthz")).headers["content-security-policy"],
+    );
+    expect(csp).toContain("img-src 'self' data: https://cdn.modrinth.com");
+  });
+
   it("maps unknown routes to structured 404 (RFC-7807 shape)", async () => {
     const res = await request(makeApp()).get("/api/v3/nope");
     expect(res.status).toBe(404);

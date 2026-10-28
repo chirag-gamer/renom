@@ -24,21 +24,224 @@
 
         <nav class="side-nav side-nav--server" id="server-navigation" aria-label="Server" hidden>
           <p class="side-nav-title" id="server-nav-title">Server</p>
-          <a href="#" data-server-tab="console"><span aria-hidden="true">▸_</span> Console</a>
-          <a href="#" data-server-tab="files"><span aria-hidden="true">▤</span> Files</a>
-          <a href="#" data-server-tab="backups"><span aria-hidden="true">▣</span> Backups</a>
-          <a href="#" data-server-tab="schedules"><span aria-hidden="true">◷</span> Schedule</a>
-          <a href="#" data-server-tab="startup"><span aria-hidden="true">⚑</span> Startup</a>
-          <a href="#" data-server-tab="network"><span aria-hidden="true">⇄</span> Network</a>
-          <a href="#" data-server-tab="users"><span aria-hidden="true">☖</span> Users</a>
-          <a href="#" data-server-tab="addons" id="server-nav-addons"
-            ><span aria-hidden="true">✦</span> <span id="server-nav-addons-label">Plugins</span></a
-          >
-          <a href="#" data-server-tab="software" id="server-nav-software"
-            ><span aria-hidden="true">⛭</span>
-            <span id="server-nav-software-label">Software</span></a
-          >
-          <a href="#" data-server-tab="settings"><span aria-hidden="true">⚒</span> Settings</a>
+          <div class="side-nav-group">
+            <span class="side-nav-group-label">Overview</span>
+            <a href="#" data-server-tab="overview"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <rect x="2" y="2" width="5" height="5" rx="1" />
+                  <rect x="9" y="2" width="5" height="5" rx="1" />
+                  <rect x="2" y="9" width="5" height="5" rx="1" />
+                  <rect x="9" y="9" width="5" height="5" rx="1" /></svg
+              ></span>
+              Overview</a
+            >
+            <a href="#" data-server-tab="console"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+                  <path d="M4.5 6l2 2-2 2M8.5 10.2h3" /></svg
+              ></span>
+              Console</a
+            >
+            <a href="#" data-server-tab="activity"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M1.5 8.5h2.8l1.7-4.6 2.4 8 1.7-4.4h4.4" /></svg
+              ></span>
+              Activity</a
+            >
+          </div>
+
+          <div class="side-nav-group">
+            <span class="side-nav-group-label">Game</span>
+            <a href="#" data-server-tab="files"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M1.8 4.2A1.2 1.2 0 013 3h2.6l1.3 1.6h5.1A1.2 1.2 0 0113.2 6v5.8A1.2 1.2 0 0112 13H3a1.2 1.2 0 01-1.2-1.2z"
+                  /></svg
+              ></span>
+              Files</a
+            >
+            <a href="#" data-server-tab="properties" id="server-nav-properties"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <path d="M2 4.5h12M2 8h12M2 11.5h12" />
+                  <circle cx="5.5" cy="4.5" r="1.4" fill="currentColor" stroke="none" />
+                  <circle cx="10.5" cy="8" r="1.4" fill="currentColor" stroke="none" />
+                  <circle cx="6.8" cy="11.5" r="1.4" fill="currentColor" stroke="none" /></svg
+              ></span>
+              Properties</a
+            >
+            <a href="#" data-server-tab="addons" id="server-nav-addons"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M6 2.2h4v2.1a1.4 1.4 0 101.9 1.9h2.1v4h-2.1a1.4 1.4 0 10-1.9 1.9v2.1H6v-2.1a1.4 1.4 0 10-1.9-1.9H2v-4h2.1A1.4 1.4 0 006 4.3z"
+                  /></svg
+              ></span>
+              <span id="server-nav-addons-label">Plugins</span></a
+            >
+          </div>
+
+          <div class="side-nav-group">
+            <span class="side-nav-group-label">Management</span>
+            <a href="#" data-server-tab="backups"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M2.2 5.4h11.6v7.1a1.2 1.2 0 01-1.2 1.2H3.4a1.2 1.2 0 01-1.2-1.2z" />
+                  <path d="M2.2 5.4L3.9 2.4h8.2l1.7 3M6.2 8.6h3.6" /></svg
+              ></span>
+              Backups</a
+            >
+            <a href="#" data-server-tab="schedules"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <circle cx="8" cy="8" r="6.2" />
+                  <path d="M8 4.4V8l2.6 1.6" /></svg
+              ></span>
+              Schedule</a
+            >
+            <a href="#" data-server-tab="network"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <circle cx="8" cy="8" r="6.2" />
+                  <path d="M1.8 8h12.4M8 1.8a9.4 9.4 0 010 12.4A9.4 9.4 0 018 1.8" /></svg
+              ></span>
+              Network</a
+            >
+            <a href="#" data-server-tab="users"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <circle cx="6" cy="5.4" r="2.4" />
+                  <path d="M1.6 13.2c0-2.4 1.9-4 4.4-4s4.4 1.6 4.4 4" />
+                  <path d="M10.4 3.4a2.4 2.4 0 010 4M11.6 9.6c1.7.4 2.8 1.7 2.8 3.6" /></svg
+              ></span>
+              Users</a
+            >
+          </div>
+
+          <div class="side-nav-group">
+            <span class="side-nav-group-label">Configuration</span>
+            <a href="#" data-server-tab="startup"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <path d="M2.4 8h2.2M11.4 8h2.2" />
+                  <circle cx="8" cy="8" r="2.6" />
+                  <path
+                    d="M8 2.2v1.6M8 12.2v1.6M3.9 3.9l1.1 1.1M11 11l1.1 1.1M3.9 12.1L5 11M11 5l1.1-1.1"
+                  /></svg
+              ></span>
+              Startup</a
+            >
+            <a href="#" data-server-tab="software" id="server-nav-software"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linejoin="round"
+                >
+                  <path d="M8 1.9l5.2 2.6v7L8 14.1l-5.2-2.6v-7z" />
+                  <path d="M2.8 4.5L8 7.1l5.2-2.6M8 7.1v7" /></svg
+              ></span>
+              <span id="server-nav-software-label">Software</span></a
+            >
+            <a href="#" data-server-tab="egg" id="server-nav-egg"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <path d="M8 1.9c2.6 0 4.4 3 4.4 6.1a4.4 4.4 0 11-8.8 0c0-3.1 1.8-6.1 4.4-6.1z" />
+                  <path d="M6.2 8.4a1.8 1.8 0 013.6 0" /></svg
+              ></span>
+              Egg Swapper</a
+            >
+            <a href="#" data-server-tab="settings"
+              ><span class="nav-icon" aria-hidden="true"
+                ><svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                >
+                  <circle cx="8" cy="8" r="2.2" />
+                  <path
+                    d="M8 1.5l.9 1.7 1.9-.4.4 1.9 1.7.9-1 1.7 1 1.7-1.7.9-.4 1.9-1.9-.4-.9 1.7-.9-1.7-1.9.4-.4-1.9L3 9.8l1-1.7-1-1.7 1.7-.9.4-1.9 1.9.4z"
+                  /></svg
+              ></span>
+              Settings</a
+            >
+          </div>
         </nav>
 
         <div class="sidebar-foot">
@@ -133,6 +336,13 @@
           </header>
 
           <div id="servers-wrap">
+            <div class="server-filter-bar">
+              <label class="switch">
+                <input type="checkbox" id="owned-only-toggle" checked />
+                <span class="switch-track" aria-hidden="true"></span>
+                <span>Show only servers I own</span>
+              </label>
+            </div>
             <ul id="server-list" class="server-list" aria-label="Your servers"></ul>
             <p id="server-empty" class="empty-state" hidden>
               You do not have access to any servers.
@@ -495,17 +705,76 @@
         </section>
 
         <section id="view-server" class="server-view" hidden>
-          <header class="server-head">
-            <div>
-              <h2 id="srv-name">Server</h2>
-              <p id="srv-meta" class="note"></p>
+          <!-- Persistent server card: name, live state, address, and power. It sits
+               above every tab, so the answer to "is it up?" never requires a
+               navigation. -->
+          <header class="srv-card" id="srv-card">
+            <span class="srv-card-mark" id="srv-mark" aria-hidden="true"></span>
+            <div class="srv-card-body">
+              <div class="srv-card-title">
+                <h2 id="srv-name">Server</h2>
+                <span class="srv-card-state" id="srv-state">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span id="srv-state-label">offline</span>
+                </span>
+              </div>
+              <div class="srv-card-meta" id="srv-meta"></div>
             </div>
-            <p class="error" id="srv-error" role="alert" hidden></p>
+            <div class="srv-card-power" id="srv-power" role="group" aria-label="Power">
+              <button type="button" data-power="start" class="power-start">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M5 3.4v9.2l7.2-4.6z" />
+                </svg>
+                Start
+              </button>
+              <button type="button" data-power="restart" class="secondary power-restart">
+                <svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M13 8a5 5 0 11-1.6-3.7" />
+                  <path d="M13.4 2v3.2h-3.2" />
+                </svg>
+                Restart
+              </button>
+              <button type="button" data-power="stop" class="secondary power-stop">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <rect x="4" y="4" width="8" height="8" rx="1.2" />
+                </svg>
+                Stop
+              </button>
+              <button type="button" data-power="kill" class="danger">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M5.2 2h5.6v1.6h-5.6zM4 5.2h8V9a4 4 0 01-8 0zM7.2 12.2h1.6V14H7.2z" />
+                </svg>
+                Kill
+              </button>
+            </div>
+            <p class="error srv-card-error" id="srv-error" role="alert" hidden></p>
           </header>
 
           <div class="server-layout">
             <div class="server-content">
-              <div id="tab-console">
+              <div id="tab-overview">
+                <div class="panel-lede">
+                  <h3 class="panel-lede-title">Overview</h3>
+                  <p class="panel-lede-sub">Status, address, and what happened recently.</p>
+                </div>
+                <div class="overview-grid" id="overview-grid"></div>
+                <ul class="activity-feed" id="overview-activity"></ul>
+                <div class="overview-join">
+                  <p class="overview-join-label">Join address</p>
+                  <p class="overview-address" id="overview-address">—</p>
+                  <p class="note" id="overview-hint"></p>
+                </div>
+                <p class="error" id="overview-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-console" hidden>
                 <pre id="console-log" class="console" aria-live="off"></pre>
                 <form id="form-console" class="inline-form">
                   <input
@@ -615,44 +884,151 @@
               </div>
 
               <div id="tab-addons" hidden>
-                <div class="page-header">
-                  <div>
-                    <p class="eyebrow" id="addon-kind-eyebrow">Plugins</p>
-                    <p class="note">
-                      Search Modrinth for plugins compatible with this server. Results are filtered
-                      to this server's software and exact Minecraft version, sorted by most popular.
-                    </p>
+                <h3 class="section-title" id="addon-installed-title">Installed</h3>
+                <p class="panel-lede-sub">
+                  Plugins in your /plugins folder. Changes apply after a restart.
+                </p>
+                <ul id="addon-list" class="addon-installed-list"></ul>
+                <p class="error" id="addons-error" role="alert" hidden></p>
+
+                <div
+                  class="pagination-bar addon-installed-pagination"
+                  id="addons-installed-pagination"
+                  hidden
+                >
+                  <button type="button" id="btn-installed-prev" class="secondary" disabled>
+                    ‹ Previous
+                  </button>
+                  <span id="installed-page-indicator" class="page-indicator">1</span>
+                  <button type="button" id="btn-installed-next" class="secondary" disabled>
+                    Next ›
+                  </button>
+                </div>
+
+                <h3 class="section-title" id="addon-browse-title">Browse</h3>
+                <p class="panel-lede-sub">Find plugins and install them on your server.</p>
+
+                <p class="success-banner" id="addons-alert-success" role="status" hidden></p>
+                <p class="error" id="addons-alert-error" role="alert" hidden></p>
+
+                <!-- Search is the primary action here, directly under the
+                     section it searches, alongside the source and filters. -->
+                <form id="form-addon-search" class="addon-browse-bar">
+                  <div class="addon-source-chips" role="group" aria-label="Plugin source">
+                    <span class="addon-source-chip active">
+                      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                        <circle cx="8" cy="8" r="7" />
+                      </svg>
+                      Modrinth
+                    </span>
                   </div>
-                  <form id="form-addon-search" class="inline-form">
+                  <label class="addon-search-field">
+                    <svg
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      aria-hidden="true"
+                    >
+                      <circle cx="7" cy="7" r="4.4" />
+                      <path d="M10.4 10.4L14 14" stroke-linecap="round" />
+                    </svg>
                     <input
                       name="q"
                       id="addon-search-input"
-                      placeholder="Search plugins, e.g. Essentials, LuckPerms"
+                      placeholder="Search Modrinth"
                       maxlength="64"
                       autocomplete="off"
                     />
-                    <button type="submit">Search</button>
-                  </form>
-                </div>
-                <p class="success-banner" id="addons-alert-success" role="status" hidden></p>
-                <p class="error" id="addons-alert-error" role="alert" hidden></p>
+                  </label>
+                  <span class="addon-browse-filter" id="addon-loader-label">Paper</span>
+                  <span class="addon-browse-filter" id="addon-version-label">1.21.1</span>
+                  <button type="submit" id="btn-addon-search">Search</button>
+                </form>
+
                 <p class="note" id="addon-search-note" hidden></p>
 
                 <div id="addon-cards-container" class="addon-cards-grid"></div>
 
                 <div id="addons-pagination" class="pagination-bar" hidden>
                   <button type="button" id="btn-addons-prev" class="secondary" disabled>
-                    ← Previous
+                    ‹ Previous
                   </button>
                   <span id="addons-page-indicator" class="page-indicator">Page 1 of 1</span>
                   <button type="button" id="btn-addons-next" class="secondary" disabled>
-                    Next →
+                    Next ›
                   </button>
                 </div>
+              </div>
 
-                <h3 class="section-title">Installed Plugins</h3>
-                <ul id="addon-list" class="user-list"></ul>
-                <p class="error" id="addons-error" role="alert" hidden></p>
+              <div id="tab-properties" hidden>
+                <div class="page-header">
+                  <div>
+                    <p class="eyebrow">Properties</p>
+                    <p class="note">
+                      Every setting in server.properties, grouped the way you think about them. Only
+                      the file's own keys are rewritten — anything else is left alone.
+                    </p>
+                  </div>
+                  <div class="btn-row">
+                    <button type="button" id="btn-properties-reload" class="secondary">
+                      Reload from file
+                    </button>
+                    <button type="button" id="btn-properties-save">Save changes</button>
+                  </div>
+                </div>
+                <p class="success-banner" id="properties-success" role="status" hidden></p>
+                <p class="error" id="properties-error" role="alert" hidden></p>
+                <div id="properties-groups"></div>
+              </div>
+
+              <div id="tab-activity" hidden>
+                <div class="page-header">
+                  <div>
+                    <p class="eyebrow">Activity</p>
+                    <p class="note">
+                      Everything you and your users have done on this server, newest first.
+                    </p>
+                  </div>
+                </div>
+                <ul class="activity-feed" id="activity-list"></ul>
+                <p class="empty-state" id="activity-empty" hidden>No activity recorded yet.</p>
+                <div class="pagination-bar" id="activity-pagination" hidden>
+                  <button type="button" id="btn-activity-more" class="secondary">Load older</button>
+                </div>
+                <p class="error" id="activity-error" role="alert" hidden></p>
+              </div>
+
+              <div id="tab-egg" hidden>
+                <div class="page-header">
+                  <div>
+                    <p class="eyebrow">Egg swapper</p>
+                    <p class="note">
+                      Replace the entire game environment — Minecraft Java to Bedrock, or to a
+                      generic Node.js or Python process. This is a bigger change than switching
+                      software: a full backup is made first, and variables that the new environment
+                      does not use are dropped.
+                    </p>
+                  </div>
+                </div>
+                <p class="success-banner" id="egg-alert-success" role="status" hidden></p>
+                <p class="error" id="egg-alert-error" role="alert" hidden></p>
+                <div id="current-egg-card" class="current-software-card">
+                  <div class="current-software-header">
+                    <span class="eyebrow">Current environment</span>
+                    <span id="current-egg-runtime-badge" class="chip">Checking status...</span>
+                  </div>
+                  <h3 id="current-egg-name">—</h3>
+                  <p id="current-egg-desc" class="note">—</p>
+                </div>
+                <div id="egg-cards-container" class="software-cards-grid"></div>
+                <div class="pagination-bar" id="egg-pagination" hidden>
+                  <button type="button" id="btn-egg-prev" class="secondary" disabled>
+                    ← Previous
+                  </button>
+                  <span id="egg-page-indicator" class="page-indicator">Page 1 of 1</span>
+                  <button type="button" id="btn-egg-next" class="secondary" disabled>Next →</button>
+                </div>
               </div>
 
               <dialog id="addon-version-dialog" class="version-dialog">
@@ -670,10 +1046,10 @@
               <div id="tab-software" hidden>
                 <div class="page-header">
                   <div>
-                    <p class="eyebrow">Server Software & Game Swapper</p>
+                    <p class="eyebrow">Server software</p>
                     <p class="note">
-                      Change server software (Paper, Purpur, Fabric, Vanilla) or swap the entire
-                      game engine (Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python).
+                      Swap between server implementations that run the same game. Worlds, plugins,
+                      and ports are kept; the new software is installed over the old one.
                     </p>
                   </div>
                 </div>
@@ -683,31 +1059,15 @@
 
                 <div id="current-software-card" class="current-software-card">
                   <div class="current-software-header">
-                    <span class="eyebrow">Current Environment</span>
+                    <span class="eyebrow">Running now</span>
                     <span id="current-software-runtime-badge" class="chip">Checking status...</span>
                   </div>
                   <h3 id="current-software-name">—</h3>
                   <p id="current-software-desc" class="note">—</p>
                   <p class="note software-offline-hint">
-                    <strong>Note:</strong> Changing software or swapping games requires the server
-                    to be offline. Make a backup before switching if you wish to preserve your
-                    current world and data.
+                    <strong>Note:</strong> Switching software requires the server to be offline. You
+                    can take a backup as part of the switch.
                   </p>
-                </div>
-
-                <div class="software-filters">
-                  <div class="filter-chips" id="software-category-filters">
-                    <button type="button" class="filter-chip active" data-category="">All</button>
-                    <button type="button" class="filter-chip" data-category="minecraft-java">
-                      Minecraft Java
-                    </button>
-                    <button type="button" class="filter-chip" data-category="minecraft-bedrock">
-                      Bedrock & PocketMine
-                    </button>
-                    <button type="button" class="filter-chip" data-category="generic-runtime">
-                      Generic / Custom
-                    </button>
-                  </div>
                 </div>
 
                 <div id="software-cards-container" class="software-cards-grid"></div>
@@ -885,16 +1245,6 @@
             </div>
 
             <aside class="server-rail" id="server-rail">
-              <div class="rail-block">
-                <h3>Power</h3>
-                <div id="srv-power" class="rail-power" role="group" aria-label="Power">
-                  <button type="button" data-power="start">Start</button>
-                  <button type="button" data-power="restart" class="secondary">Restart</button>
-                  <button type="button" data-power="stop" class="secondary">Stop</button>
-                  <button type="button" data-power="kill" class="danger">Kill</button>
-                </div>
-              </div>
-
               <div class="rail-block">
                 <h3>CPU</h3>
                 <p class="stat-value" id="stat-cpu-value">—</p>

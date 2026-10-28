@@ -42,9 +42,17 @@ const DEFAULT_CPU_WEIGHT = 0;
 
 const softwareQuery = z.object({
   q: z.string().max(64).default(""),
-  category: z.string().max(64).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(10),
+  /**
+   * "software" lists only blueprints in the server's own category (Paper ->
+   * Purpur, Minecraft Java stays Minecraft Java). "egg" lists every other
+   * category, because changing game engine is the destructive operation that
+   * deserves its own page. Omitted keeps the old behaviour of listing all.
+   */
+  scope: z.enum(["software", "egg", "all"]).default("all"),
+  /** Optional extra narrowing within the scope, e.g. only "minecraft-java". */
+  category: z.string().max(64).optional(),
 });
 
 const switchSoftwareSchema = z.object({
@@ -54,20 +62,6 @@ const switchSoftwareSchema = z.object({
   createBackup: z.boolean().optional(),
   eulaAccepted: z.boolean().optional(),
 });
-
-const POPULARITY_RANK: Record<string, number> = {
-  paper: 100,
-  purpur: 90,
-  fabric: 80,
-  forge: 70,
-  vanilla: 60,
-  "bedrock-bds": 50,
-  "pocketmine-mp": 45,
-  endstone: 40,
-  velocity: 35,
-  "generic-nodejs": 20,
-  "generic-python": 15,
-};
 
 /**
  * Blueprints with a plugin loader that can run the Minekube Connect plugin.
@@ -504,13 +498,16 @@ export function serversRouter(deps: ServersDeps): Router {
           category: r.category,
           description: desc,
           docsUrl: r.docs_url,
-          popularity: POPULARITY_RANK[r.slug] ?? 10,
         };
       });
 
       const queryLower = q.q.toLowerCase().trim();
       const filtered = allSoftware
         .filter((sw) => {
+          // Same category = drop-in replacement inside one game ecosystem;
+          // anything else is a full game swap and belongs on the Egg page.
+          if (q.scope === "software" && sw.category !== doc.category) return false;
+          if (q.scope === "egg" && sw.category === doc.category) return false;
           if (q.category && sw.category !== q.category) return false;
           if (!queryLower) return true;
           return (
@@ -519,13 +516,10 @@ export function serversRouter(deps: ServersDeps): Router {
             sw.description.toLowerCase().includes(queryLower)
           );
         })
-        .sort((a, b) => b.popularity - a.popularity);
+        .sort((a, b) => a.name.localeCompare(b.name));
 
       const offset = (q.page - 1) * q.limit;
-      const paged = filtered.slice(offset, offset + q.limit).map((item, idx) => ({
-        ...item,
-        popularityRank: offset + idx + 1,
-      }));
+      const paged = filtered.slice(offset, offset + q.limit);
 
       const totalPages = Math.ceil(filtered.length / q.limit) || 1;
 
@@ -551,7 +545,6 @@ export function serversRouter(deps: ServersDeps): Router {
     }
   });
 
-  // Change server software or swap ecosystem with optional full backup
   router.put("/servers/:id/software", guard("settings.reinstall"), (req, res, next) => {
     (async () => {
       assertNotSuspendedForMutation(req, res);

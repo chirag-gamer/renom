@@ -132,7 +132,7 @@ async function routeFromPath() {
     // Leaving here skipped the leaveServer() below, so a direct jump from one
     // server to another kept the old socket streaming into the new view.
     if (currentServer && currentServer.id !== serverMatch[1]) leaveServer();
-    await openServer(serverMatch[1], serverMatch[2] || "console", false);
+    await openServer(serverMatch[1], serverMatch[2] || "overview", false);
     return;
   }
   if (currentServer) leaveServer();
@@ -295,15 +295,23 @@ const serverPermissions = [
 ];
 
 const serverTabPermissions = {
+  // null = every collaborator who can see this server at all. Overview shows
+  // only facts the server read already returns, and it is the landing page, so
+  // gating it on control.console hid the whole server from a files- or
+  // backups-scoped collaborator.
+  overview: null,
   console: "control.console",
+  activity: "activity.read",
   files: "file.read",
+  properties: "file.read-content",
+  addons: "startup.read",
   backups: "backup.read",
   schedules: "schedule.read",
-  addons: "startup.read",
-  software: "startup.read",
-  startup: "startup.read",
   network: "allocation.read",
   users: "user.read",
+  startup: "startup.read",
+  software: "startup.read",
+  egg: "startup.read",
   settings: ["settings.rename", "settings.resources", "settings.reinstall", "settings.delete"],
 };
 
@@ -478,13 +486,25 @@ async function refreshServers() {
   const err = document.getElementById("server-list-error");
   empty.hidden = true;
   setServerListStatus("loading", "Loading servers");
-  const { status, data } = await api("/servers?limit=100", { token: store.token });
-  list.innerHTML = "";
-  if (status !== 200) {
-    setServerListStatus("error", "Could not load servers");
-    fail(err, describeProblem(status, data));
-    return;
+  // Follow nextCursor instead of trusting a single page: the listing caps at
+  // 100 rows, and the owned-only switch claims to reveal every accessible
+  // server, so a one-shot fetch would silently hide the tail of a big account.
+  const servers = [];
+  let cursor = null;
+  for (;;) {
+    const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
+    const { status, data } = await api(`/servers${qs}`, { token: store.token });
+    if (status !== 200) {
+      setServerListStatus("error", "Could not load servers");
+      fail(err, describeProblem(status, data));
+      return;
+    }
+    servers.push(...data.items);
+    cursor = data.nextCursor;
+    if (!cursor) break;
   }
+  const data = { items: servers };
+  list.innerHTML = "";
   err.hidden = true;
   if (data.items.length === 0) {
     setServerListStatus("empty", "No servers shown");
@@ -504,7 +524,7 @@ async function refreshServers() {
     open.type = "button";
     open.className = "server-card-open";
     open.setAttribute("aria-label", `Open ${server.name}`);
-    open.addEventListener("click", () => void navigate(`/servers/${server.id}/console`));
+    open.addEventListener("click", () => void navigate(`/servers/${server.id}/overview`));
 
     const heading = document.createElement("div");
     heading.className = "server-card-heading";
@@ -565,8 +585,12 @@ async function refreshServers() {
     action.textContent = "Open server →";
     open.append(details, action);
     item.append(open);
+    // Ownership decides the default view: the dashboard opens on servers you
+    // own, and the switch reveals the rest without another request.
+    item.dataset.owned = server.ownerId && me?.id === server.ownerId ? "1" : "0";
     list.append(item);
   }
+  applyOwnedOnlyFilter();
 }
 
 async function refreshAdminServers() {
@@ -939,7 +963,7 @@ async function refreshUserDetail(userId) {
     open.type = "button";
     open.className = "linklike";
     open.textContent = server.name;
-    open.addEventListener("click", () => navigate(`/servers/${server.id}/console`));
+    open.addEventListener("click", () => navigate(`/servers/${server.id}/overview`));
     const meta = document.createElement("span");
     meta.className = "role";
     meta.textContent = `${server.blueprintSlug} · ${server.status}`;
@@ -1155,7 +1179,7 @@ function renderServerNav() {
   }
 }
 
-async function openServer(id, tab = "console", updateUrl = true) {
+async function openServer(id, tab = "overview", updateUrl = true) {
   // Claim the generation before awaiting: the newest navigation owns the view,
   // not whichever detail request happens to answer first.
   const generation = ++serverGeneration;
@@ -1188,7 +1212,9 @@ async function openServer(id, tab = "console", updateUrl = true) {
   setTab(tab, false);
   show("server");
   const tasks = [];
+  renderOverview();
   if (canServer("control.console")) tasks.push(refreshConsoleHistory(generation));
+  if (canServer("activity.read")) tasks.push(refreshActivity(true, generation));
   if (canServer("file.read")) tasks.push(refreshFiles(generation));
   if (canServer("backup.read")) tasks.push(refreshBackups(generation));
   if (canServer("schedule.read")) tasks.push(refreshSchedules(generation));
@@ -1245,6 +1271,9 @@ function leaveServer() {
 
 function canServerAny(required) {
   if (!currentServer) return false;
+  // null/undefined means "no permission needed beyond access to this server":
+  // currentServer only exists for servers the principal may reach at all.
+  if (required === null || required === undefined) return true;
   const requiredList = Array.isArray(required) ? required : [required];
   if (Array.isArray(currentServer.permissions)) {
     const permissions = currentServer.permissions;
@@ -1266,7 +1295,11 @@ function isPanelAdmin() {
 
 function applyServerPermissions() {
   for (const link of document.querySelectorAll("#server-navigation [data-server-tab]")) {
-    link.hidden = !canServerAny(serverTabPermissions[link.dataset.serverTab]);
+    // Two gates: permission (subuser scope) and blueprint (server.properties
+    // exists only for Minecraft Java). Without the second, a Bedrock server
+    // shows a Properties link that silently bounces on click.
+    const tab = link.dataset.serverTab;
+    link.hidden = !canServerAny(serverTabPermissions[tab]) || !tabAvailableForBlueprint(tab);
   }
   document.querySelectorAll("#srv-power [data-power]").forEach((button) => {
     button.hidden = !canServer(serverPowerPermissions[button.dataset.power]);
@@ -1283,6 +1316,10 @@ function applyServerPermissions() {
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
   document.getElementById("btn-file-mkdir").hidden = !canServer("file.create");
   document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
+  // The tab opens with file.read-content, but writing the file needs
+  // file.update; without this a read-only collaborator gets a Save button whose
+  // only outcome is a 403.
+  document.getElementById("btn-properties-save").hidden = !canServer("file.update");
   document.getElementById("btn-backup").hidden = !canServer("backup.create");
   document.getElementById("form-schedule").hidden = !canServer("schedule.create");
   document.getElementById("form-variables").hidden = !canServer("startup.update");
@@ -1319,17 +1356,66 @@ let tunnelAddress = "";
 function renderServerHeader() {
   const s = currentServer;
   document.getElementById("srv-name").textContent = s.name;
+  const mark = document.getElementById("srv-mark");
+  if (mark) mark.textContent = s.name.slice(0, 1).toUpperCase();
   // 0.0.0.0 is the bind wildcard, not an address anyone can dial; the API
   // resolves the host's real outbound IP for players to use, and an active
   // tunnel supersedes both with the public Minekube address.
   const join =
     tunnelAddress ||
     (s.primaryAllocation ? `${s.hostIp}:${s.primaryAllocation.port}` : "no address yet");
-  const runtime = s.runtimeState ? ` · ${readableStatus(s)}` : "";
-  document.getElementById("srv-meta").textContent =
-    `${s.blueprintSlug} · ${s.status}${runtime} · ${join}`;
+  const meta = document.getElementById("srv-meta");
+  if (meta) {
+    meta.replaceChildren();
+    const pair = (label, value) => {
+      const chip = document.createElement("span");
+      chip.className = "srv-card-meta-pair";
+      const name = document.createElement("span");
+      name.className = "srv-card-meta-label";
+      name.textContent = label;
+      chip.append(name, document.createTextNode(value));
+      meta.append(chip);
+    };
+    pair("Software", softwareLabel(s));
+    if (s.primaryAllocation) pair("Port", String(s.primaryAllocation.port));
+    // The dialable address as one copyable chip: a player needs the host, not
+    // the pieces it is assembled from.
+    pair("Address", join);
+  }
+  renderStateChip(s);
   applyPowerState();
   applyConsoleNote();
+}
+
+/** Blueprint slug as a human label: 'bedrock-bds' reads badly next to a name. */
+function softwareLabel(server) {
+  const labels = {
+    vanilla: "Vanilla",
+    paper: "Paper",
+    purpur: "Purpur",
+    fabric: "Fabric",
+    forge: "Forge",
+    velocity: "Velocity",
+    "bedrock-bds": "Bedrock BDS",
+    "pocketmine-mp": "PocketMine-MP",
+    endstone: "Endstone",
+    "generic-nodejs": "Node.js",
+    "generic-python": "Python",
+  };
+  return labels[server.blueprintSlug] ?? server.blueprintSlug;
+}
+
+// The chip answers two questions at once: which software is installed, and
+// whether it is up. A suspended server says so instead of pretending to be
+// offline — those mean different things to an owner.
+function renderStateChip(server) {
+  const chip = document.getElementById("srv-state");
+  const label = document.getElementById("srv-state-label");
+  if (!chip || !label) return;
+  const state =
+    server.status === "suspended" ? "suspended" : server.runtimeState || server.status || "offline";
+  label.textContent = `${softwareLabel(server)} · ${state.replaceAll("_", " ")}`;
+  chip.className = "srv-card-state srv-card-state--" + state.replaceAll("_", "-");
 }
 
 // The note is state, not a one-time string: it must stop promising live output
@@ -1413,22 +1499,39 @@ document.querySelectorAll("#srv-power button").forEach((btn) => {
   });
 });
 
+// Tabs gated by the blueprint rather than a permission: server.properties
+// only exists for Minecraft Java, so offering it for Bedrock or a generic
+// runtime would be a dead end.
+function tabAvailableForBlueprint(tab) {
+  if (!currentServer) return true;
+  if (tab === "properties") return currentServer.blueprintCategory === "minecraft-java";
+  return true;
+}
+
 function setTab(name, updateUrl = true) {
   const requestedName = name;
   const tabNames = [
+    "overview",
     "console",
+    "activity",
     "files",
+    "properties",
+    "addons",
     "backups",
     "schedules",
-    "addons",
-    "software",
-    "startup",
     "network",
     "users",
+    "startup",
+    "software",
+    "egg",
     "settings",
   ];
   const available = availableServerTabs();
-  if (!tabNames.includes(name) || !available.includes(name)) name = available[0] || "console";
+  if (!tabNames.includes(name) || !available.includes(name) || !tabAvailableForBlueprint(name)) {
+    // The fallback must satisfy the same two gates as the request: a
+    // permission-only pick can land on Properties for a Bedrock server.
+    name = available.find((tab) => tabAvailableForBlueprint(tab)) || "console";
+  }
   if (currentServer && (updateUrl || name !== requestedName)) {
     const method = updateUrl ? "pushState" : "replaceState";
     history[method]({}, "", `/servers/${currentServer.id}/${name}`);
@@ -1438,14 +1541,33 @@ function setTab(name, updateUrl = true) {
     .querySelectorAll("#server-navigation [data-server-tab]")
     .forEach((link) => link.classList.toggle("active", link === activeLink));
   for (const t of tabNames) {
-    document.getElementById(`tab-${t}`).hidden = t !== name;
+    const panel = document.getElementById(`tab-${t}`);
+    if (!panel) continue;
+    const showing = t === name;
+    panel.hidden = !showing;
+    // Tabs swap by unhiding, which no transition can animate, so the entering
+    // panel animates itself. The class must leave the node and be re-added
+    // after a forced reflow, or the second visit to a tab won't animate.
+    panel.classList.remove("panel-enter");
+    if (showing) {
+      void panel.offsetWidth;
+      panel.classList.add("panel-enter");
+    }
   }
-  // Power and the live graphs belong to the console: the console owns the
-  // full width of the middle column, and the rail is empty anywhere else.
-  document.getElementById("server-rail").hidden = name !== "console";
+  // The rail holds the live graphs, which belong to the console socket alone.
+  // They stay visible on Overview too, so the landing page answers "how is
+  // this server doing?" without opening the log.
+  document.getElementById("server-rail").hidden = name !== "console" && name !== "overview";
   if (updateUrl && name === "files" && currentServer && canServer("file.read")) {
     void refreshFiles(serverGeneration);
   }
+  if (name === "activity" && currentServer && canServer("activity.read")) {
+    void refreshActivity(true);
+  }
+  if (name === "properties" && currentServer && canServer("file.read-content")) {
+    void refreshProperties();
+  }
+  if (name === "egg" && currentServer) void refreshEgg();
 }
 
 /* ----- console ----- */
@@ -1919,6 +2041,18 @@ async function refreshFiles(generation) {
   }
   for (const item of data.items) {
     const li = document.createElement("li");
+    li.className = "file-row";
+    const relativePath = filesDir ? `${filesDir}/${item.name}` : item.name;
+    li.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      showFileContextMenu(event, item, relativePath);
+    });
+    // The keyboard equivalent: menu key, or Shift+F10 on layouts without one.
+    li.addEventListener("keydown", (event) => {
+      if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+      event.preventDefault();
+      showFileContextMenu(event, item, relativePath);
+    });
 
     const check = document.createElement("input");
     check.type = "checkbox";
@@ -2438,9 +2572,14 @@ let addonSearchPage = 1;
 const addonSearchLimit = 10;
 let addonSearchTotalPages = 1;
 
+let addonInstalledPage = 1;
+const addonInstalledPageSize = 6;
+
 async function refreshAddons(generation) {
   const list = document.getElementById("addon-list");
   const err = document.getElementById("addons-error");
+  const pager = document.getElementById("addons-installed-pagination");
+  const title = document.getElementById("addon-installed-title");
   if (err) err.hidden = true;
   if (!list) return;
   list.innerHTML = "";
@@ -2451,16 +2590,49 @@ async function refreshAddons(generation) {
     return;
   }
   const plugins = (data.addons || []).filter((a) => a.folder === "plugins");
+  if (title) title.textContent = `Installed (${plugins.length})`;
   if (plugins.length === 0) {
+    if (pager) pager.hidden = true;
     const li = document.createElement("li");
-    li.textContent = "No plugins installed yet. Search Modrinth above to install plugins.";
+    li.className = "empty-state";
+    li.textContent = "No plugins installed yet. Search Modrinth below to install plugins.";
     list.append(li);
     return;
   }
-  for (const a of plugins) {
+  const totalPages = Math.max(1, Math.ceil(plugins.length / addonInstalledPageSize));
+  addonInstalledPage = Math.min(addonInstalledPage, totalPages);
+  const start = (addonInstalledPage - 1) * addonInstalledPageSize;
+  const visible = plugins.slice(start, start + addonInstalledPageSize);
+  if (pager) {
+    pager.hidden = plugins.length <= addonInstalledPageSize;
+    const prev = document.getElementById("btn-installed-prev");
+    const next = document.getElementById("btn-installed-next");
+    const indicator = document.getElementById("installed-page-indicator");
+    if (prev) prev.disabled = addonInstalledPage <= 1;
+    if (next) next.disabled = addonInstalledPage >= totalPages;
+    if (indicator) indicator.textContent = `${addonInstalledPage} of ${totalPages}`;
+  }
+  for (const a of visible) {
     const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = `${a.name} (${Math.round(a.bytes / 1024)} KB)`;
+    li.className = "addon-installed";
+    // Jar files carry no icon of their own; the plugin's initial stands in,
+    // which is enough to tell rows apart while scanning a long list.
+    const icon = document.createElement("span");
+    icon.className = "addon-installed-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = a.name.slice(0, 1).toUpperCase();
+    const body = document.createElement("span");
+    body.className = "addon-installed-body";
+    const displayName = document.createElement("span");
+    displayName.className = "addon-installed-name";
+    displayName.textContent = a.name.replace(/\.jar$/i, "");
+    displayName.title = a.name;
+    const meta = document.createElement("span");
+    meta.className = "addon-installed-meta";
+    meta.textContent = `${a.name} · ${formatFileSize(a.bytes)}`;
+    body.append(displayName, meta);
+    const actions = document.createElement("span");
+    actions.className = "file-actions";
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "linklike danger-text";
@@ -2470,13 +2642,11 @@ async function refreshAddons(generation) {
       if (!window.confirm(`Remove plugin "${a.name}"?`)) return;
       const res = await api(
         `/servers/${currentServer.id}/addons/${a.folder}/${encodeURIComponent(a.name)}`,
-        {
-          method: "DELETE",
-          token: store.token,
-        },
+        { method: "DELETE", token: store.token },
       );
-      if (res.status !== 204) fail(err, describeProblem(res.status, res.data));
-      else {
+      if (res.status !== 204) {
+        fail(err, describeProblem(res.status, res.data));
+      } else {
         const success = document.getElementById("addons-alert-success");
         if (success) {
           success.textContent = `Removed plugin "${a.name}".`;
@@ -2485,10 +2655,23 @@ async function refreshAddons(generation) {
         refreshAddons();
       }
     });
-    li.append(name, remove);
+    actions.append(remove);
+    li.append(icon, body, actions);
     list.append(li);
   }
 }
+
+document.getElementById("btn-installed-prev")?.addEventListener("click", () => {
+  if (addonInstalledPage > 1) {
+    addonInstalledPage -= 1;
+    void refreshAddons();
+  }
+});
+
+document.getElementById("btn-installed-next")?.addEventListener("click", () => {
+  addonInstalledPage += 1;
+  void refreshAddons();
+});
 
 async function refreshAddonCapability(generation) {
   const note = document.getElementById("addon-search-note");
@@ -2506,8 +2689,6 @@ async function refreshAddonCapability(generation) {
     }
     return;
   }
-  const eyebrow = document.getElementById("addon-kind-eyebrow");
-  if (eyebrow) eyebrow.textContent = "Plugins";
   const navLabel = document.getElementById("server-nav-addons-label");
   if (navLabel) navLabel.textContent = "Plugins";
   if (note) note.hidden = true;
@@ -2548,6 +2729,13 @@ async function executeAddonSearch(query, page = 1) {
     return;
   }
   if (note) note.hidden = true;
+  // The filter chips restate the two constraints the server enforces: the
+  // loader results must match and the exact Minecraft version. Showing them
+  // here saves a user wondering why a 1.20-only plugin is missing.
+  const loaderLabel = document.getElementById("addon-loader-label");
+  if (loaderLabel && currentServer) loaderLabel.textContent = softwareLabel(currentServer);
+  const versionLabel = document.getElementById("addon-version-label");
+  if (versionLabel && data.mcVersion) versionLabel.textContent = data.mcVersion;
 
   if (!data.hits || data.hits.length === 0) {
     const p = document.createElement("p");
@@ -2575,18 +2763,25 @@ async function executeAddonSearch(query, page = 1) {
     const header = document.createElement("div");
     header.className = "addon-card-header";
 
+    // The icon box is always a div of fixed size; the <img> fills it. A plain
+    // <img> with the box's own class rendered at the image's intrinsic size,
+    // and a failed load left an empty gap where the project mark should be.
+    const iconBox = document.createElement("div");
+    iconBox.className = "addon-card-icon";
     if (hit.iconUrl) {
       const icon = document.createElement("img");
-      icon.className = "addon-card-icon";
       icon.src = hit.iconUrl;
       icon.alt = "";
-      header.append(icon);
+      icon.loading = "lazy";
+      // A blocked or dead icon must not leave a hole where the mark was.
+      icon.addEventListener("error", () => {
+        iconBox.textContent = "✦";
+      });
+      iconBox.append(icon);
     } else {
-      const placeholder = document.createElement("div");
-      placeholder.className = "addon-card-icon";
-      placeholder.textContent = "✦";
-      header.append(placeholder);
+      iconBox.textContent = "✦";
     }
+    header.append(iconBox);
 
     const titleGroup = document.createElement("div");
     titleGroup.className = "addon-card-title-group";
@@ -2607,12 +2802,16 @@ async function executeAddonSearch(query, page = 1) {
     footer.className = "addon-card-footer";
     const meta = document.createElement("span");
     meta.className = "addon-card-meta";
-    meta.textContent = `${Math.round(hit.downloads / 1000)}k downloads`;
+    meta.textContent = formatDownloads(hit.downloads);
 
     const installBtn = document.createElement("button");
     installBtn.type = "button";
-    installBtn.className = "secondary";
-    installBtn.textContent = "Install";
+    installBtn.className = "secondary addon-install-btn";
+    installBtn.innerHTML =
+      '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M8 2.4v7.2M5 6.8L8 9.8l3-3M3 12.6h10"/></svg>';
+    installBtn.append(document.createTextNode("Install"));
     installBtn.hidden = !canServer("startup.update");
 
     installBtn.addEventListener("click", () => void handleInstallAddon(hit, installBtn));
@@ -2621,6 +2820,19 @@ async function executeAddonSearch(query, page = 1) {
     card.append(header, desc, footer);
     container.append(card);
   }
+}
+
+/** Modrinth counts are large; '103.6M' reads faster than '103600000'. */
+function formatDownloads(count) {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
+}
+
+/** Jar sizes are quoted in MiB — the unit a plugin folder is described in. */
+function formatFileSize(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 async function handleInstallAddon(hit, installBtn) {
@@ -2789,7 +3001,6 @@ document.getElementById("form-addon-search").addEventListener("submit", (e) => {
 let softwarePage = 1;
 const softwareLimit = 10;
 let softwareTotalPages = 1;
-let softwareCategory = "";
 let pendingSwapSoftware = null;
 
 async function refreshSoftware(generation) {
@@ -2808,12 +3019,15 @@ async function refreshSoftware(generation) {
   if (!container) return;
   container.innerHTML = "";
 
-  const qs = `?page=${softwarePage}&limit=${softwareLimit}&category=${encodeURIComponent(softwareCategory)}`;
-  const { status, data } = await api(`/servers/${currentServer.id}/software${qs}`, {
+  const serverId = currentServer.id;
+  const qs = `?scope=software&page=${softwarePage}&limit=${softwareLimit}`;
+  const { status, data } = await api(`/servers/${serverId}/software${qs}`, {
     token: store.token,
   });
 
-  if (isStaleLoad(generation)) return;
+  // Same reasoning as refreshEgg: callers without a generation would otherwise
+  // render the previous server's software list into this one's tab.
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
   if (status !== 200) {
     if (err) fail(err, describeProblem(status, data));
     return;
@@ -2843,7 +3057,10 @@ async function refreshSoftware(generation) {
   }
 
   if (data.items.length === 0) {
-    container.innerHTML = '<p class="empty-state">No software found in this category.</p>';
+    const p = document.createElement("p");
+    p.className = "empty-state";
+    p.textContent = "No other software in this game's ecosystem is installed on this panel.";
+    container.append(p);
     return;
   }
 
@@ -2868,15 +3085,11 @@ async function refreshSoftware(generation) {
 
     const footer = document.createElement("div");
     footer.className = "software-card-footer";
-    const popularity = document.createElement("span");
-    popularity.className = "addon-card-meta";
-    popularity.textContent = `Popularity #${s.popularityRank ?? 1}`;
-
     if (isCurrent) {
       const activeChip = document.createElement("span");
       activeChip.className = "chip";
-      activeChip.textContent = "Active Software";
-      footer.append(popularity, activeChip);
+      activeChip.textContent = "Running now";
+      footer.append(activeChip);
     } else {
       const switchBtn = document.createElement("button");
       switchBtn.type = "button";
@@ -2884,7 +3097,7 @@ async function refreshSoftware(generation) {
       switchBtn.textContent = `Switch to ${s.name}`;
       switchBtn.hidden = !canServer("settings.reinstall");
       switchBtn.addEventListener("click", () => openSoftwareSwapDialog(s, data.current));
-      footer.append(popularity, switchBtn);
+      footer.append(switchBtn);
     }
 
     card.append(body, footer);
@@ -3020,18 +3233,6 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
   refreshVariables();
 });
 
-document.querySelectorAll("#software-category-filters .filter-chip").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document
-      .querySelectorAll("#software-category-filters .filter-chip")
-      .forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    softwareCategory = btn.dataset.category || "";
-    softwarePage = 1;
-    refreshSoftware();
-  });
-});
-
 document.getElementById("btn-software-prev")?.addEventListener("click", () => {
   if (softwarePage > 1) {
     softwarePage -= 1;
@@ -3141,6 +3342,9 @@ async function refreshNetwork(generation) {
   if (join !== tunnelAddress) {
     tunnelAddress = join;
     renderServerHeader();
+    // Overview reads tunnelAddress too; without this it keeps the fallback
+    // address from the first paint until a full reload.
+    renderOverview();
   }
 }
 
@@ -3291,6 +3495,669 @@ document.querySelectorAll("[data-admin-section]").forEach((button) => {
   });
 });
 
+/* ---------- overview ---------- */
+
+// The landing page. Everything here already arrived with GET /servers/:id or
+// with the activity preload, so opening a server costs no extra round trip.
+function renderOverview() {
+  const s = currentServer;
+  const grid = document.getElementById("overview-grid");
+  if (!s || !grid) return;
+  // A collaborator without activity.read gets no half-empty feed: the block is
+  // the first thing the eye lands on, so hiding it beats an error banner.
+  const recent = document.getElementById("overview-activity");
+  if (recent) recent.hidden = !canServer("activity.read");
+  grid.innerHTML = "";
+  const tiles = [
+    ["Software", softwareLabel(s)],
+    ["State", s.status === "suspended" ? "suspended" : s.runtimeState || s.status || "offline"],
+    ["Memory limit", `${s.memoryMb} MB`],
+    ["Disk quota", `${s.diskQuotaMb} MB`],
+    ["CPU", s.cpuWeight > 0 ? `${s.cpuWeight}% of a core` : "Unlimited"],
+    ["Owner", s.ownerUsername || "—"],
+  ];
+  for (const [label, value] of tiles) {
+    const tile = document.createElement("dl");
+    tile.className = "overview-tile";
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const definition = document.createElement("dd");
+    definition.textContent = String(value);
+    tile.append(term, definition);
+    grid.append(tile);
+  }
+  const join =
+    tunnelAddress ||
+    (s.primaryAllocation ? `${s.hostIp}:${s.primaryAllocation.port}` : "No address assigned yet");
+  const address = document.getElementById("overview-address");
+  if (address) address.textContent = join;
+  const hint = document.getElementById("overview-hint");
+  if (hint) {
+    if (tunnelAddress) {
+      hint.textContent = "Public tunnel address — works for anyone, no port forwarding.";
+    } else if (s.primaryAllocation) {
+      hint.textContent =
+        "Players connect with this address on your network. Enable a tunnel on the Network tab to reach the internet.";
+    } else {
+      hint.textContent = "No port assigned yet. Assign one on the Network tab.";
+    }
+  }
+}
+
+/* ---------- activity ---------- */
+
+let activityCursor = null;
+/** Server id whose activity request is in flight (see refreshActivity). */
+let activityLoadingServerId = null;
+
+/** Turn `file.write` + target into a sentence a person can scan. */
+function describeActivityEvent(item) {
+  const target = item.target || {};
+  const path = typeof target.path === "string" ? target.path : "";
+  const paths = Array.isArray(target.paths) ? target.paths : [];
+  const phrases = {
+    "file.read": path ? `Viewed the contents of ${path}` : "Viewed a file",
+    "file.write": path ? `Edited ${path}` : "Edited a file",
+    "file.create": path ? `Created ${path}` : "Created a file or folder",
+    "file.rename":
+      typeof target.from === "string" ? `Renamed ${target.from} to ${target.to}` : "Renamed a file",
+    "file.download": path ? `Downloaded ${path}` : "Downloaded a file",
+    "file.delete": paths.length
+      ? `Deleted ${paths.length} item${paths.length === 1 ? "" : "s"}`
+      : path
+        ? `Deleted ${path}`
+        : "Deleted a file",
+    "file.compress":
+      typeof target.archive === "string"
+        ? `Created archive ${target.archive}`
+        : "Created an archive",
+    "file.decompress": path ? `Extracted ${path}` : "Extracted an archive",
+    "server.properties.update": "Changed server.properties",
+    "server.power.start": "Started the server",
+    "server.power.stop": "Stopped the server",
+    "server.power.restart": "Restarted the server",
+    "server.power.kill": "Force-stopped the server",
+    "server.create": "Created this server",
+    "server.delete": "Deleted this server",
+    "server.update": "Updated server settings",
+    "server.variables.update": "Changed startup variables",
+    "server.software.swap":
+      typeof target.to === "string"
+        ? `Switched software from ${target.from} to ${target.to}`
+        : "Switched server software",
+    "server.install.done": "Install finished",
+    "server.install.failed": "Install failed",
+    "server.install.start": "Install started",
+    "server.addons.install": "Installed a plugin",
+    "server.addons.remove": "Removed a plugin",
+    "server.tunnel.enable": "Enabled the public tunnel",
+    "server.tunnel.disable": "Disabled the public tunnel",
+    "backup.create": "Created a backup",
+    "backup.restore": "Restored a backup",
+    "backup.delete": "Deleted a backup",
+    "schedule.create": "Created a schedule",
+    "schedule.update": "Updated a schedule",
+    "schedule.delete": "Deleted a schedule",
+    "schedule.run.manual": "Ran a schedule",
+    "schedule.run": "A schedule ran",
+    "schedule.run.failed": "A schedule failed",
+    "server.subuser.add": "Added a collaborator",
+    "server.subuser.remove": "Removed a collaborator",
+  };
+  return phrases[item.event] ?? item.event;
+}
+
+function activityActor(item) {
+  // Audit rows written by the panel itself carry actorUserId null; render the
+  // capitalized name rather than the raw actor_ip sentinel "system".
+  return item.actorUsername || "System";
+}
+
+/** One <li> for the feed; shared by Activity and the Overview summary. */
+function buildActivityItem(item) {
+  const li = document.createElement("li");
+  li.className = "activity-item";
+  const avatar = document.createElement("span");
+  avatar.className = "activity-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.textContent = activityActor(item).slice(0, 1);
+  const body = document.createElement("div");
+  body.className = "activity-body";
+  const summary = document.createElement("p");
+  summary.className = "activity-summary";
+  const who = document.createElement("strong");
+  who.textContent = activityActor(item);
+  const what = document.createElement("span");
+  what.textContent = ` ${describeActivityEvent(item)}`;
+  const event = document.createElement("span");
+  event.className = "activity-event";
+  event.textContent = item.event;
+  summary.append(who, what, event);
+  const meta = document.createElement("p");
+  meta.className = "activity-meta";
+  meta.textContent = new Date(item.ts).toLocaleString();
+  body.append(summary, meta);
+  li.append(avatar, body);
+  return li;
+}
+
+function renderActivityItems(items, append) {
+  const list = document.getElementById("activity-list");
+  if (!list) return;
+  if (!append) list.innerHTML = "";
+  for (const item of items) list.append(buildActivityItem(item));
+}
+
+function renderOverviewActivity(items) {
+  const list = document.getElementById("overview-activity");
+  if (!list) return;
+  list.innerHTML = "";
+  if (items.length === 0) {
+    const li = document.createElement("li");
+    li.className = "activity-meta";
+    li.textContent = "Nothing recorded yet.";
+    list.append(li);
+    return;
+  }
+  for (const item of items) list.append(buildActivityItem(item));
+}
+
+async function refreshActivity(reset = true, generation) {
+  const list = document.getElementById("activity-list");
+  const err = document.getElementById("activity-error");
+  const empty = document.getElementById("activity-empty");
+  const pagination = document.getElementById("activity-pagination");
+  if (!list || !currentServer) return;
+  const serverId = currentServer.id;
+  // Keyed by server, not a plain boolean: with a boolean, switching servers
+  // mid-request made the new server's preload return early (the old request
+  // still held the latch), leaving its feed blank until something else fired.
+  if (activityLoadingServerId === serverId) return;
+  activityLoadingServerId = serverId;
+  if (reset) activityCursor = null;
+  if (err) err.hidden = true;
+  const cursor = reset ? null : activityCursor;
+  try {
+    const qs = cursor ? `?before=${encodeURIComponent(cursor)}` : "";
+    const { status, data } = await api(`/servers/${serverId}/activity${qs}`, {
+      token: store.token,
+    });
+    if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
+    if (status !== 200) {
+      if (err) fail(err, describeProblem(status, data));
+      return;
+    }
+    const items = data.items || [];
+    renderActivityItems(items, !reset);
+    activityCursor = data.nextCursor || null;
+    if (empty) empty.hidden = list.children.length > 0;
+    if (pagination) pagination.hidden = !activityCursor;
+    // The overview shows the same feed, capped: a summary, not a reader. Only
+    // refreshed from the first page, so "load older" cannot shrink it.
+    if (reset) renderOverviewActivity(items.slice(0, 5));
+  } finally {
+    if (activityLoadingServerId === serverId) activityLoadingServerId = null;
+  }
+}
+
+document.getElementById("btn-activity-more")?.addEventListener("click", () => {
+  void refreshActivity(false);
+});
+
+/* ---------- server.properties manager ---------- */
+
+let propertyInputs = new Map();
+
+function renderPropertyField(prop) {
+  const field = document.createElement("div");
+  field.className = "property-field";
+  const label = document.createElement("label");
+  label.textContent = prop.label;
+  const id = `prop-${prop.key}`;
+  let input;
+  if (prop.kind === "boolean") {
+    // A checkbox row matches the switch language used elsewhere in the panel.
+    field.classList.add("property-toggle");
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = id;
+    input.checked = prop.value === "true";
+    label.setAttribute("for", id);
+    field.append(label, input);
+  } else if (prop.kind === "enum") {
+    input = document.createElement("select");
+    input.id = id;
+    for (const option of prop.options || []) {
+      const opt = document.createElement("option");
+      opt.value = option;
+      opt.textContent = option;
+      if (option === prop.value) opt.selected = true;
+      input.append(opt);
+    }
+    label.append(input);
+    field.append(label);
+  } else {
+    input = document.createElement("input");
+    input.type = prop.kind === "number" ? "number" : "text";
+    input.id = id;
+    input.value = prop.value;
+    if (prop.readonly === true) {
+      // The panel owns this value (allocation/port assignment); editing it
+      // here would desync the port the engine, allocation table and tunnel
+      // all agree on. Redirect the owner to the Network tab instead.
+      input.readOnly = true;
+      field.classList.add("property-readonly");
+    }
+    if (prop.min !== null && prop.min !== undefined) input.min = String(prop.min);
+    if (prop.max !== null && prop.max !== undefined) input.max = String(prop.max);
+    label.append(input);
+    field.append(label);
+  }
+  if (prop.help) {
+    const help = document.createElement("p");
+    help.className = "property-help";
+    help.textContent = prop.help;
+    field.append(help);
+  }
+  propertyInputs.set(prop.key, {
+    input,
+    kind: prop.kind,
+    /** Value as loaded; Save diffs against this so untouched keys are not sent. */
+    initial: prop.value,
+    readonly: prop.readonly === true,
+  });
+  return field;
+}
+
+async function refreshProperties() {
+  const wrap = document.getElementById("properties-groups");
+  const err = document.getElementById("properties-error");
+  const success = document.getElementById("properties-success");
+  if (!wrap || !currentServer) return;
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  wrap.innerHTML = "";
+  propertyInputs = new Map();
+  const serverId = currentServer.id;
+  const { status, data } = await api(`/servers/${serverId}/properties`, { token: store.token });
+  if (currentServer?.id !== serverId) return;
+  if (status !== 200) {
+    if (err) fail(err, describeProblem(status, data));
+    return;
+  }
+  const groups = new Map();
+  for (const prop of data.properties || []) {
+    if (!groups.has(prop.group)) groups.set(prop.group, []);
+    groups.get(prop.group).push(prop);
+  }
+  if (groups.size === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-state";
+    p.textContent = "No server.properties found. Start the server once to generate it.";
+    wrap.append(p);
+    return;
+  }
+  for (const [group, props] of groups) {
+    const section = document.createElement("section");
+    section.className = "properties-group";
+    const title = document.createElement("h3");
+    title.className = "properties-group-title";
+    title.textContent = group;
+    const grid = document.createElement("div");
+    grid.className = "properties-grid";
+    for (const prop of props) grid.append(renderPropertyField(prop));
+    section.append(title, grid);
+    wrap.append(section);
+  }
+}
+
+document.getElementById("btn-properties-reload")?.addEventListener("click", () => {
+  void refreshProperties();
+});
+
+document.getElementById("btn-properties-save")?.addEventListener("click", async () => {
+  const err = document.getElementById("properties-error");
+  const success = document.getElementById("properties-success");
+  if (!currentServer) return;
+  // Capture the server: the save is async, and rebaselining after the user
+  // navigated would overwrite the NEW server's snapshot, making a real edit
+  // there look like "No changes to save".
+  const savedServerId = currentServer.id;
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  const values = {};
+  for (const [key, { input, kind, initial }] of propertyInputs) {
+    const current = kind === "boolean" ? (input.checked ? "true" : "false") : input.value;
+    // Only changed keys travel: the audit row then names what was actually
+    // touched, and a pre-existing out-of-range value the owner never edited
+    // cannot block saving the keys they did change.
+    if (current !== initial) values[key] = current;
+  }
+  if (Object.keys(values).length === 0) {
+    if (success) {
+      success.textContent = "No changes to save.";
+      success.hidden = false;
+    }
+    return;
+  }
+  const { status, data } = await api(`/servers/${savedServerId}/properties`, {
+    method: "PUT",
+    token: store.token,
+    body: { values },
+  });
+  if (status !== 204) {
+    if (err) fail(err, describeProblem(status, data));
+    showToast(describeProblem(status, data), "error");
+    return;
+  }
+  if (success) {
+    success.textContent = "Saved. Changes apply the next time the server starts.";
+    success.hidden = false;
+  }
+  // Re-baseline the snapshot: without this, a second click re-sends the same
+  // keys (which the server rewrites and re-audits), and editing a field back to
+  // its pre-save value is misreported as "No changes to save".
+  if (currentServer?.id === savedServerId) {
+    for (const [key, value] of Object.entries(values)) {
+      const field = propertyInputs.get(key);
+      if (field) field.initial = value;
+    }
+  }
+  showToast("server.properties saved.", "success");
+});
+
+/* ---------- egg swapper ---------- */
+
+let eggPage = 1;
+const eggLimit = 10;
+let eggTotalPages = 1;
+
+async function refreshEgg(generation) {
+  if (!currentServer) return;
+  const serverId = currentServer.id;
+  const container = document.getElementById("egg-cards-container");
+  const curName = document.getElementById("current-egg-name");
+  const curDesc = document.getElementById("current-egg-desc");
+  const curBadge = document.getElementById("current-egg-runtime-badge");
+  const err = document.getElementById("egg-alert-error");
+  const pagination = document.getElementById("egg-pagination");
+  if (err) err.hidden = true;
+  if (!container) return;
+  container.innerHTML = "";
+  const qs = `?scope=egg&page=${eggPage}&limit=${eggLimit}`;
+  const { status, data } = await api(`/servers/${serverId}/software${qs}`, {
+    token: store.token,
+  });
+  // generation alone is inert for callers that pass none (the tab switch and
+  // the swap handler do), so the id check is what stops another server's egg
+  // presets from rendering here.
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
+  if (status !== 200) {
+    if (err) fail(err, describeProblem(status, data));
+    return;
+  }
+  if (curName) curName.textContent = `${data.current.name} (${data.current.category})`;
+  if (curDesc) curDesc.textContent = data.current.description || "";
+  if (curBadge) {
+    const state = currentServer.runtimeState || "offline";
+    curBadge.textContent =
+      state === "offline" ? "Offline — safe to swap" : `${state} — stop the server to swap`;
+  }
+  eggTotalPages = data.totalPages || 1;
+  if (pagination) {
+    pagination.hidden = data.total <= eggLimit;
+    const prev = document.getElementById("btn-egg-prev");
+    const next = document.getElementById("btn-egg-next");
+    const indicator = document.getElementById("egg-page-indicator");
+    if (prev) prev.disabled = eggPage <= 1;
+    if (next) next.disabled = eggPage >= eggTotalPages;
+    if (indicator) indicator.textContent = `Page ${eggPage} of ${eggTotalPages}`;
+  }
+  const items = data.items || [];
+  if (items.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-state";
+    p.textContent = "This is the only environment installed on this panel.";
+    container.append(p);
+    return;
+  }
+  for (const env of items) {
+    const card = document.createElement("div");
+    card.className = "software-card";
+    const body = document.createElement("div");
+    body.className = "software-card-body";
+    const category = document.createElement("span");
+    category.className = "eyebrow";
+    category.textContent = env.category;
+    const title = document.createElement("h4");
+    title.textContent = env.name;
+    const desc = document.createElement("p");
+    desc.className = "software-card-desc";
+    desc.textContent = env.description || "";
+    body.append(category, title, desc);
+    const footer = document.createElement("div");
+    footer.className = "software-card-footer";
+    const swapBtn = document.createElement("button");
+    swapBtn.type = "button";
+    swapBtn.className = "secondary";
+    swapBtn.textContent = `Swap to ${env.name}`;
+    swapBtn.hidden = !canServer("settings.reinstall");
+    swapBtn.addEventListener("click", () => openSoftwareSwapDialog(env, data.current));
+    footer.append(swapBtn);
+    card.append(body, footer);
+    container.append(card);
+  }
+}
+
+document.getElementById("btn-egg-prev")?.addEventListener("click", () => {
+  if (eggPage > 1) {
+    eggPage -= 1;
+    void refreshEgg();
+  }
+});
+
+document.getElementById("btn-egg-next")?.addEventListener("click", () => {
+  if (eggPage < eggTotalPages) {
+    eggPage += 1;
+    void refreshEgg();
+  }
+});
+
+/* ---------- file manager: context menu ---------- */
+
+let openContextMenu = null;
+
+function closeContextMenu() {
+  if (!openContextMenu) return;
+  openContextMenu.remove();
+  openContextMenu = null;
+}
+
+/**
+ * One menu for every row, also reachable from the keyboard (`ContextMenu`
+ * key). Items are declared with the permission that gates them, so a
+ * collaborator with only file.read sees no entry instead of a disabled one
+ * hinting at what they cannot do.
+ */
+function showFileContextMenu(event, item, relative) {
+  closeContextMenu();
+  const actions = [];
+  if (!item.isDir && canServer("file.read-content")) {
+    actions.push({ label: "Download", handler: () => void downloadFile(relative) });
+  }
+  if (canServer("file.archive")) {
+    actions.push({ label: "Compress", handler: () => void compressSelection([item.name]) });
+    if (!item.isDir && /\.(tar\.gz|tgz|zip|tar)$/i.test(item.name)) {
+      actions.push({
+        label: "Dearchive",
+        handler: () => void decompressArchive(relative, item.name),
+      });
+    }
+  }
+  if (canServer("file.update")) {
+    actions.push({ label: "Rename", handler: () => void renameFileTo(relative, dirOf(relative)) });
+    actions.push({ label: "Move", handler: () => void moveFileTo(relative) });
+  }
+  if (canServer("file.delete")) {
+    actions.push({
+      label: "Delete",
+      danger: true,
+      handler: async () => {
+        if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
+        const res = await api(`/servers/${currentServer.id}/files/delete`, {
+          method: "POST",
+          token: store.token,
+          body: { path: relative },
+        });
+        if (res.status !== 204) {
+          fail(document.getElementById("files-error"), describeProblem(res.status, res.data));
+        } else {
+          refreshFiles(serverGeneration);
+        }
+      },
+    });
+  }
+  if (actions.length === 0) return;
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.setAttribute("role", "menu");
+  for (const action of actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.textContent = action.label;
+    if (action.danger) button.classList.add("danger-text");
+    button.addEventListener("click", () => {
+      closeContextMenu();
+      void action.handler();
+    });
+    menu.append(button);
+  }
+  // Attached to <body> and position:fixed, so no scrolling ancestor can clip
+  // it and clientX/clientY stay viewport-true; a flex-row child would inherit
+  // the row's coordinate space and drift when the list scrolls.
+  menu.style.position = "fixed";
+  document.body.append(menu);
+  const menuBounds = menu.getBoundingClientRect();
+  const x =
+    typeof event.clientX === "number"
+      ? event.clientX
+      : (event?.target?.getBoundingClientRect?.().left ?? 0);
+  const y =
+    typeof event.clientY === "number"
+      ? event.clientY
+      : (event?.target?.getBoundingClientRect?.().top ?? 0);
+  // Keep the whole menu inside the viewport near screen edges.
+  menu.style.left = `${Math.min(Math.max(0, x), window.innerWidth - menuBounds.width - 4)}px`;
+  menu.style.top = `${Math.min(Math.max(0, y), window.innerHeight - menuBounds.height - 4)}px`;
+  openContextMenu = menu;
+  const first = menu.querySelector("button");
+  if (first) first.focus();
+}
+
+document.addEventListener("click", (event) => {
+  if (openContextMenu && !openContextMenu.contains(event.target)) closeContextMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeContextMenu();
+});
+window.addEventListener("blur", closeContextMenu);
+
+/** Compress the named items in the current directory into one archive. */
+async function compressSelection(names) {
+  const err = document.getElementById("files-error");
+  const success = document.getElementById("files-success");
+  const suggested = names.length === 1 ? `${names[0]}.tar.gz` : "archive.tar.gz";
+  const name = window.prompt("Archive name (e.g. backup.tar.gz):", suggested);
+  if (!name) return;
+  const archiveBasename = basename(name);
+  if (!archiveBasename) return;
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  const paths = names.map((n) => (filesDir ? `${filesDir}/${n}` : n));
+  const res = await api(`/servers/${currentServer.id}/files/compress`, {
+    method: "POST",
+    token: store.token,
+    body: { root: filesDir, files: names, paths, archiveName: archiveBasename },
+  });
+  if (res.status !== 200) {
+    if (err) fail(err, describeProblem(res.status, res.data));
+    return;
+  }
+  if (success) {
+    success.textContent = `Archive "${archiveBasename}" created.`;
+    success.hidden = false;
+  }
+  refreshFiles(serverGeneration);
+}
+
+/** Extract one archive in place. */
+async function decompressArchive(relative, name) {
+  const err = document.getElementById("files-error");
+  const success = document.getElementById("files-success");
+  if (err) err.hidden = true;
+  if (success) success.hidden = true;
+  const res = await api(`/servers/${currentServer.id}/files/decompress`, {
+    method: "POST",
+    token: store.token,
+    body: { path: relative },
+  });
+  if (res.status !== 200 && res.status !== 204) {
+    if (err) fail(err, describeProblem(res.status, res.data));
+    return;
+  }
+  if (success) {
+    success.textContent = `Extracted "${name}".`;
+    success.hidden = false;
+  }
+  refreshFiles(serverGeneration);
+}
+
+/* ---------- home: owned-only filter ---------- */
+
+// The dashboard defaults to servers you own: a collaborator's list is mostly
+// other people's machines. The switch reveals everything you can access
+// without a second page, and the choice persists per browser.
+const OWNED_ONLY_KEY = "renom.servers.ownedOnly";
+let showOwnedOnly = true;
+
+function readOwnedOnlyPreference() {
+  const stored = window.localStorage.getItem(OWNED_ONLY_KEY);
+  showOwnedOnly = stored === null ? true : stored === "1";
+  const toggle = document.getElementById("owned-only-toggle");
+  if (toggle) toggle.checked = showOwnedOnly;
+}
+
+function applyOwnedOnlyFilter() {
+  const list = document.getElementById("server-list");
+  if (!list) return;
+  let visible = 0;
+  for (const card of list.children) {
+    const owned = card.dataset.owned !== "0";
+    card.hidden = showOwnedOnly && !owned;
+    if (!card.hidden) visible += 1;
+  }
+  const empty = document.getElementById("server-empty");
+  if (empty && list.children.length > 0) {
+    empty.hidden = visible > 0;
+    if (visible === 0) {
+      empty.textContent =
+        "You don't own any servers. Turn the switch off to see servers shared with you.";
+    }
+  }
+  if (list.children.length > 0) {
+    setServerListStatus("available", `${visible} server${visible === 1 ? "" : "s"} shown`);
+  }
+}
+
+document.getElementById("owned-only-toggle")?.addEventListener("change", (event) => {
+  showOwnedOnly = event.target.checked;
+  window.localStorage.setItem(OWNED_ONLY_KEY, showOwnedOnly ? "1" : "0");
+  applyOwnedOnlyFilter();
+});
+
 renderPermissionOptions();
 renderApiPermissionOptions();
+readOwnedOnlyPreference();
 boot();

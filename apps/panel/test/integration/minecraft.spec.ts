@@ -20,11 +20,18 @@ const JAR_SHA256 = createHash("sha256").update(JAR_BYTES).digest("hex");
 
 function stubFetch(
   routes: Record<string, { status?: number; json?: unknown; bytes?: Buffer }>,
+  /**
+   * Called for every URL the stub sees. The prefix match ignores the query
+   * string, so without this a dropped `loaders`/`game_versions` parameter
+   * would still hit the fixture and the test would pass.
+   */
+  onRequest?: (url: string) => void,
 ): typeof fetch {
   // Longest prefix first: "/versions" must not swallow "/versions/1.21.1/builds".
   const ordered = Object.entries(routes).sort((a, b) => b[0].length - a[0].length);
   return (async (url: unknown) => {
     const u = String(url);
+    onRequest?.(u);
     for (const [prefix, route] of ordered) {
       if (u.startsWith(prefix)) {
         if (route.bytes) {
@@ -165,9 +172,6 @@ describe("install executor", () => {
           },
         ],
       },
-      "https://api.modrinth.com/v2/project/lithium": {
-        json: { project_type: "mod" },
-      },
       "https://cdn.modrinth.com/lithium.jar": { bytes: addonBytes },
     });
     const srv = join(dir, "addons");
@@ -203,9 +207,8 @@ describe("install executor", () => {
           },
         ],
       },
-      "https://api.modrinth.com/v2/project/Vebnzrzj": {
-        json: { project_type: "plugin" },
-      },
+      // No `/project/Vebnzrzj` route: compatibility now comes from the
+      // loader-filtered version list, so the project lookup is not called.
       "https://cdn.modrinth.com/luckperms.jar": { bytes: addonBytes },
     });
     const srv = join(dir, "addons-case");
@@ -223,12 +226,16 @@ describe("install executor", () => {
     expect(readFileSync(join(srv, "plugins", "LuckPerms.jar"))).toEqual(addonBytes);
   });
 
-  it("refuses to install a mod on a plugin-only platform", async () => {
-    const fetchImpl = stubFetch({
-      "https://api.modrinth.com/v2/project/lithium": {
-        json: { project_type: "mod" },
-      },
-    });
+  it("refuses a project with no build for this server's loader", async () => {
+    // Compatibility is decided by the loader-filtered version list, not by
+    // Modrinth's `project_type`: that field reads "mod" for plugins too (it
+    // reports "mod" for EssentialsX, LuckPerms, WorldEdit), so an equality
+    // check against "plugin" rejected every real plugin.
+    const seen: string[] = [];
+    const fetchImpl = stubFetch(
+      { "https://api.modrinth.com/v2/project/lithium/version": { json: [] } },
+      (url) => seen.push(url),
+    );
     const srv = join(dir, "addons-mod-on-plugin");
     mkdirSync(srv, { recursive: true });
     await expect(
@@ -239,7 +246,64 @@ describe("install executor", () => {
         blueprintSlug: "paper",
         fetchImpl,
       }),
-    ).rejects.toThrow(/Project 'lithium' is a mod, not a plugin/);
+    ).rejects.toThrow(/Project 'lithium' has no 1\.21\.1 build for paper\/purpur\/spigot\/bukkit/);
+
+    // The stub matches on path only, so assert the filters actually travelled:
+    // without this, dropping `loaders`/`game_versions` from the request would
+    // still return the empty fixture and this test would keep passing.
+    const versionCall = seen.find((u) => u.includes("/lithium/version"));
+    expect(versionCall).toBeDefined();
+    const params = new URL(versionCall!).searchParams;
+    expect(params.get("loaders")).toContain("paper");
+    expect(params.get("game_versions")).toContain("1.21.1");
+  });
+
+  it("installs a plugin whose Modrinth project_type reads 'mod'", async () => {
+    // The regression this guards: EssentialsX is a plugin, Modrinth calls it a
+    // "mod", and the loader filter is the only honest compatibility signal.
+    const addonBytes = Buffer.from("fake-essentialsx-jar");
+    const addonSha512 = createHash("sha512").update(addonBytes).digest("hex");
+    const seen: string[] = [];
+    const fetchImpl = stubFetch(
+      {
+        "https://api.modrinth.com/v2/project/essentialsx/version": {
+          json: [
+            {
+              files: [
+                {
+                  url: "https://cdn.modrinth.com/essentialsx.jar",
+                  filename: "EssentialsX.jar",
+                  hashes: { sha512: addonSha512 },
+                  primary: true,
+                },
+              ],
+            },
+          ],
+        },
+        "https://cdn.modrinth.com/essentialsx.jar": { bytes: addonBytes },
+      },
+      (url) => seen.push(url),
+    );
+    const srv = join(dir, "addons-plugin-as-mod");
+    mkdirSync(srv, { recursive: true });
+    await runInstallOps(
+      { install: [{ op: "modrinth-install", projects: ["essentialsx"] }] } as never,
+      {
+        serverId: "x",
+        dir: srv,
+        vars: { mcVersion: "1.21.1" },
+        blueprintSlug: "paper",
+        fetchImpl,
+      },
+    );
+    expect(readFileSync(join(srv, "plugins", "EssentialsX.jar"))).toEqual(addonBytes);
+    // Loader + version filters are what make a plugin whose project_type says
+    // "mod" installable; assert they were actually sent.
+    const versionCall = seen.find((u) => u.includes("/essentialsx/version"));
+    expect(versionCall).toBeDefined();
+    const params = new URL(versionCall!).searchParams;
+    expect(params.get("loaders")).toContain("paper");
+    expect(params.get("game_versions")).toContain("1.21.1");
   });
 
   it("refuses versionId when installing multiple projects to prevent partial installs", async () => {

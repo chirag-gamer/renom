@@ -7,10 +7,19 @@ All notable changes to Renom are documented here. Format based on
 
 ### Added
 
+- Overview landing tab: opening a server now lands on a new Overview panel (status tiles, join address, recent-activity summary) instead of the Console; the dashboard's server cards and detail links navigate there directly.
+- Persistent server status card: every server page carries a header card with the server name, software, join address, live state chip (e.g. "Paper · running"), and the Start/Restart/Stop/Kill power controls, replacing the old side-rail power block.
+- Activity audit tab: new per-server feed (GET `/servers/:id/activity`, gated on the previously unused `activity.read` permission) listing who did what and when, newest first with cursor paging and resolved actor display names; panel-authored rows render as "System".
+- server.properties manager: new Properties tab (Minecraft Java servers only) rendering the file as grouped typed fields — booleans as switches, numbers with bounds, enums as selects — while unknown keys and comments round-trip untouched on save; `server-port` is panel-owned (read-only field, rejected by `PUT /servers/:id/properties`) and only changed keys are sent.
+- Egg Swapper tab: swapping to a different game ecosystem (Minecraft Java → Bedrock, Node.js, Python, …) moved to its own tab; `GET /servers/:id/software?scope=software|egg` splits same-ecosystem replacements from cross-ecosystem swaps.
+- File context menu: right-click (or the keyboard menu key) on any file row opens Download, Compress, Rename, Move, Dearchive and Delete, each gated by the same file permissions as the side panel.
+- Server visibility toggle: the server list defaults to "servers I own", with an iOS-style switch revealing everything the user can access; preference persists in localStorage.
+- Tab navigation polish: grouped side navigation with per-tab SVG icons and a smooth panel transition when switching tabs.
+- `blueprintCategory` added to the public server shape (`packages/contracts`), driving tab visibility per game ecosystem.
 - Toast notification system: Lightweight, non-intrusive alert toasts (`success`, `error`, `info`) positioned top-right for async user feedback across file saves, software swapping, and addon installations.
 - Automated software matrix CI/CD workflow: `.github/workflows/software-matrix.yml` running test matrices across all locally supported Minecraft software engines (Paper, Purpur, Vanilla, Bedrock BDS, PocketMine-MP, Endstone) and generic engines (Node.js, Python).
 - Dynamic Minecraft "latest" version resolution: Added `resolveMinecraftVersion` querying PaperMC version registry with fallback to Mojang version manifest to resolve "latest" when searching or installing plugins.
-- Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page, sorted by Most Popular). Restricted strictly to plugins (`projectType: "plugin"`).
+- Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page). Discovery is by loader + Minecraft version (see Fixed).
 - Version selection modal: prompt users to select a compatible version when multiple releases exist on Modrinth, with release-type badges and Minecraft version compatibility.
 - Dedicated Server Software tab: separated server software from the Plugins tab into its own dedicated view placed beneath Plugins.
 - Game Swapper: swap server software and entire game ecosystems (Minecraft Java, Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python) with an option to create a full backup of all current server files before swapping.
@@ -18,6 +27,10 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
+- Plugin/Mod misdetection: Modrinth's `project_type` now reads `mod` for real plugins (EssentialsX, LuckPerms, WorldEdit, VeinMiner), so the equality gate rejected every plugin install with "Project '…' is a mod, not a plugin". Compatibility is now decided by the loader-filtered `/version` list: a Paper plugin has paper/spigot builds, a Fabric-only mod does not.
+- Plugin icons: the CSP `img-src 'self' data:` blocked `https://cdn.modrinth.com`, blanking every browse-card icon; the CDN host is now allowed for images only, and a failed icon load falls back to a project mark instead of an empty gap.
+- Plugin search bar position: the search form moved directly under the Plugins header/intro instead of the bottom of the page.
+- Software tab scope: same-ecosystem blueprints only (Java server → Java options, Bedrock → Bedrock), popularity ranking removed in favour of name ordering.
 - Installer and updater auto-restart: In `install.sh` and `renom.sh` (`do_update`), automatically restart running panel instances under PM2 (`pm2 restart renom`) or interactive terminal sessions (`exec npm start --workspace @renom/panel`), terminating stale panel background processes to avoid port conflicts. Non-interactive runs outside systemd and PM2 still need a manual restart.
 - Minekube Connect 16-character endpoint limit: Enforced a strict 16-character maximum length limit on generated and validated tunnel endpoint names to comply with Minekube WatchService's hostname rules, preventing HTTP 400 "invalid endpoint name format" WebSocket errors and infinite reconnect loops. Added database migration `0005-repair-overlong-tunnel-endpoints` to repair existing overlong endpoints and runtime self-healing in `LocalProcessEngine`.
 - Bedrock BDS server boot: Fixed `spawn bedrock_server ENOENT` on Linux and Windows by resolving binaries to local absolute paths in the server directory, applying `0o755` permissions on POSIX hosts, and setting `LD_LIBRARY_PATH` so the dynamic linker finds required libraries (`libcrypto.so.1.1`).
@@ -28,7 +41,7 @@ All notable changes to Renom are documented here. Format based on
 - Software & Ecosystem swapping: Require explicit Minecraft EULA acceptance before swapping to EULA-governed software, update blueprint image references, prune incompatible startup variables on blueprint swap while preserving `tunnel.*` configurations for plugin-tunnel targets, and persist intentionally requested versions.
 - File manager & bulk actions: Granular permission gating for bulk actions (`file.read-content`, `file.archive`, `file.delete`), accept both `files` and `paths` schemas, idempotent multi-delete with confinement validation, send archive basename to handle nested directory archives properly, generate unique temporary archive filenames for bulk downloads, and handle 204 decompress responses.
 - Security audit: Updated Zod to 4.6.7 to fix high-severity vulnerability GHSA-mrhx-c7xc-m3w5, and updated body-parser to fix high-severity vulnerability GHSA-27r3-jxmh-p828.
-- Plugins & Addons: Restrict plugins search and capability strictly to plugin platforms (`projectType: "plugin"`), validate Modrinth metadata `project_type: "plugin"` in installer and version picker, pre-validate multi-project batches and reject single `versionId` across multiple projects to prevent partial installs, filter installed addons list to `folder === "plugins"`, add `totalPages` to Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely.
+- Plugins & Addons: Restrict plugin search and capability to plugin-capable platforms, pre-validate multi-project batches and reject a single `versionId` across multiple projects to prevent partial installs, filter the installed addons list to `folder === "plugins"`, add `totalPages` to the Modrinth search response, escape no-results UI messages against XSS, and handle version query failures safely. (Modrinth metadata is no longer matched on the `project_type` field — see Fixed above.)
 - Responsive layout: Fix addon and software grid tracks on viewports narrower than 312px.
 - Test coverage: Assert all decompressed files survive extraction and assert 404 on all bulk-deleted paths in `files-authz.spec.ts`.
 

@@ -30,12 +30,13 @@ describe("database layer", () => {
       "schedule-lock-expiry",
       "tunnel-endpoint-unique",
       "repair-overlong-tunnel-endpoints",
+      "audit-server-id-index",
     ]);
 
     db.close();
     const again = openAndMigrate(file);
     const rows2 = again.prepare("SELECT COUNT(*) AS n FROM _migrations").get() as { n: number };
-    expect(Number(rows2.n)).toBe(5);
+    expect(Number(rows2.n)).toBe(6);
     again.close();
   });
 

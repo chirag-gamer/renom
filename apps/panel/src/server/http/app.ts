@@ -37,10 +37,13 @@ export function createApp(deps: AppDeps): Express {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
+    // Project icons come from Modrinth's CDN and are plain <img> sources, so
+    // that one host is allowed for images only — scripts stay same-origin.
     res.setHeader(
       "Content-Security-Policy",
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; " +
+        "img-src 'self' data: https://cdn.modrinth.com; " +
+        "connect-src 'self' ws: wss:; frame-ancestors 'none'; " +
         "base-uri 'self'; form-action 'self'",
     );
     next();

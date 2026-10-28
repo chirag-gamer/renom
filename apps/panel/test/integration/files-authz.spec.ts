@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildPanel } from "../../src/server/index.js";
@@ -47,6 +47,15 @@ beforeAll(() => {
        VALUES (?,'test',?,'bp','v1','img',512,1024,'ready','offline',?,?)`,
     )
     .run(serverId, owner.id, now, now);
+  // The generic-writer server-port guard compares against the live
+  // allocation; without a row here it short-circuits and the guard is
+  // unreachable from any test.
+  ctx.db
+    .prepare(
+      `INSERT INTO allocations (id, server_id, ip, port, released, created_at, updated_at)
+       VALUES ('al-test', ?, '0.0.0.0', 25566, 0, ?, ?)`,
+    )
+    .run(serverId, now, now);
 
   const srvDir = join(dir, "servers", serverId);
   mkdirSync(srvDir, { recursive: true });
@@ -64,6 +73,17 @@ async function login(username: string, password: string): Promise<string> {
     throw new Error(`login(${username}) failed: ${res.status} ${JSON.stringify(res.body)}`);
   }
   return res.body.token as string;
+}
+/**
+ * Restore a complete server.properties fixture. Shared by both describes that
+ * touch the file so neither depends on what an earlier test left behind.
+ */
+function resetProperties(): void {
+  writeFileSync(
+    join(dir, "servers", serverId, "server.properties"),
+    "motd=hello\nserver-port=25565\nmax-players=20\n",
+    "utf8",
+  );
 }
 
 describe("files API authorization + confinement", () => {
@@ -246,5 +266,108 @@ describe("files API authorization + confinement", () => {
       .query({ path: "bulk2.txt" })
       .set("authorization", `Bearer ${ownerToken}`);
     expect(check2.status).toBe(404);
+  });
+});
+
+describe("server.properties route guards", () => {
+  beforeAll(async () => {
+    ownerToken = await login("owner", "owner-password");
+  });
+
+  // Each guard test mutates server.properties, so without a reset the suite
+  // only passes in file order: the out-of-range case needs the max-players key
+  // an earlier case wrote. Reset to a complete fixture instead.
+  beforeEach(() => resetProperties());
+
+  it("reads the file as typed fields with server-port marked readonly", async () => {
+    const res = await request(app)
+      .get(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(res.status).toBe(200);
+    const byKey = new Map(
+      (res.body.properties as Array<{ key: string; readonly: boolean }>).map((p) => [p.key, p]),
+    );
+    expect(byKey.get("server-port")!.readonly).toBe(true);
+    expect(byKey.get("motd")!.readonly).toBe(false);
+  });
+
+  it("rejects a server-port write and leaves the file untouched", async () => {
+    const before = readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8");
+
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { "server-port": "25599" } });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/managed by the panel/);
+
+    // Nothing may have been written: the port drives the allocation, tunnel
+    // and engine config together.
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).toBe(before);
+  });
+
+  it("rejects an out-of-range value while still accepting a valid change", async () => {
+    const bad = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { "max-players": "0" } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.message).toMatch(/at least 1/);
+
+    const good = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { motd: "changed", "max-players": "42" } });
+    expect(good.status).toBe(204);
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).toBe(
+      "motd=changed\nserver-port=25565\nmax-players=42\n",
+    );
+  });
+
+  it("refuses an empty numeric value rather than writing zero", async () => {
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { "max-players": "" } });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/whole number/);
+  });
+});
+
+describe("generic file writer protects server-port", () => {
+  beforeAll(async () => {
+    ownerToken = await login("owner", "owner-password");
+  });
+
+  beforeEach(() => resetProperties());
+
+  it("refuses a save that changes the allocation port", async () => {
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/files/content`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        path: "server.properties",
+        content: "motd=hi\nserver-port=25599\n",
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/managed by the panel allocation/);
+    // The file must not have been written at all.
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).not.toContain(
+      "25599",
+    );
+  });
+
+  it("allows a save that keeps the allocation port", async () => {
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/files/content`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        path: "server.properties",
+        content: "motd=edited\nserver-port=25566\n",
+      });
+    expect(res.status).toBe(204);
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).toContain(
+      "25566",
+    );
   });
 });

@@ -145,6 +145,8 @@ export const publicServerSchema = z.object({
   ownerId: z.string(),
   ownerUsername: z.string(),
   blueprintSlug: z.string(),
+  /** Blueprint category; the client uses it to pick which tabs a server can show. */
+  blueprintCategory: z.string(),
   status: z.enum(serverStatuses),
   runtimeState: z.enum(runtimeStates).nullable(),
   memoryMb: z.number(),

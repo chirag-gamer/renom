@@ -8,6 +8,7 @@ import { maturityMigration } from "./migrations/0002-maturity.js";
 import { scheduleLockMigration } from "./migrations/0003-schedule-lock.js";
 import { tunnelEndpointUniqueMigration } from "./migrations/0004-tunnel-endpoint-unique.js";
 import { repairOverlongTunnelEndpointsMigration } from "./migrations/0005-repair-overlong-tunnel-endpoints.js";
+import { auditServerIdIndexMigration } from "./migrations/0006-audit-server-id-index.js";
 
 /** All known migrations in order. */
 export const allMigrations = [
@@ -16,6 +17,7 @@ export const allMigrations = [
   scheduleLockMigration,
   tunnelEndpointUniqueMigration,
   repairOverlongTunnelEndpointsMigration,
+  auditServerIdIndexMigration,
 ];
 
 /** Open and migrate a database to head. */
