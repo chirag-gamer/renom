@@ -74,6 +74,17 @@ async function login(username: string, password: string): Promise<string> {
   }
   return res.body.token as string;
 }
+/**
+ * Restore a complete server.properties fixture. Shared by both describes that
+ * touch the file so neither depends on what an earlier test left behind.
+ */
+function resetProperties(): void {
+  writeFileSync(
+    join(dir, "servers", serverId, "server.properties"),
+    "motd=hello\nserver-port=25565\nmax-players=20\n",
+    "utf8",
+  );
+}
 
 describe("files API authorization + confinement", () => {
   beforeAll(async () => {
@@ -266,13 +277,7 @@ describe("server.properties route guards", () => {
   // Each guard test mutates server.properties, so without a reset the suite
   // only passes in file order: the out-of-range case needs the max-players key
   // an earlier case wrote. Reset to a complete fixture instead.
-  beforeEach(() => {
-    writeFileSync(
-      join(dir, "servers", serverId, "server.properties"),
-      "motd=hello\nserver-port=25565\nmax-players=20\n",
-      "utf8",
-    );
-  });
+  beforeEach(() => resetProperties());
 
   it("reads the file as typed fields with server-port marked readonly", async () => {
     const res = await request(app)
@@ -333,6 +338,8 @@ describe("generic file writer protects server-port", () => {
   beforeAll(async () => {
     ownerToken = await login("owner", "owner-password");
   });
+
+  beforeEach(() => resetProperties());
 
   it("refuses a save that changes the allocation port", async () => {
     const res = await request(app)
