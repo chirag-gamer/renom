@@ -298,7 +298,11 @@ export function coercePropertyValue(definition: PropertyDefinition, raw: unknown
     return value;
   }
   if (definition.kind === "number") {
-    const parsed = Number(value);
+    // Number("") and Number("   ") are 0, so an emptied field would silently
+    // become zero — and only keys with min > 0 would notice, with a bounds
+    // error that hides the real problem.
+    const trimmed = value.trim();
+    const parsed = trimmed === "" ? Number.NaN : Number(trimmed);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
       throw new Error(`${definition.label} must be a whole number`);
     }

@@ -295,7 +295,11 @@ const serverPermissions = [
 ];
 
 const serverTabPermissions = {
-  overview: "control.console",
+  // null = every collaborator who can see this server at all. Overview shows
+  // only facts the server read already returns, and it is the landing page, so
+  // gating it on control.console hid the whole server from a files- or
+  // backups-scoped collaborator.
+  overview: null,
   console: "control.console",
   activity: "activity.read",
   files: "file.read",
@@ -1255,6 +1259,9 @@ function leaveServer() {
 
 function canServerAny(required) {
   if (!currentServer) return false;
+  // null/undefined means "no permission needed beyond access to this server":
+  // currentServer only exists for servers the principal may reach at all.
+  if (required === null || required === undefined) return true;
   const requiredList = Array.isArray(required) ? required : [required];
   if (Array.isArray(currentServer.permissions)) {
     const permissions = currentServer.permissions;
@@ -1297,6 +1304,10 @@ function applyServerPermissions() {
   document.getElementById("btn-file-dialog-save").hidden = !canServer("file.update");
   document.getElementById("btn-file-mkdir").hidden = !canServer("file.create");
   document.getElementById("btn-open-props").hidden = !canServer("file.read-content");
+  // The tab opens with file.read-content, but writing the file needs
+  // file.update; without this a read-only collaborator gets a Save button whose
+  // only outcome is a 403.
+  document.getElementById("btn-properties-save").hidden = !canServer("file.update");
   document.getElementById("btn-backup").hidden = !canServer("backup.create");
   document.getElementById("form-schedule").hidden = !canServer("schedule.create");
   document.getElementById("form-variables").hidden = !canServer("startup.update");
@@ -1505,7 +1516,9 @@ function setTab(name, updateUrl = true) {
   ];
   const available = availableServerTabs();
   if (!tabNames.includes(name) || !available.includes(name) || !tabAvailableForBlueprint(name)) {
-    name = available[0] || "console";
+    // The fallback must satisfy the same two gates as the request: a
+    // permission-only pick can land on Properties for a Bedrock server.
+    name = available.find((tab) => tabAvailableForBlueprint(tab)) || "console";
   }
   if (currentServer && (updateUrl || name !== requestedName)) {
     const method = updateUrl ? "pushState" : "replaceState";
@@ -2994,12 +3007,15 @@ async function refreshSoftware(generation) {
   if (!container) return;
   container.innerHTML = "";
 
+  const serverId = currentServer.id;
   const qs = `?scope=software&page=${softwarePage}&limit=${softwareLimit}`;
-  const { status, data } = await api(`/servers/${currentServer.id}/software${qs}`, {
+  const { status, data } = await api(`/servers/${serverId}/software${qs}`, {
     token: store.token,
   });
 
-  if (isStaleLoad(generation)) return;
+  // Same reasoning as refreshEgg: callers without a generation would otherwise
+  // render the previous server's software list into this one's tab.
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
   if (status !== 200) {
     if (err) fail(err, describeProblem(status, data));
     return;
@@ -3519,7 +3535,8 @@ function renderOverview() {
 /* ---------- activity ---------- */
 
 let activityCursor = null;
-let activityLoading = false;
+/** Server id whose activity request is in flight (see refreshActivity). */
+let activityLoadingServerId = null;
 
 /** Turn `file.write` + target into a sentence a person can scan. */
 function describeActivityEvent(item) {
@@ -3638,11 +3655,15 @@ async function refreshActivity(reset = true, generation) {
   const err = document.getElementById("activity-error");
   const empty = document.getElementById("activity-empty");
   const pagination = document.getElementById("activity-pagination");
-  if (!list || !currentServer || activityLoading) return;
-  activityLoading = true;
+  if (!list || !currentServer) return;
+  const serverId = currentServer.id;
+  // Keyed by server, not a plain boolean: with a boolean, switching servers
+  // mid-request made the new server's preload return early (the old request
+  // still held the latch), leaving its feed blank until something else fired.
+  if (activityLoadingServerId === serverId) return;
+  activityLoadingServerId = serverId;
   if (reset) activityCursor = null;
   if (err) err.hidden = true;
-  const serverId = currentServer.id;
   const cursor = reset ? null : activityCursor;
   try {
     const qs = cursor ? `?before=${encodeURIComponent(cursor)}` : "";
@@ -3663,7 +3684,7 @@ async function refreshActivity(reset = true, generation) {
     // refreshed from the first page, so "load older" cannot shrink it.
     if (reset) renderOverviewActivity(items.slice(0, 5));
   } finally {
-    activityLoading = false;
+    if (activityLoadingServerId === serverId) activityLoadingServerId = null;
   }
 }
 
@@ -3817,6 +3838,13 @@ document.getElementById("btn-properties-save")?.addEventListener("click", async 
     success.textContent = "Saved. Changes apply the next time the server starts.";
     success.hidden = false;
   }
+  // Re-baseline the snapshot: without this, a second click re-sends the same
+  // keys (which the server rewrites and re-audits), and editing a field back to
+  // its pre-save value is misreported as "No changes to save".
+  for (const [key, value] of Object.entries(values)) {
+    const field = propertyInputs.get(key);
+    if (field) field.initial = value;
+  }
   showToast("server.properties saved.", "success");
 });
 
@@ -3828,6 +3856,7 @@ let eggTotalPages = 1;
 
 async function refreshEgg(generation) {
   if (!currentServer) return;
+  const serverId = currentServer.id;
   const container = document.getElementById("egg-cards-container");
   const curName = document.getElementById("current-egg-name");
   const curDesc = document.getElementById("current-egg-desc");
@@ -3838,10 +3867,13 @@ async function refreshEgg(generation) {
   if (!container) return;
   container.innerHTML = "";
   const qs = `?scope=egg&page=${eggPage}&limit=${eggLimit}`;
-  const { status, data } = await api(`/servers/${currentServer.id}/software${qs}`, {
+  const { status, data } = await api(`/servers/${serverId}/software${qs}`, {
     token: store.token,
   });
-  if (isStaleLoad(generation)) return;
+  // generation alone is inert for callers that pass none (the tab switch and
+  // the swap handler do), so the id check is what stops another server's egg
+  // presets from rendering here.
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
   if (status !== 200) {
     if (err) fail(err, describeProblem(status, data));
     return;

@@ -48,7 +48,17 @@ export function activityRouter(deps: {
         });
         const page = rows.slice(0, q.limit);
         res.json({
-          items: page,
+          // actorIp is deliberately not public: it is a real peer address for
+          // user actions, so activity.read alone must not hand a collaborator
+          // the addresses other users connect from.
+          items: page.map(({ id, ts, event, actorUserId, actorUsername, target }) => ({
+            id,
+            ts,
+            event,
+            actorUserId,
+            actorUsername,
+            target,
+          })),
           nextCursor: rows.length > q.limit ? (page[page.length - 1]?.id ?? null) : null,
         });
       } catch (e) {

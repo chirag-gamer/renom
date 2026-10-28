@@ -51,6 +51,8 @@ const softwareQuery = z.object({
    * deserves its own page. Omitted keeps the old behaviour of listing all.
    */
   scope: z.enum(["software", "egg", "all"]).default("all"),
+  /** Optional extra narrowing within the scope, e.g. only "minecraft-java". */
+  category: z.string().max(64).optional(),
 });
 
 const switchSoftwareSchema = z.object({
@@ -506,6 +508,7 @@ export function serversRouter(deps: ServersDeps): Router {
           // anything else is a full game swap and belongs on the Egg page.
           if (q.scope === "software" && sw.category !== doc.category) return false;
           if (q.scope === "egg" && sw.category === doc.category) return false;
+          if (q.category && sw.category !== q.category) return false;
           if (!queryLower) return true;
           return (
             sw.name.toLowerCase().includes(queryLower) ||

@@ -1062,90 +1062,6 @@ textarea:focus {
   align-items: center;
 }
 
-/* Addon Cards Grid & Card UI */
-.addon-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
-  gap: 16px;
-  margin: 16px 0;
-}
-.addon-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 16px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-.addon-card:hover {
-  border-color: var(--outline-variant);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 4%);
-}
-.addon-card-header {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-.addon-card-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 6px;
-  object-fit: cover;
-  background: var(--card-container);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-}
-.addon-card-title-group {
-  min-width: 0;
-  flex: 1;
-}
-.addon-card-title {
-  margin: 0 0 2px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.addon-card-author {
-  font-size: 11px;
-  color: var(--faint);
-}
-.addon-card-desc {
-  margin: 10px 0 14px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.addon-card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: 10px;
-  border-top: 1px solid var(--card-container);
-}
-.addon-card-meta {
-  font-size: 11px;
-  color: var(--faint);
-}
-.addon-card-footer button {
-  margin: 0;
-  padding: 4px 12px;
-  font-size: 12px;
-}
-
 /* Pagination Bar */
 .pagination-bar {
   display: flex;
@@ -1803,7 +1719,9 @@ textarea:focus {
 }
 .properties-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  /* min(300px, 100%) so a phone gets one full-width column instead of a
+     300px track that overflows the container. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   gap: 14px;
 }
 .property-field {
@@ -1821,8 +1739,23 @@ textarea:focus {
 .property-field input[type="text"],
 .property-field select,
 .property-field input[type="number"] {
+  /* These fields are not inside a <form>, so nothing else styles them and they
+     rendered as browser defaults next to the panel's own inputs. */
+  display: block;
+  width: 100%;
   margin-top: 10px;
+  padding: 10px 12px;
   background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font: 400 14px/1.5 var(--mono);
+}
+.property-field input:focus,
+.property-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 .property-help {
   margin: 8px 0 0;
@@ -2001,7 +1934,9 @@ textarea:focus {
 /* Plugin cards: icon, title + author, description, then metrics + install. */
 .addon-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  /* min(300px, 100%) keeps one column below one card's width; a bare 300px
+     track overflowed the viewport there. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   gap: 16px;
 }
 .addon-card {

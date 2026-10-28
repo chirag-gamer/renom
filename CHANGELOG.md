@@ -16,18 +16,10 @@ All notable changes to Renom are documented here. Format based on
 - Server visibility toggle: the server list defaults to "servers I own", with an iOS-style switch revealing everything the user can access; preference persists in localStorage.
 - Tab navigation polish: grouped side navigation with per-tab SVG icons and a smooth panel transition when switching tabs.
 - `blueprintCategory` added to the public server shape (`packages/contracts`), driving tab visibility per game ecosystem.
-
-### Fixed
-
-- Plugin/Mod misdetection: Modrinth's `project_type` now reads `mod` for real plugins (EssentialsX, LuckPerms, WorldEdit, VeinMiner), so the equality gate rejected every plugin install with "Project '…' is a mod, not a plugin". Compatibility is now decided by the loader-filtered `/version` list: a Paper plugin has paper/spigot builds, a Fabric-only mod does not.
-- Plugin icons: the CSP `img-src 'self' data:` blocked `https://cdn.modrinth.com`, blanking every browse-card icon; the CDN host is now allowed for images only, and a failed icon load falls back to a project mark instead of an empty gap.
-- Plugin search bar position: the search form moved directly under the Plugins header/intro instead of the bottom of the page.
-- Software tab scope: same-ecosystem blueprints only (Java server → Java options, Bedrock → Bedrock), popularity ranking removed in favour of name ordering.
-
 - Toast notification system: Lightweight, non-intrusive alert toasts (`success`, `error`, `info`) positioned top-right for async user feedback across file saves, software swapping, and addon installations.
 - Automated software matrix CI/CD workflow: `.github/workflows/software-matrix.yml` running test matrices across all locally supported Minecraft software engines (Paper, Purpur, Vanilla, Bedrock BDS, PocketMine-MP, Endstone) and generic engines (Node.js, Python).
 - Dynamic Minecraft "latest" version resolution: Added `resolveMinecraftVersion` querying PaperMC version registry with fallback to Mojang version manifest to resolve "latest" when searching or installing plugins.
-- Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page, sorted by Most Popular). Restricted strictly to plugins (`projectType: "plugin"`).
+- Plugins tab UI overhaul: modern dedicated plugin cards in a responsive grid with download counts, author attribution, and pagination (10 plugins per page). Discovery is by loader + Minecraft version (see Fixed).
 - Version selection modal: prompt users to select a compatible version when multiple releases exist on Modrinth, with release-type badges and Minecraft version compatibility.
 - Dedicated Server Software tab: separated server software from the Plugins tab into its own dedicated view placed beneath Plugins.
 - Game Swapper: swap server software and entire game ecosystems (Minecraft Java, Minecraft Bedrock BDS, Endstone, PocketMine-MP, Node.js, Python) with an option to create a full backup of all current server files before swapping.
@@ -35,6 +27,10 @@ All notable changes to Renom are documented here. Format based on
 
 ### Fixed
 
+- Plugin/Mod misdetection: Modrinth's `project_type` now reads `mod` for real plugins (EssentialsX, LuckPerms, WorldEdit, VeinMiner), so the equality gate rejected every plugin install with "Project '…' is a mod, not a plugin". Compatibility is now decided by the loader-filtered `/version` list: a Paper plugin has paper/spigot builds, a Fabric-only mod does not.
+- Plugin icons: the CSP `img-src 'self' data:` blocked `https://cdn.modrinth.com`, blanking every browse-card icon; the CDN host is now allowed for images only, and a failed icon load falls back to a project mark instead of an empty gap.
+- Plugin search bar position: the search form moved directly under the Plugins header/intro instead of the bottom of the page.
+- Software tab scope: same-ecosystem blueprints only (Java server → Java options, Bedrock → Bedrock), popularity ranking removed in favour of name ordering.
 - Installer and updater auto-restart: In `install.sh` and `renom.sh` (`do_update`), automatically restart running panel instances under PM2 (`pm2 restart renom`) or interactive terminal sessions (`exec npm start --workspace @renom/panel`), terminating stale panel background processes to avoid port conflicts. Non-interactive runs outside systemd and PM2 still need a manual restart.
 - Minekube Connect 16-character endpoint limit: Enforced a strict 16-character maximum length limit on generated and validated tunnel endpoint names to comply with Minekube WatchService's hostname rules, preventing HTTP 400 "invalid endpoint name format" WebSocket errors and infinite reconnect loops. Added database migration `0005-repair-overlong-tunnel-endpoints` to repair existing overlong endpoints and runtime self-healing in `LocalProcessEngine`.
 - Bedrock BDS server boot: Fixed `spawn bedrock_server ENOENT` on Linux and Windows by resolving binaries to local absolute paths in the server directory, applying `0o755` permissions on POSIX hosts, and setting `LD_LIBRARY_PATH` so the dynamic linker finds required libraries (`libcrypto.so.1.1`).
