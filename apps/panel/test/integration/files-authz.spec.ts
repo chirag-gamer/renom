@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildPanel } from "../../src/server/index.js";
@@ -246,5 +246,71 @@ describe("files API authorization + confinement", () => {
       .query({ path: "bulk2.txt" })
       .set("authorization", `Bearer ${ownerToken}`);
     expect(check2.status).toBe(404);
+  });
+});
+
+describe("server.properties route guards", () => {
+  beforeAll(async () => {
+    ownerToken = await login("owner", "owner-password");
+  });
+
+  it("reads the file as typed fields with server-port marked readonly", async () => {
+    writeFileSync(
+      join(dir, "servers", serverId, "server.properties"),
+      "motd=hello\nserver-port=25565\nmax-players=20\n",
+      "utf8",
+    );
+
+    const res = await request(app)
+      .get(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(res.status).toBe(200);
+    const byKey = new Map(
+      (res.body.properties as Array<{ key: string; readonly: boolean }>).map((p) => [p.key, p]),
+    );
+    expect(byKey.get("server-port")!.readonly).toBe(true);
+    expect(byKey.get("motd")!.readonly).toBe(false);
+  });
+
+  it("rejects a server-port write and leaves the file untouched", async () => {
+    const before = readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8");
+
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { "server-port": "25599" } });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/managed by the panel/);
+
+    // Nothing may have been written: the port drives the allocation, tunnel
+    // and engine config together.
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).toBe(before);
+  });
+
+  it("rejects an out-of-range value while still accepting a valid change", async () => {
+    const bad = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { "max-players": "0" } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.message).toMatch(/at least 1/);
+
+    const good = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { motd: "changed", "max-players": "42" } });
+    expect(good.status).toBe(204);
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).toBe(
+      "motd=changed\nserver-port=25565\nmax-players=42\n",
+    );
+  });
+
+  it("refuses an empty numeric value rather than writing zero", async () => {
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/properties`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ values: { "max-players": "" } });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/whole number/);
   });
 });

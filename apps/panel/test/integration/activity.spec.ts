@@ -63,6 +63,25 @@ describe("GET /servers/:id/activity", () => {
       .get(`/api/v3/servers/${serverId}/activity`)
       .set("authorization", `Bearer ${limitedToken}`);
     expect(res.status).toBe(403);
+
+    // The permitted path matters as much as the denial: a wiring regression
+    // that 403s everyone would pass the assertion above. Re-grant with the
+    // permission and prove the same call now succeeds.
+    const regrant = await request(app)
+      .delete(`/api/v3/servers/${serverId}/users/${ctx.users.byUsername("bob")!.id}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(regrant.status).toBe(204);
+    const grant2 = await request(app)
+      .post(`/api/v3/servers/${serverId}/users`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "bob", permissions: ["activity.read"] });
+    expect(grant2.status).toBe(201);
+
+    const allowed = await request(app)
+      .get(`/api/v3/servers/${serverId}/activity`)
+      .set("authorization", `Bearer ${limitedToken}`);
+    expect(allowed.status).toBe(200);
+    expect(Array.isArray(allowed.body.items)).toBe(true);
   });
 
   it("returns seeded rows newest-first with the actor resolved", async () => {
@@ -102,21 +121,33 @@ describe("GET /servers/:id/activity", () => {
     expect(items[0]!.target).toEqual({ keys: ["motd"] });
   });
 
-  it("pages older rows with the exclusive before cursor", async () => {
-    const res = await request(app)
-      .get(`/api/v3/servers/${serverId}/activity`)
-      .set("authorization", `Bearer ${ownerToken}`);
-    const items = res.body.items as Array<{ id: string }>;
-    const cursor = items[0]!.id;
+  it("walks a page boundary with nextCursor without repeating or skipping rows", async () => {
+    // Enough rows that limit=2 cannot cover them, so nextCursor is real.
+    const seeded: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      seeded.push(ctx.audit.record({ event: `test.page.${i}`, serverId, target: { i } }));
+    }
 
-    const older = await request(app)
-      .get(`/api/v3/servers/${serverId}/activity?before=${cursor}`)
+    const first = await request(app)
+      .get(`/api/v3/servers/${serverId}/activity?limit=2`)
       .set("authorization", `Bearer ${ownerToken}`);
-    expect(older.status).toBe(200);
-    const olderItems = older.body.items as Array<{ id: string }>;
-    for (const item of olderItems) expect(item.id < cursor).toBe(true);
-    // The row at the cursor itself must not repeat on the next page.
-    expect(olderItems.some((item) => item.id === cursor)).toBe(false);
+    expect(first.status).toBe(200);
+    const page1 = first.body.items as Array<{ id: string }>;
+    expect(page1).toHaveLength(2);
+    expect(first.body.nextCursor).toBe(page1[1]!.id);
+
+    const second = await request(app)
+      .get(`/api/v3/servers/${serverId}/activity?limit=2&before=${first.body.nextCursor}`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(second.status).toBe(200);
+    const page2 = second.body.items as Array<{ id: string }>;
+    expect(page2).toHaveLength(2);
+    // No row may appear on both pages, and page 2 must continue below page 1.
+    const firstIds = new Set(page1.map((item) => item.id));
+    for (const item of page2) expect(firstIds.has(item.id)).toBe(false);
+    expect(page2[0]!.id < page1[1]!.id).toBe(true);
+    // Walking to the end returns every seeded row exactly once.
+    expect(new Set([...page1, ...page2].map((i) => i.id)).size).toBe(4);
   });
 
   it("renders null-actor rows with a resolvable system attribution", async () => {

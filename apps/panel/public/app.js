@@ -486,13 +486,25 @@ async function refreshServers() {
   const err = document.getElementById("server-list-error");
   empty.hidden = true;
   setServerListStatus("loading", "Loading servers");
-  const { status, data } = await api("/servers?limit=100", { token: store.token });
-  list.innerHTML = "";
-  if (status !== 200) {
-    setServerListStatus("error", "Could not load servers");
-    fail(err, describeProblem(status, data));
-    return;
+  // Follow nextCursor instead of trusting a single page: the listing caps at
+  // 100 rows, and the owned-only switch claims to reveal every accessible
+  // server, so a one-shot fetch would silently hide the tail of a big account.
+  const servers = [];
+  let cursor = null;
+  for (;;) {
+    const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
+    const { status, data } = await api(`/servers${qs}`, { token: store.token });
+    if (status !== 200) {
+      setServerListStatus("error", "Could not load servers");
+      fail(err, describeProblem(status, data));
+      return;
+    }
+    servers.push(...data.items);
+    cursor = data.nextCursor;
+    if (!cursor) break;
   }
+  const data = { items: servers };
+  list.innerHTML = "";
   err.hidden = true;
   if (data.items.length === 0) {
     setServerListStatus("empty", "No servers shown");
@@ -3807,6 +3819,10 @@ document.getElementById("btn-properties-save")?.addEventListener("click", async 
   const err = document.getElementById("properties-error");
   const success = document.getElementById("properties-success");
   if (!currentServer) return;
+  // Capture the server: the save is async, and rebaselining after the user
+  // navigated would overwrite the NEW server's snapshot, making a real edit
+  // there look like "No changes to save".
+  const savedServerId = currentServer.id;
   if (err) err.hidden = true;
   if (success) success.hidden = true;
   const values = {};
@@ -3824,7 +3840,7 @@ document.getElementById("btn-properties-save")?.addEventListener("click", async 
     }
     return;
   }
-  const { status, data } = await api(`/servers/${currentServer.id}/properties`, {
+  const { status, data } = await api(`/servers/${savedServerId}/properties`, {
     method: "PUT",
     token: store.token,
     body: { values },
@@ -3841,9 +3857,11 @@ document.getElementById("btn-properties-save")?.addEventListener("click", async 
   // Re-baseline the snapshot: without this, a second click re-sends the same
   // keys (which the server rewrites and re-audits), and editing a field back to
   // its pre-save value is misreported as "No changes to save".
-  for (const [key, value] of Object.entries(values)) {
-    const field = propertyInputs.get(key);
-    if (field) field.initial = value;
+  if (currentServer?.id === savedServerId) {
+    for (const [key, value] of Object.entries(values)) {
+      const field = propertyInputs.get(key);
+      if (field) field.initial = value;
+    }
   }
   showToast("server.properties saved.", "success");
 });

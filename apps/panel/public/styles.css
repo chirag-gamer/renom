@@ -90,12 +90,12 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 10px;
+  padding: 10px 12px;
   border-left: 2px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   text-decoration: none;
 }
 .side-nav a span[aria-hidden] {
@@ -1406,12 +1406,6 @@ textarea:focus {
 .side-nav a:hover .nav-icon {
   color: currentColor;
 }
-.side-nav a {
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-}
 
 /* ---------- persistent server card ---------- */
 /* Sits above every tab so state, address, and power never need a navigation.
@@ -1782,7 +1776,8 @@ textarea:focus {
 /* ---------- plugin browse ---------- */
 .addon-browse-bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  /* chips · search field · loader · version · submit */
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 10px;
   margin: 14px 0 18px;
@@ -1820,10 +1815,16 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* `form label` sets display:block + 16px vertical margins + uppercase, which
+     made this control taller than its neighbours and pushed it out of the bar. */
+  margin: 0;
   padding: 0 14px;
   background: var(--field);
   border: 1px solid var(--border);
   border-radius: 10px;
+  font: inherit;
+  letter-spacing: normal;
+  text-transform: none;
 }
 .addon-search-field svg {
   width: 15px;
@@ -1868,7 +1869,9 @@ textarea:focus {
 /* Installed plugins: icon + name + filename + actions per row, two across. */
 .addon-installed-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  /* min(320px, 100%) collapses to one column on narrow viewports instead of
+     forcing a 320px track that widens the page. */
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 14px;
   margin: 0 0 8px;
   padding: 0;

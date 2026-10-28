@@ -18,4 +18,8 @@ export const auditServerIdIndexMigration: Migration = {
   up: (db) => {
     db.exec("CREATE INDEX IF NOT EXISTS idx_audit_server_id_id ON audit_log(server_id, id DESC);");
   },
+  /** Reversing is dropping the index: it holds no data of its own. */
+  down: (db) => {
+    db.exec("DROP INDEX IF EXISTS idx_audit_server_id_id;");
+  },
 };
