@@ -1782,6 +1782,11 @@ textarea:focus {
   gap: 10px;
   margin: 14px 0 18px;
 }
+/* The global `button` rule adds margin-top: 10px, which pushed the submit
+   control below the search field and filter chips it sits beside. */
+.addon-browse-bar button {
+  margin-top: 0;
+}
 .addon-source-chips {
   display: inline-flex;
   gap: 6px;

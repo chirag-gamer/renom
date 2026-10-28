@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -263,13 +263,18 @@ describe("server.properties route guards", () => {
     ownerToken = await login("owner", "owner-password");
   });
 
-  it("reads the file as typed fields with server-port marked readonly", async () => {
+  // Each guard test mutates server.properties, so without a reset the suite
+  // only passes in file order: the out-of-range case needs the max-players key
+  // an earlier case wrote. Reset to a complete fixture instead.
+  beforeEach(() => {
     writeFileSync(
       join(dir, "servers", serverId, "server.properties"),
       "motd=hello\nserver-port=25565\nmax-players=20\n",
       "utf8",
     );
+  });
 
+  it("reads the file as typed fields with server-port marked readonly", async () => {
     const res = await request(app)
       .get(`/api/v3/servers/${serverId}/properties`)
       .set("authorization", `Bearer ${ownerToken}`);
