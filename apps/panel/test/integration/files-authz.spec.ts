@@ -47,6 +47,15 @@ beforeAll(() => {
        VALUES (?,'test',?,'bp','v1','img',512,1024,'ready','offline',?,?)`,
     )
     .run(serverId, owner.id, now, now);
+  // The generic-writer server-port guard compares against the live
+  // allocation; without a row here it short-circuits and the guard is
+  // unreachable from any test.
+  ctx.db
+    .prepare(
+      `INSERT INTO allocations (id, server_id, ip, port, released, created_at, updated_at)
+       VALUES ('al-test', ?, '0.0.0.0', 25566, 0, ?, ?)`,
+    )
+    .run(serverId, now, now);
 
   const srvDir = join(dir, "servers", serverId);
   mkdirSync(srvDir, { recursive: true });
@@ -312,5 +321,41 @@ describe("server.properties route guards", () => {
       .send({ values: { "max-players": "" } });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/whole number/);
+  });
+});
+
+describe("generic file writer protects server-port", () => {
+  beforeAll(async () => {
+    ownerToken = await login("owner", "owner-password");
+  });
+
+  it("refuses a save that changes the allocation port", async () => {
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/files/content`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        path: "server.properties",
+        content: "motd=hi\nserver-port=25599\n",
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/managed by the panel allocation/);
+    // The file must not have been written at all.
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).not.toContain(
+      "25599",
+    );
+  });
+
+  it("allows a save that keeps the allocation port", async () => {
+    const res = await request(app)
+      .put(`/api/v3/servers/${serverId}/files/content`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        path: "server.properties",
+        content: "motd=edited\nserver-port=25566\n",
+      });
+    expect(res.status).toBe(204);
+    expect(readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8")).toContain(
+      "25566",
+    );
   });
 });
