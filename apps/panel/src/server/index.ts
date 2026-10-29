@@ -128,6 +128,18 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
       servers.setRuntimeState(s.id, "offline");
       audit.record({ event: "server.state.reconciled", actorIp: "system", serverId: s.id });
     }
+    const staleInstalling = db
+      .prepare("SELECT id FROM servers WHERE status = 'installing'")
+      .all() as Array<{ id: string }>;
+    for (const s of staleInstalling) {
+      servers.setStatus(s.id, "install_failed");
+      audit.record({
+        event: "server.install.failed",
+        actorIp: "system",
+        serverId: s.id,
+        target: { reason: "panel restarted during install" },
+      });
+    }
   }
 
   const apiRouters = [
@@ -194,7 +206,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
         }),
         powerRouter({ db, servers, engine, audit, auth }),
         subusersRouter({ db, users, audit, auth, gateway: gatewayProxy }),
-        allocationsRouter({ db, audit, auth }),
+        allocationsRouter({ db, audit, auth, dataDir }),
         backupsRouter({ db, backups, audit, auth }),
         schedulesRouter({ db, scheduler, audit, auth }),
         tunnelRouter({ db, servers, engine, audit, auth, dataDir }),

@@ -388,6 +388,32 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(varRow?.value).toBe("2.5.0");
   });
 
+  it("boot reconciles stale installing servers to install_failed", async () => {
+    const srv = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "stale-install-test", blueprintSlug: "generic-python" });
+    expect(srv.status).toBe(201);
+    const staleId = srv.body.server.id as string;
+
+    // Set a server to installing to simulate an interrupted background install
+    ctx.servers.setStatus(staleId, "installing");
+    expect(ctx.servers.byId(staleId)?.status).toBe("installing");
+
+    // Booting a new panel on the same DB reconciles stale installing state
+    const rebooted = buildPanel({
+      NODE_ENV: "test",
+      DATA_DIR: dir,
+      LOG_LEVEL: "error",
+      BCRYPT_COST: 10,
+    } as NodeJS.ProcessEnv);
+    try {
+      expect(rebooted.ctx.servers.byId(staleId)?.status).toBe("install_failed");
+    } finally {
+      rebooted.ctx.db.close();
+    }
+  });
+
   it("audit trail records the server lifecycle", () => {
     const events = ctx.audit.query({ limit: 100 }).map((e) => e.event);
     for (const want of [

@@ -17,6 +17,9 @@ import {
   NotFoundError,
 } from "../../shared/errors.js";
 import { ulid } from "../../shared/ulid.js";
+import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { applyPropertyChanges } from "../../modules/files/properties.js";
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
@@ -29,6 +32,7 @@ export interface AllocationsDeps {
   db: Database;
   audit: AuditService;
   auth: AuthService;
+  dataDir?: string;
 }
 
 /**
@@ -77,6 +81,7 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
       // Blueprints may declare auxiliary ports (BDS's IPv6 game port); those
       // are derived from the blueprint at boot, not separately allocated
       // rows, so the one-row rule stands.
+      let replaced: Array<{ id: string; ip: string; port: number }> = [];
       try {
         db.transaction(() => {
           const clash =
@@ -94,6 +99,9 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
           if (clash) {
             throw new ConflictError(`Allocation ${body.ip}:${body.port} is already in use`);
           }
+          replaced = db
+            .prepare("SELECT id, ip, port FROM allocations WHERE server_id = ? AND released = 0")
+            .all(serverId) as Array<{ id: string; ip: string; port: number }>;
           db.prepare(
             "UPDATE allocations SET server_id = NULL, released = 1, updated_at = ? WHERE server_id = ? AND released = 0",
           ).run(now, serverId);
@@ -111,6 +119,17 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
         }
         throw new ConflictError(`Allocation ${body.ip}:${body.port} is already in use`);
       }
+      for (const r of replaced) {
+        audit.record({
+          event: "server.allocation.release",
+          actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          serverId,
+          target: { allocationId: r.id, ip: r.ip, port: r.port },
+        });
+      }
       audit.record({
         event: "server.allocation.add",
         actorUserId: req.principal!.userId,
@@ -120,6 +139,20 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
         serverId,
         target: { ip: body.ip, port: body.port },
       });
+      if (deps.dataDir) {
+        try {
+          const propPath = join(deps.dataDir, "servers", serverId, "server.properties");
+          if (existsSync(propPath)) {
+            const content = readFileSync(propPath, "utf8");
+            const updated = applyPropertyChanges(content, { "server-port": String(body.port) });
+            if (updated !== content) {
+              writeFileSync(propPath, updated, "utf8");
+            }
+          }
+        } catch {
+          // best-effort update: does not fail the allocation assignment
+        }
+      }
       res.status(201).json({ allocation: { id, ip: body.ip, port: body.port } });
     } catch (e) {
       next(e);

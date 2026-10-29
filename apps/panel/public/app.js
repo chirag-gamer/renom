@@ -3390,18 +3390,23 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
     showToast(`Installing ${pendingSwapSoftware.name}…`, "success");
     const settled = await awaitServerInstall(targetServerId);
     if (settled && settled.status === "ready") {
+      if (successAlert) successAlert.hidden = true;
       showToast(`Swapped to ${pendingSwapSoftware.name}.`, "success");
     } else if (settled && settled.status === "install_failed") {
       if (successAlert) successAlert.hidden = true;
-      if (err)
-        fail(
-          err,
-          "The software install failed. Check the server overview for details, then try the swap again.",
-        );
       showToast("The software install failed.", "error");
     }
     if (currentServer?.id === targetServerId) {
       await refreshAfterSwap();
+      if (settled && settled.status === "install_failed") {
+        const softwareError = document.getElementById("software-alert-error");
+        if (softwareError) {
+          fail(
+            softwareError,
+            "The software install failed. Check the server overview for details, then try the swap again.",
+          );
+        }
+      }
     }
     return;
   }

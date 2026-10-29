@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildPanel } from "../../src/server/index.js";
@@ -243,7 +243,6 @@ describe("allocations", () => {
       .get(`/api/v3/servers/${serverId}/allocations`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(list.body.allocations.length).toBe(1);
-    const primary = list.body.allocations[0] as { id: string; port: number };
 
     // Create a second server to verify global address-in-use port conflict
     const other = await request(app)
@@ -253,6 +252,12 @@ describe("allocations", () => {
     expect(other.status).toBe(201);
     const otherId = other.body.server.id as string;
 
+    // Seed server.properties to verify the atomic swap re-renders server-port
+    writeFileSync(
+      join(dir, "servers", serverId, "server.properties"),
+      "motd=hello\nserver-port=25565\n",
+    );
+
     // One port per server: assigning a new port atomically swaps out the previous one
     const swapped = await request(app)
       .post(`/api/v3/servers/${serverId}/allocations`)
@@ -260,6 +265,10 @@ describe("allocations", () => {
       .send({ ip: "127.0.0.1", port: 25570 });
     expect(swapped.status).toBe(201);
     expect(swapped.body.allocation.port).toBe(25570);
+
+    // Verify server.properties has updated server-port
+    const propContent = readFileSync(join(dir, "servers", serverId, "server.properties"), "utf8");
+    expect(propContent).toContain("server-port=25570");
 
     const listAfter = await request(app)
       .get(`/api/v3/servers/${serverId}/allocations`)

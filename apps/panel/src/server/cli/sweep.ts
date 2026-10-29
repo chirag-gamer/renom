@@ -159,7 +159,7 @@ const alloc = (await call("allocs add", "POST", `/servers/${sid}/allocations`, [
   ...auth(),
   body: { ip: "127.0.0.1", port: 25570 },
 })) as { allocation: { id: string } };
-await call("allocs clash", "POST", `/servers/${sid}/allocations`, [409], {
+await call("allocs reassign", "POST", `/servers/${sid}/allocations`, [201], {
   ...auth(),
   body: { ip: "127.0.0.1", port: 25570 },
 });
