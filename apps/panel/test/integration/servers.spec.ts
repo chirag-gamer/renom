@@ -224,6 +224,8 @@ describe("servers CRUD + ownership + quotas", () => {
         port: 25601,
       });
     expect(clash.status).toBe(409);
+    expect(clash.body.error.code).toBe("conflict");
+    expect(clash.body.error.message).toContain("25601");
   });
 
   it("alice renames her server; blueprint stays immutable", async () => {

@@ -41,7 +41,7 @@ export function stripLeading(member: string, n: number): string {
  * Vendor runtimes are a different case — the PocketMine PHP tarball ships 24
  * links (e.g. `bin/php7/bin/libpng-config -> libpng16-config`, verified
  * 2026-10-29) and refusing them made every PocketMine install fail. When
- * enabled, a link is only honoured if it is relative and resolves to a
+ * enabled, a link is only honoured if it resolves to a
  * REGULAR FILE inside the staging tree; anything else is dropped. A link is
  * never written into `dest`, so nothing that survives can point outside it.
  */
@@ -163,43 +163,51 @@ export async function extractArchiveSafe(
     // written into `dest`; a link that does not resolve to a regular file
     // inside staging is dropped. Copying rather than linking means the
     // extracted tree holds no link at all, so nothing can point outside it.
-    const materializeLinks = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        const st = lstatSync(full);
-        if (st.isSymbolicLink()) {
-          // resolve() does NOT dereference the final component, so a link
-          // pointing at another link could pass the lexical check and then
-          // statSync through to a host file. realpathSync dereferences fully;
-          // containment is decided on the real path (and once the intermediate
-          // link is removed, a second-hop copy would fail anyway).
-          const target = resolve(dirname(full), readlinkSync(full));
-          let real = "";
-          try {
-            real = realpathSync(target);
-          } catch {
-            real = "";
-          }
-          let realRoot = "";
-          try {
-            realRoot = realpathSync(staging);
-          } catch {
-            realRoot = staging;
-          }
-          const inside = real !== "" && (real === realRoot || real.startsWith(realRoot + sep));
-          let resolvedIsFile = false;
-          if (inside) {
+    const materializeLinks = (root: string): void => {
+      let realRoot = "";
+      try {
+        realRoot = realpathSync(root);
+      } catch {
+        realRoot = root;
+      }
+      // Pass 1: Collect and resolve every symlink against the original, untouched
+      // staging tree. If a directory symlink (e.g. lib -> lib64) is removed before
+      // a file link resolving through it (foo -> lib/x.txt), realpathSync would fail
+      // and valid files would be dropped. Resolving everything first preserves chains.
+      const linksToProcess: Array<{ full: string; real: string; isFile: boolean }> = [];
+      const scan = (dir: string): void => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          const st = lstatSync(full);
+          if (st.isSymbolicLink()) {
+            const target = resolve(dirname(full), readlinkSync(full));
+            let real = "";
             try {
-              resolvedIsFile = statSync(real).isFile();
+              real = realpathSync(target);
             } catch {
-              resolvedIsFile = false;
+              real = "";
             }
+            const inside = real !== "" && (real === realRoot || real.startsWith(realRoot + sep));
+            let resolvedIsFile = false;
+            if (inside) {
+              try {
+                resolvedIsFile = statSync(real).isFile();
+              } catch {
+                resolvedIsFile = false;
+              }
+            }
+            linksToProcess.push({ full, real, isFile: resolvedIsFile });
+            continue;
           }
-          rmSync(full, { force: true });
-          if (resolvedIsFile) copyFileSync(real, full);
-          continue;
+          if (st.isDirectory()) scan(full);
         }
-        if (st.isDirectory()) materializeLinks(full);
+      };
+      scan(root);
+
+      // Pass 2: Remove all links and copy in the resolved regular files.
+      for (const { full, real, isFile } of linksToProcess) {
+        rmSync(full, { force: true, recursive: true });
+        if (isFile) copyFileSync(real, full);
       }
     };
     if (allowSymlinks) {

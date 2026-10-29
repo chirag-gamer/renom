@@ -736,7 +736,8 @@ async function installNeoForge(
   // so a naive find() pins a prerelease whenever one exists; prefer the
   // newest stable build and only fall back to a prerelease when the series
   // has none yet.
-  const prefix = mc.startsWith("1.") ? `${mc.slice(2)}.` : `${mc}.`;
+  const parts = mc.split(".");
+  const prefix = parts.length === 2 ? `${parts[1]}.0.` : `${parts[1]}.${parts[2]}.`;
   const stable = (promos.versions ?? []).filter((v) => v.startsWith(prefix) && !/[+-]/.test(v));
   const anySeries = (promos.versions ?? []).filter((v) => v.startsWith(prefix));
   const loader = stable.at(-1) ?? anySeries.at(-1);

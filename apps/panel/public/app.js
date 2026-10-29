@@ -1222,12 +1222,14 @@ async function openServer(id, tab = "overview", updateUrl = true) {
   if (canServer("schedule.read")) tasks.push(refreshSchedules(generation));
   if (canServer("startup.read")) {
     // Software/Startup do not depend on the capability kind — start them
-    // immediately. Capability decides the addons folder filter; awaiting it
-    // keeps a Fabric server's first paint from filtering to /plugins, and
-    // the hook itself refreshes the installed list when the kind is decided
-    // (its registry probe can be slow, so it must not gate the other tabs).
-    tasks.push(refreshSoftware(generation), refreshVariables(generation));
-    await refreshAddonCapability(generation);
+    // immediately. Capability decides the addons folder filter; pushing it into
+    // tasks keeps it from gating network, users, or settings tabs, while
+    // the hook itself refreshes the installed list when the kind is decided.
+    tasks.push(
+      refreshSoftware(generation),
+      refreshVariables(generation),
+      refreshAddonCapability(generation),
+    );
   }
   if (canServer("allocation.read")) tasks.push(refreshNetwork(generation));
   if (canServer("user.read")) tasks.push(refreshSubusers(generation));
@@ -3355,8 +3357,9 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
     confirmBtn.textContent = "Switching & Installing...";
   }
 
+  const targetServerId = currentServer.id;
   const createBackup = backupCheckbox ? backupCheckbox.checked : true;
-  const res = await api(`/servers/${currentServer.id}/software`, {
+  const res = await api(`/servers/${targetServerId}/software`, {
     method: "PUT",
     token: store.token,
     body: {
@@ -3385,7 +3388,7 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
       successAlert.hidden = false;
     }
     showToast(`Installing ${pendingSwapSoftware.name}…`, "success");
-    const settled = await awaitServerInstall(currentServer.id);
+    const settled = await awaitServerInstall(targetServerId);
     if (settled && settled.status === "ready") {
       showToast(`Swapped to ${pendingSwapSoftware.name}.`, "success");
     } else if (settled && settled.status === "install_failed") {
@@ -3397,7 +3400,9 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
         );
       showToast("The software install failed.", "error");
     }
-    await refreshAfterSwap();
+    if (currentServer?.id === targetServerId) {
+      await refreshAfterSwap();
+    }
     return;
   }
 
@@ -3420,7 +3425,9 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
     showToast(`Swapped to ${pendingSwapSoftware.name}.`, "success");
   }
 
-  await refreshAfterSwap();
+  if (currentServer?.id === targetServerId) {
+    await refreshAfterSwap();
+  }
 });
 
 /**

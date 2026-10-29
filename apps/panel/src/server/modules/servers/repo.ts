@@ -224,12 +224,12 @@ export class ServersRepo {
   /**
    * A specific port an admin assigned at creation. Checked inside the same
    * transaction as the insert, so the UNIQUE(ip,port) index still backs the
-   * race; the thrown shape matches what `create` already maps to a retry.
+   * race. `create` does not retry it; the route maps it to a 409 instead.
    */
   private claimSpecificPort(ip: string, port: number): number {
     const taken = this.db
-      .prepare("SELECT 1 FROM allocations WHERE ip = ? AND port = ? AND released = 0")
-      .get(ip, port);
+      .prepare("SELECT 1 FROM allocations WHERE port = ? AND released = 0")
+      .get(port);
     if (taken) throw new PortTakenError(port);
     return port;
   }

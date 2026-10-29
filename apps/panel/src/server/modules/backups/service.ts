@@ -131,6 +131,9 @@ export class BackupsService {
     let fileName = `${software}_${day}_${time}.tar.gz`;
     const destDir = join(this.dataDir, "backups", serverId);
     mkdirSync(destDir, { recursive: true });
+    const srcDir = join(this.dataDir, "servers", serverId);
+    if (!existsSync(srcDir)) mkdirSync(srcDir, { recursive: true });
+
     // Reserve the name atomically (exclusive create) instead of probing with
     // existsSync: two creators in the same second (manual POST + schedule)
     // would both pass a probe and then tar into the same path, truncating
@@ -147,9 +150,6 @@ export class BackupsService {
         dest = join(destDir, fileName);
       }
     }
-    const srcDir = join(this.dataDir, "servers", serverId);
-
-    if (!existsSync(srcDir)) mkdirSync(srcDir, { recursive: true });
     // Blueprint denylist plus the hardcoded secret excludes (n2: tar emits
     // `./`-prefixed members, so both spellings ship).
     const excludes = [...DEFAULT_SECRET_EXCLUDES, ...(doc.fileDenylist ?? [])].flatMap((p) => [

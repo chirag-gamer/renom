@@ -199,7 +199,7 @@ export function buildPanel(sourceEnv: NodeJS.ProcessEnv = process.env): {
         schedulesRouter({ db, scheduler, audit, auth }),
         tunnelRouter({ db, servers, engine, audit, auth, dataDir }),
         addonsRouter({ db, servers, audit, auth, dataDir }),
-        filesRouter(db, env, files, audit, auth),
+        filesRouter(db, env, files, audit, auth, logger),
         activityRouter({ db, audit, auth }),
         blueprintsRouter(blueprints, auth, audit),
       );

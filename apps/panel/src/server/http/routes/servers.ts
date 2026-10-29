@@ -447,6 +447,9 @@ export function serversRouter(deps: ServersDeps): Router {
       const id = req.params.id ?? "";
       const s = servers.byId(id);
       if (!s) throw new NotFoundError("Not found");
+      if (s.status === "installing") {
+        throw new ConflictError("Server is currently installing");
+      }
       if (engine.stateOf(id) !== "offline") {
         throw new ConflictError("Stop the server before reinstalling it");
       }
@@ -473,6 +476,7 @@ export function serversRouter(deps: ServersDeps): Router {
       // longer install into a proxy 502 (the PUT-software report), and the
       // client polls `status` exactly as it does after server creation.
       // Test mode stays synchronous (see the software swap for the rationale).
+      let installError: unknown = null;
       const runInstall = () =>
         runInstallOps(doc, { serverId: id, dir: join(dataDir, "servers", id), vars })
           .then(() => {
@@ -481,6 +485,7 @@ export function serversRouter(deps: ServersDeps): Router {
             audit.record({ event: "server.install.done", serverId: id });
           })
           .catch((err: unknown) => {
+            installError = err;
             servers.setStatus(id, "install_failed");
             audit.record({
               event: "server.install.failed",
@@ -490,6 +495,7 @@ export function serversRouter(deps: ServersDeps): Router {
           });
       if (process.env.NODE_ENV === "test") {
         await runInstall();
+        if (installError) throw installError;
         res.json({ status: "ready" });
         return;
       }
@@ -590,6 +596,9 @@ export function serversRouter(deps: ServersDeps): Router {
       const id = req.params.id ?? "";
       const s = servers.byId(id);
       if (!s) throw new NotFoundError("Not found");
+      if (s.status === "installing") {
+        throw new ConflictError("Server is currently installing");
+      }
       if (engine.stateOf(id) !== "offline") {
         throw new ConflictError("Stop the server before changing software or ecosystem");
       }
@@ -719,6 +728,7 @@ export function serversRouter(deps: ServersDeps): Router {
       // (Test mode stays synchronous like server creation: the spec reads
       // post-install variables immediately after the response.)
       const background = process.env.NODE_ENV !== "test";
+      let installError: unknown = null;
       const runInstall = () =>
         runInstallOps(doc, {
           serverId: id,
@@ -732,6 +742,7 @@ export function serversRouter(deps: ServersDeps): Router {
             audit.record({ event: "server.install.done", serverId: id });
           })
           .catch((err: unknown) => {
+            installError = err;
             servers.setStatus(id, "install_failed");
             audit.record({
               event: "server.install.failed",
@@ -752,6 +763,7 @@ export function serversRouter(deps: ServersDeps): Router {
         return;
       }
       await runInstall();
+      if (installError) throw installError;
       res.json({
         status: "ready",
         software: bp.slug,

@@ -193,7 +193,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
       throw new BadRequestError("Pack type must be behavior_packs or resource_packs");
     }
     // `name` is a folder under the pack root: no separators, no dot-storms.
-    if (!/^[A-Za-z0-9][A-Za-z0-9 ._+-]*$/.test(name) || name.includes("..")) {
+    if (!name || name.startsWith(".") || /[\\/\0]/.test(name) || name.includes("..")) {
       throw new BadRequestError("Invalid pack folder name");
     }
     return join(dataDir, "servers", serverId, type, name);
@@ -268,7 +268,9 @@ export function addonsRouter(deps: AddonsDeps): Router {
           throw new ConflictError("Bedrock packs only apply to the Bedrock Dedicated Server");
         }
         const packDir = packDirFor(id, req.params.type ?? "", req.params.name ?? "");
-        if (!existsSync(packDir)) throw new NotFoundError("Pack not found");
+        if (!existsSync(packDir) || !statSync(packDir).isDirectory()) {
+          throw new NotFoundError("Pack not found");
+        }
         rmSync(packDir, { recursive: true, force: true });
         // Drop the pack from BDS's known-packs registry when it was listed;
         // a stale entry pointing at a deleted folder makes BDS log warnings.

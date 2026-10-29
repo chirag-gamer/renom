@@ -269,7 +269,7 @@ export function readOnlineMode(serverDir: string): boolean {
   try {
     const text = readFileSync(join(serverDir, "server.properties"), "utf8");
     const m = /^\s*online-mode\s*=\s*(.*)$/m.exec(text);
-    return (m?.[1] ?? "true").trim() !== "false";
+    return (m?.[1] ?? "true").trim().toLowerCase() === "true";
   } catch {
     return true;
   }

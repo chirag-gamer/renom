@@ -70,29 +70,40 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
       const serverId = req.params.id ?? "";
       const now = Date.now();
       const id = ulid(now);
-      // One port per server: a second unreleased allocation is refused
-      // before the insert. The check + insert share one transaction so two
-      // concurrent POSTs cannot both pass the count probe; the UNIQUE(ip,
-      // port) partial index remains the backstop for the same-port race.
+      // One port per server: assigning a new port atomically swaps out the
+      // server's existing allocation inside the same transaction. If the
+      // requested port is taken by another server, the check (or the UNIQUE(ip,
+      // port) partial index) aborts the swap and the original allocation stands.
       // Blueprints may declare auxiliary ports (BDS's IPv6 game port); those
       // are derived from the blueprint at boot, not separately allocated
       // rows, so the one-row rule stands.
       try {
         db.transaction(() => {
-          const existing = db
-            .prepare("SELECT COUNT(*) AS n FROM allocations WHERE server_id = ? AND released = 0")
-            .get(serverId) as { n: number };
-          if (Number(existing.n) > 0) {
-            throw new ConflictError(
-              "This server already has an allocation — one port per server; release it first",
-            );
+          const clash =
+            body.ip === "0.0.0.0"
+              ? db
+                  .prepare(
+                    "SELECT 1 FROM allocations WHERE port = ? AND (server_id IS NULL OR server_id != ?) AND released = 0",
+                  )
+                  .get(body.port, serverId)
+              : db
+                  .prepare(
+                    "SELECT 1 FROM allocations WHERE (ip = ? OR ip = '0.0.0.0') AND port = ? AND (server_id IS NULL OR server_id != ?) AND released = 0",
+                  )
+                  .get(body.ip, body.port, serverId);
+          if (clash) {
+            throw new ConflictError(`Allocation ${body.ip}:${body.port} is already in use`);
           }
           db.prepare(
+            "UPDATE allocations SET server_id = NULL, released = 1, updated_at = ? WHERE server_id = ? AND released = 0",
+          ).run(now, serverId);
+          db.prepare(
             `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, '', ?, ?)`,
+             VALUES (?, ?, ?, ?, 'primary', ?, ?)`,
           ).run(id, serverId, body.ip, body.port, now, now);
         });
       } catch (err) {
+        if (err instanceof ConflictError) throw err;
         // Only the address-in-use conflict maps to 409; anything else is a
         // real database problem and must surface as a 500, not a lie.
         if (!(err instanceof Error) || !err.message.includes("UNIQUE constraint failed")) {

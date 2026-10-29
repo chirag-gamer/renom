@@ -330,16 +330,19 @@ export class LocalProcessEngine {
     const cwd = confineWorkdir(dir, doc.run?.workdir ?? "/data");
     mkdirSync(cwd, { recursive: true });
 
-    // The Connect plugin writes config.yml on its FIRST boot, so a sync that
-    // only fires on the properties flip can miss a server where the flip
-    // happened before the file existed. Converge again on every start —
-    // best-effort, exactly like the properties-flip path: an unreadable or
-    // read-only config must never block the start itself.
-    try {
-      syncConnectOfflineMode(dir, readOnlineMode(dir));
-    } catch {
-      // non-fatal: the plugin re-reads the server on the next boot
-    }
+    const connectConfigPath = join(dir, "plugins", "connect", "config.yml");
+    const connectConfigExisted = existsSync(connectConfigPath);
+    let connectSyncedOnBoot = connectConfigExisted;
+    const trySyncConnectOnGeneration = () => {
+      if (!connectSyncedOnBoot && existsSync(connectConfigPath)) {
+        connectSyncedOnBoot = true;
+        try {
+          syncConnectOfflineMode(dir, readOnlineMode(dir));
+        } catch {
+          // non-fatal: best effort
+        }
+      }
+    };
 
     this.servers.setRuntimeState(serverId, "starting");
     // Reuse a lazy slot (listeners survive restarts) or create one.
@@ -433,6 +436,7 @@ export class LocalProcessEngine {
       for (const text of parts) {
         if (text.length > 0) emit(stream, text);
       }
+      trySyncConnectOnGeneration();
     };
     const flush = (stream: "stdout" | "stderr") => {
       if (buffers[stream].length > 0) emit(stream, buffers[stream]);
@@ -468,6 +472,7 @@ export class LocalProcessEngine {
     // async error/exit. Wait briefly so start() reports failure honestly
     // instead of claiming "running" for a dead process.
     await new Promise((resolve) => setTimeout(resolve, 1200));
+    trySyncConnectOnGeneration();
     const failure = startupFailed as Error | null;
     if (failure || this.stateOf(serverId) === "offline") {
       const reason = failure?.message ?? "process exited during startup";

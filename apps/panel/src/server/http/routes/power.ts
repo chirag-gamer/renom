@@ -8,7 +8,7 @@ import type { AuthService } from "../../modules/auth/service.js";
 import { requireAuth } from "../middleware/authn.js";
 import { requireServerPermission, assertSuspendedReadable } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
-import { ForbiddenError } from "../../shared/errors.js";
+import { ConflictError, ForbiddenError } from "../../shared/errors.js";
 
 const powerSchema = z.object({
   action: z.enum(["start", "stop", "restart", "kill"]),
@@ -50,6 +50,9 @@ export function powerRouter(deps: PowerDeps): Router {
       const id = req.params.id ?? "";
       const row = servers.byId(id);
       if (row?.status === "suspended") throw new ForbiddenError("Server is suspended");
+      if (row?.status === "installing") {
+        throw new ConflictError("Server is currently installing");
+      }
 
       if (body.action === "start") await engine.start(id);
       else if (body.action === "stop") await engine.stop(id);
@@ -79,6 +82,9 @@ export function powerRouter(deps: PowerDeps): Router {
       // Suspended means inert: console input is a mutation like any other.
       const row = servers.byId(req.params.id ?? "");
       if (row?.status === "suspended") throw new ForbiddenError("Server is suspended");
+      if (row?.status === "installing") {
+        throw new ConflictError("Server is currently installing");
+      }
       const accepted = engine.sendInput(req.params.id ?? "", body.command);
       res.json({ accepted });
     })().catch(next);

@@ -21,6 +21,7 @@ import { BadRequestError, NotFoundError } from "../../shared/errors.js";
 import { resolve as resolveFsPath, join, basename } from "node:path";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { Env } from "../../config/env.js";
+import type { Logger } from "../../shared/logger.js";
 
 const MAX_TEXT_WRITE = 2 * 1024 * 1024; // text editor writes bounded; uploads come separately
 
@@ -86,6 +87,7 @@ export function filesRouter(
   files: FilesService,
   audit: AuditService,
   auth: AuthService,
+  logger?: Logger,
 ): Router {
   const router = Router();
 
@@ -372,8 +374,11 @@ export function filesRouter(
       if (accepted["online-mode"] !== undefined && accepted["online-mode"] !== previousOnlineMode) {
         try {
           syncConnectOfflineMode(root, accepted["online-mode"] !== "false");
-        } catch {
-          // deliberately swallowed: see the comment above
+        } catch (err) {
+          logger?.warn(
+            { err, serverId: req.params.id },
+            "failed to sync Minekube Connect offline mode",
+          );
         }
       }
       audit.record({

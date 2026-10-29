@@ -238,26 +238,43 @@ describe("subusers", () => {
 });
 
 describe("allocations", () => {
-  it("lists the primary, refuses a second port and last-release; non-admins get 403", async () => {
+  it("lists the primary, atomically swaps port, refuses in-use clash and last-release; non-admins get 403", async () => {
     const list = await request(app)
       .get(`/api/v3/servers/${serverId}/allocations`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(list.body.allocations.length).toBe(1);
     const primary = list.body.allocations[0] as { id: string; port: number };
 
-    // One port per server: a second allocation is refused even when the
-    // port itself is free.
-    const second = await request(app)
+    // Create a second server to verify global address-in-use port conflict
+    const other = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "other-alloc", blueprintSlug: "paper", eulaAccepted: true });
+    expect(other.status).toBe(201);
+    const otherId = other.body.server.id as string;
+
+    // One port per server: assigning a new port atomically swaps out the previous one
+    const swapped = await request(app)
       .post(`/api/v3/servers/${serverId}/allocations`)
       .set("authorization", `Bearer ${ownerToken}`)
       .send({ ip: "127.0.0.1", port: 25570 });
-    expect(second.status).toBe(409);
+    expect(swapped.status).toBe(201);
+    expect(swapped.body.allocation.port).toBe(25570);
 
+    const listAfter = await request(app)
+      .get(`/api/v3/servers/${serverId}/allocations`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(listAfter.body.allocations.length).toBe(1);
+    expect(listAfter.body.allocations[0].port).toBe(25570);
+
+    // Global port conflict: other server cannot claim a port already in use
     const clash = await request(app)
-      .post(`/api/v3/servers/${serverId}/allocations`)
+      .post(`/api/v3/servers/${otherId}/allocations`)
       .set("authorization", `Bearer ${ownerToken}`)
-      .send({ ip: "0.0.0.0", port: primary.port });
+      .send({ ip: "0.0.0.0", port: 25570 });
     expect(clash.status).toBe(409);
+    expect(clash.body.error.code).toBe("conflict");
+    expect(clash.body.error.message).toContain("25570");
 
     // A collaborator who actually HOLDS allocation.update is still refused:
     // the port rule is an admin rule, not a permission — without the grant
@@ -276,7 +293,7 @@ describe("allocations", () => {
 
     // Releasing the only allocation is refused — every server keeps one.
     const last = await request(app)
-      .delete(`/api/v3/servers/${serverId}/allocations/${primary.id}`)
+      .delete(`/api/v3/servers/${serverId}/allocations/${swapped.body.allocation.id}`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(last.status).toBe(400);
   });

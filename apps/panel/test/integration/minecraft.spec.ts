@@ -703,6 +703,14 @@ describe("EULA gate + variables + tunnel API", () => {
       .send({ values: { mcVersion: "1.21.1" } });
     expect(set.status).toBe(200);
 
+    // Verify the variable was actually persisted in the database
+    const vars = await request(app)
+      .get(`/api/v3/servers/${fid}/variables`)
+      .set("authorization", `Bearer ${ownerToken}`);
+    expect(vars.status).toBe(200);
+    const mcVar = vars.body.variables.find((v: { key: string }) => v.key === "mcVersion");
+    expect(mcVar?.value).toBe("1.21.1");
+
     const cap = await request(app)
       .get(`/api/v3/servers/${fid}/addons/capability`)
       .set("authorization", `Bearer ${ownerToken}`);
@@ -710,6 +718,29 @@ describe("EULA gate + variables + tunnel API", () => {
     expect(cap.body.supported).toBe(true);
     expect(cap.body.kind).toBe("mod");
     expect(cap.body.folder).toBe("mods");
+
+    // Deterministic reinstall assertion: mock the Fabric registry so the reinstall
+    // flow runs end-to-end against the persisted version without external network dependencies.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes("meta.fabricmc.net")) {
+        return new Response("not found", { status: 404 });
+      }
+      return originalFetch(url as never);
+    }) as typeof fetch;
+    try {
+      const reinstall = await request(app)
+        .post(`/api/v3/servers/${fid}/install`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(reinstall.status).toBe(409);
+
+      const failed = await request(app)
+        .get(`/api/v3/servers/${fid}`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(failed.body.server.status).toBe("install_failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("addons list scans plugin/mod folders", async () => {
