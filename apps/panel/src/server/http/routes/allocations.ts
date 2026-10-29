@@ -18,8 +18,9 @@ import {
 } from "../../shared/errors.js";
 import { ulid } from "../../shared/ulid.js";
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { applyPropertyChanges } from "../../modules/files/properties.js";
+import type { Logger } from "../../shared/logger.js";
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
@@ -33,6 +34,7 @@ export interface AllocationsDeps {
   audit: AuditService;
   auth: AuthService;
   dataDir?: string;
+  logger?: Logger;
 }
 
 /**
@@ -146,11 +148,25 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
             const content = readFileSync(propPath, "utf8");
             const updated = applyPropertyChanges(content, { "server-port": String(body.port) });
             if (updated !== content) {
-              writeFileSync(propPath, updated, "utf8");
+              const tmp = `${propPath}.renom-tmp-${process.pid}-${Date.now()}`;
+              try {
+                writeFileSync(tmp, updated, "utf8");
+                renameSync(tmp, propPath);
+              } catch (writeErr) {
+                try {
+                  rmSync(tmp, { force: true });
+                } catch {
+                  /* empty */
+                }
+                throw writeErr;
+              }
             }
           }
-        } catch {
-          // best-effort update: does not fail the allocation assignment
+        } catch (err) {
+          deps.logger?.warn(
+            { err, serverId, port: body.port },
+            "failed to sync server-port to server.properties",
+          );
         }
       }
       res.status(201).json({ allocation: { id, ip: body.ip, port: body.port } });
