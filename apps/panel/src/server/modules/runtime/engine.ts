@@ -6,7 +6,12 @@ import type { ServersRepo } from "../servers/repo.js";
 import type { BlueprintRegistry } from "../blueprints/registry.js";
 import type { BlueprintVariable } from "../blueprints/schema.js";
 import { EngineError } from "../../shared/errors.js";
-import { claimEndpointName, endpointValid } from "../tunnels/minekube.js";
+import {
+  claimEndpointName,
+  endpointValid,
+  readOnlineMode,
+  syncConnectOfflineMode,
+} from "../tunnels/minekube.js";
 import { perSecond, readNetworkCounters, readProcessReading } from "./stats.js";
 
 export type PowerAction = "start" | "stop" | "restart" | "kill";
@@ -93,7 +98,17 @@ export function javaRuntimeCandidates(mcVersion?: string): string[] {
   return ["17", "21"];
 }
 
-function resolveJavaBinary(version: string | undefined, mcVersion?: string): string | null {
+/**
+ * The Java executable this blueprint should run under, or null when none of
+ * the candidate JDKs match. Exported because installer ops (`fetch-forge`,
+ * `fetch-fabric`) must invoke the SAME JDK the server will later use — an
+ * installer run under a different major writes arguments the runtime cannot
+ * load.
+ */
+export function resolveJavaExecutable(
+  version: string | undefined,
+  mcVersion?: string,
+): string | null {
   if (version === "auto" || !version) {
     for (const candidate of javaRuntimeCandidates(mcVersion)) {
       const binary = resolveJavaBinaryVersion(candidate);
@@ -241,7 +256,7 @@ export class LocalProcessEngine {
     let cmd = rawCmd;
     const args = [...restArgs];
     if (rawCmd === "java") {
-      const javaBinary = resolveJavaBinary(vars["javaVersion"], vars["mcVersion"]);
+      const javaBinary = resolveJavaExecutable(vars["javaVersion"], vars["mcVersion"]);
       if (!javaBinary) {
         throw new EngineError(
           `Java ${vars["javaVersion"] ?? "runtime"} is not installed on this host. Install it before starting this server.`,
@@ -314,6 +329,20 @@ export class LocalProcessEngine {
     mkdirSync(dir, { recursive: true });
     const cwd = confineWorkdir(dir, doc.run?.workdir ?? "/data");
     mkdirSync(cwd, { recursive: true });
+
+    const connectConfigPath = join(dir, "plugins", "connect", "config.yml");
+    const connectConfigExisted = existsSync(connectConfigPath);
+    let connectSyncedOnBoot = connectConfigExisted;
+    const trySyncConnectOnGeneration = () => {
+      if (!connectSyncedOnBoot && existsSync(connectConfigPath)) {
+        connectSyncedOnBoot = true;
+        try {
+          syncConnectOfflineMode(dir, readOnlineMode(dir));
+        } catch {
+          // non-fatal: best effort
+        }
+      }
+    };
 
     this.servers.setRuntimeState(serverId, "starting");
     // Reuse a lazy slot (listeners survive restarts) or create one.
@@ -407,6 +436,7 @@ export class LocalProcessEngine {
       for (const text of parts) {
         if (text.length > 0) emit(stream, text);
       }
+      trySyncConnectOnGeneration();
     };
     const flush = (stream: "stdout" | "stderr") => {
       if (buffers[stream].length > 0) emit(stream, buffers[stream]);
@@ -442,6 +472,7 @@ export class LocalProcessEngine {
     // async error/exit. Wait briefly so start() reports failure honestly
     // instead of claiming "running" for a dead process.
     await new Promise((resolve) => setTimeout(resolve, 1200));
+    trySyncConnectOnGeneration();
     const failure = startupFailed as Error | null;
     if (failure || this.stateOf(serverId) === "offline") {
       const reason = failure?.message ?? "process exited during startup";

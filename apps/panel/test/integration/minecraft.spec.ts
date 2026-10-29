@@ -8,6 +8,7 @@ import { buildPanel } from "../../src/server/index.js";
 import {
   runInstallOps,
   installModrinthProjects,
+  searchModrinthProjects,
 } from "../../src/server/modules/runtime/install.js";
 import {
   parsePublicAddress,
@@ -306,6 +307,74 @@ describe("install executor", () => {
     expect(params.get("game_versions")).toContain("1.21.1");
   });
 
+  it("searches mods with the platform's own project_type facet", async () => {
+    // The regression this guards: the search route once hardcoded
+    // project_type:"plugin", so a Fabric/Forge server's Mods tab returned
+    // zero hits for Sodium/JEI/Fabric API (Modrinth's facet matches
+    // all_project_types, and those projects are bucketed "mod").
+    const seen: string[] = [];
+    const fetchImpl = stubFetch(
+      {
+        "https://api.modrinth.com/v2/search?query=sodium&facets=%5B%5B%22categories%3Afabric%22%5D%2C%5B%22versions%3A1.21.1%22%5D%2C%5B%22project_type%3Amod%22%5D%5D&index=downloads&limit=10&offset=0":
+          {
+            json: { total_hits: 1, hits: [] },
+          },
+      },
+      (url) => seen.push(url),
+    );
+    await searchModrinthProjects(
+      fetchImpl,
+      { loaders: ["fabric"], projectType: "mod" },
+      "1.21.1",
+      "sodium",
+    );
+    const searchCall = seen.find((u) => u.includes("/v2/search"));
+    expect(searchCall).toBeDefined();
+    const params = new URL(searchCall!).searchParams;
+    const facets = JSON.parse(params.get("facets") ?? "[]") as string[][];
+    expect(facets.flat()).toContain("project_type:mod");
+    expect(facets.flat()).not.toContain("project_type:plugin");
+  });
+
+  it("re-installing the same project skips the download (dedupe on sha512)", async () => {
+    // Modrinth publishes sha512 + sha1, never sha256 — the dedupe key must
+    // be a hash the API actually serves, or every repeat install re-downloads.
+    const addonBytes = Buffer.from("fake-dedupe-jar");
+    const addonSha512 = createHash("sha512").update(addonBytes).digest("hex");
+    const fetchImpl = stubFetch({
+      "https://api.modrinth.com/v2/project/luckperms/version": {
+        json: [
+          {
+            files: [
+              {
+                url: "https://cdn.modrinth.com/luckperms.jar",
+                filename: "LuckPerms.jar",
+                hashes: { sha512: addonSha512 },
+                primary: true,
+              },
+            ],
+          },
+        ],
+      },
+      "https://cdn.modrinth.com/luckperms.jar": { bytes: addonBytes },
+    });
+    const srv = join(dir, "addons-dedupe");
+    mkdirSync(srv, { recursive: true });
+    const ctxBase = {
+      serverId: "x",
+      dir: srv,
+      vars: { mcVersion: "1.21.1" },
+      blueprintSlug: "paper",
+      fetchImpl,
+    };
+    const first = await installModrinthProjects(fetchImpl, ctxBase, ["luckperms"]);
+    expect(first.downloaded).toEqual(["LuckPerms.jar"]);
+    expect(first.skipped).toEqual([]);
+    const second = await installModrinthProjects(fetchImpl, ctxBase, ["luckperms"]);
+    expect(second.downloaded).toEqual([]);
+    expect(second.skipped).toEqual(["LuckPerms.jar"]);
+  });
+
   it("refuses versionId when installing multiple projects to prevent partial installs", async () => {
     const srv = join(dir, "addons-multi-version");
     mkdirSync(srv, { recursive: true });
@@ -391,7 +460,7 @@ describe("install executor", () => {
     ).rejects.toThrow(/not supported/);
   });
 
-  it("refuses escaping paths and unwired ops", async () => {
+  it("refuses escaping paths and fails cleanly on unreachable loader metadata", async () => {
     const srv = join(dir, "escape");
     mkdirSync(srv, { recursive: true });
     await expect(
@@ -405,6 +474,9 @@ describe("install executor", () => {
         },
       ),
     ).rejects.toThrow(/escapes/);
+    // Concrete mcVersion means no version lookup; the loader registry 404s and
+    // the install fails with a status-bearing message rather than a silent
+    // half-install.
     await expect(
       runInstallOps({ install: [{ op: "fetch-fabric", mcVersion: "1.21.1" }] } as never, {
         serverId: "x",
@@ -412,7 +484,7 @@ describe("install executor", () => {
         vars: {},
         fetchImpl: stubFetch({}),
       }),
-    ).rejects.toThrow(/not wired yet/);
+    ).rejects.toThrow(/loader\/1\.21\.1/);
   });
 });
 
@@ -612,10 +684,12 @@ describe("EULA gate + variables + tunnel API", () => {
     expect(String(tunnel.body.error.message)).toContain("docs/tunnels.md");
   });
 
-  it("version change is a variable edit + reinstall (mechanics)", async () => {
-    // Point at an exact version, then reinstall. Fabric's fetcher is unwired,
-    // so the endpoint fails closed with 409 — proving the flow reaches the
-    // installer with the edited variables instead of silently succeeding.
+  it("version change is a variable edit; fabric exposes a mod platform", async () => {
+    // Fabric's installer is wired now, so a reinstall genuinely reaches
+    // Fabric's registry — which would make this test a network test. What
+    // stays deterministic here: the version is a plain variable edit, and
+    // the addons capability answers "mod platform" (the old code hid the
+    // tab on every mod loader; it must not).
     const fabric = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${ownerToken}`)
@@ -629,15 +703,44 @@ describe("EULA gate + variables + tunnel API", () => {
       .send({ values: { mcVersion: "1.21.1" } });
     expect(set.status).toBe(200);
 
-    const reinstall = await request(app)
-      .post(`/api/v3/servers/${fid}/install`)
+    // Verify the variable was actually persisted in the database
+    const vars = await request(app)
+      .get(`/api/v3/servers/${fid}/variables`)
       .set("authorization", `Bearer ${ownerToken}`);
-    expect(reinstall.status).toBe(409);
+    expect(vars.status).toBe(200);
+    const mcVar = vars.body.variables.find((v: { key: string }) => v.key === "mcVersion");
+    expect(mcVar?.value).toBe("1.21.1");
 
-    const failed = await request(app)
-      .get(`/api/v3/servers/${fid}`)
+    const cap = await request(app)
+      .get(`/api/v3/servers/${fid}/addons/capability`)
       .set("authorization", `Bearer ${ownerToken}`);
-    expect(failed.body.server.status).toBe("install_failed");
+    expect(cap.status).toBe(200);
+    expect(cap.body.supported).toBe(true);
+    expect(cap.body.kind).toBe("mod");
+    expect(cap.body.folder).toBe("mods");
+
+    // Deterministic reinstall assertion: mock the Fabric registry so the reinstall
+    // flow runs end-to-end against the persisted version without external network dependencies.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes("meta.fabricmc.net")) {
+        return new Response("not found", { status: 404 });
+      }
+      return originalFetch(url as never);
+    }) as typeof fetch;
+    try {
+      const reinstall = await request(app)
+        .post(`/api/v3/servers/${fid}/install`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(reinstall.status).toBe(409);
+
+      const failed = await request(app)
+        .get(`/api/v3/servers/${fid}`)
+        .set("authorization", `Bearer ${ownerToken}`);
+      expect(failed.body.server.status).toBe("install_failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("addons list scans plugin/mod folders", async () => {

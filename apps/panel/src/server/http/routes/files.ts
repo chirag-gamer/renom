@@ -16,10 +16,12 @@ import {
   parseProperties,
 } from "../../modules/files/properties.js";
 import { PathEscapeError } from "../../modules/files/confinement.js";
+import { syncConnectOfflineMode } from "../../modules/tunnels/minekube.js";
 import { BadRequestError, NotFoundError } from "../../shared/errors.js";
 import { resolve as resolveFsPath, join, basename } from "node:path";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { Env } from "../../config/env.js";
+import type { Logger } from "../../shared/logger.js";
 
 const MAX_TEXT_WRITE = 2 * 1024 * 1024; // text editor writes bounded; uploads come separately
 
@@ -85,6 +87,7 @@ export function filesRouter(
   files: FilesService,
   audit: AuditService,
   auth: AuthService,
+  logger?: Logger,
 ): Router {
   const router = Router();
 
@@ -359,7 +362,25 @@ export function filesRouter(
         // A key the file does not contain is ignored rather than invented: the
         // server writes its own defaults and would fight an appended guess.
       }
+      // Track the previous online-mode so the Connect plugin config only
+      // syncs when the value actually flipped.
+      const previousOnlineMode = parsed.properties.find((p) => p.key === "online-mode")?.value;
       files.writeText(root, "server.properties", applyPropertyChanges(content, accepted));
+      // The tunnel plugin's `allow-offline-mode-players` must not override
+      // server.properties: flipping `online-mode` there sets it to blank
+      // (the plugin's secure auto-detect), flipping it back restores
+      // `false`. Best-effort — a server without the tunnel has no config
+      // and must not fail the properties save.
+      if (accepted["online-mode"] !== undefined && accepted["online-mode"] !== previousOnlineMode) {
+        try {
+          syncConnectOfflineMode(root, accepted["online-mode"] !== "false");
+        } catch (err) {
+          logger?.warn(
+            { err, serverId: req.params.id },
+            "failed to sync Minekube Connect offline mode",
+          );
+        }
+      }
       audit.record({
         event: "server.properties.update",
         actorUserId: req.principal!.userId,

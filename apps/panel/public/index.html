@@ -674,6 +674,21 @@
                 >Disk MB
                 <input name="diskQuotaMb" type="number" min="256" max="10485760" value="5120" />
               </label>
+              <label
+                >Port <span class="hint">optional</span>
+                <input
+                  name="port"
+                  id="admin-server-port"
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  placeholder="auto"
+                />
+                <span class="hint"
+                  >Leave empty to auto-assign. One port per server; the panel refuses taken
+                  ports.</span
+                >
+              </label>
             </div>
             <label class="check"
               ><input type="checkbox" id="eula-check" /> I accept the Minecraft EULA
@@ -885,11 +900,20 @@
 
               <div id="tab-addons" hidden>
                 <h3 class="section-title" id="addon-installed-title">Installed</h3>
-                <p class="panel-lede-sub">
+                <p class="panel-lede-sub" id="addon-installed-lede">
                   Plugins in your /plugins folder. Changes apply after a restart.
                 </p>
                 <ul id="addon-list" class="addon-installed-list"></ul>
                 <p class="error" id="addons-error" role="alert" hidden></p>
+
+                <!-- BDS shows packs here instead of the jar list. -->
+                <div id="bedrock-packs-section" hidden>
+                  <h3 class="section-title">Installed packs</h3>
+                  <p class="panel-lede-sub">
+                    Behavior and resource packs under behavior_packs/ and resource_packs/.
+                  </p>
+                  <ul id="bedrock-packs-list" class="addon-installed-list"></ul>
+                </div>
 
                 <div
                   class="pagination-bar addon-installed-pagination"
@@ -906,7 +930,9 @@
                 </div>
 
                 <h3 class="section-title" id="addon-browse-title">Browse</h3>
-                <p class="panel-lede-sub">Find plugins and install them on your server.</p>
+                <p class="panel-lede-sub" id="addon-browse-lede">
+                  Find plugins and install them on your server.
+                </p>
 
                 <p class="success-banner" id="addons-alert-success" role="status" hidden></p>
                 <p class="error" id="addons-alert-error" role="alert" hidden></p>
@@ -1192,7 +1218,7 @@
                     >Description
                     <input name="description" id="settings-desc" maxlength="500" />
                   </label>
-                  <label data-admin-only hidden
+                  <label
                     >CPU (JVM processor count hint)
                     <input
                       name="cpuWeight"
@@ -1208,7 +1234,7 @@
                       not a kernel-level CPU quota, and it only applies to Java servers.
                     </span>
                   </label>
-                  <label data-admin-only hidden
+                  <label
                     >Memory limit (MB)
                     <input
                       name="memoryMb"
@@ -1218,7 +1244,7 @@
                       max="1048576"
                     />
                   </label>
-                  <label data-admin-only hidden
+                  <label
                     >Disk quota (MB)
                     <input
                       name="diskQuotaMb"
@@ -1228,6 +1254,9 @@
                       max="10485760"
                     />
                   </label>
+                  <p class="hint" id="settings-resources-note" hidden>
+                    CPU, memory, and disk limits are managed by panel administrators.
+                  </p>
                   <p><button type="submit">Save settings</button></p>
                 </form>
                 <p>

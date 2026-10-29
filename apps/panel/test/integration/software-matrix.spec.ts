@@ -109,11 +109,13 @@ describe("Software & Egg Matrix Test Suite", () => {
       const jarBytes = Buffer.from("fake-purpur-jar");
       const jarMd5 = createHash("md5").update(jarBytes).digest("hex");
       const fetchImpl = stubFetch({
-        "https://api.purpurmc.org/v2/paper/1.21.1/2345/download": { bytes: jarBytes },
-        "https://api.purpurmc.org/v2/paper/1.21.1/2345": {
+        "https://api.purpurmc.org/v2/purpur/1.21.1/2345/download": { bytes: jarBytes },
+        "https://api.purpurmc.org/v2/purpur/1.21.1/2345": {
           json: { md5: jarMd5 },
         },
-        "https://api.purpurmc.org/v2/paper/1.21.1": {
+        // The resolver reads the family document, not /v2/paper/... — that
+        // URL was the live 404 this suite's fixture used to encode.
+        "https://api.purpurmc.org/v2/purpur/1.21.1": {
           json: { version: "1.21.1", builds: { latest: "2345" } },
         },
       });

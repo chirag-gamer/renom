@@ -1745,6 +1745,13 @@ textarea:focus {
   color: var(--text);
   font: 400 14px/1.5 var(--mono);
 }
+/* Settings fields a non-admin can look at but not change: the API refuses
+   resource edits from anyone but a panel admin, and the form shows it. */
+.field-locked input {
+  opacity: 0.72;
+  background: var(--card-low);
+  border-style: dashed;
+}
 .property-field input:focus,
 .property-field select:focus {
   outline: none;
@@ -2050,9 +2057,18 @@ textarea:focus {
   text-align: left;
   font-size: 13px;
   cursor: pointer;
+  /* The global `button` rule paints terracotta + white text. Background
+     `none` stripped the fill but not the white text, so three of the four
+     actions were white-on-white — invisible until hover. */
+  color: var(--text);
 }
 .context-menu button:hover {
   background: var(--card-container);
+}
+/* The destructive action keeps its danger color despite the more specific
+   base rule above (which would otherwise repaint it --text). */
+.context-menu button.danger-text {
+  color: var(--danger);
 }
 
 /* ---------- iOS-style visibility switch (item 14) ---------- */
@@ -2130,6 +2146,15 @@ textarea:focus {
 }
 .file-row:hover {
   background: var(--card-container);
+}
+
+/* bedrock pack rows reuse .file-row; the name gets the ellipsis treatment */
+.addon-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- read-only property fields ---------- */

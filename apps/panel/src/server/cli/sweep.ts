@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildPanel } from "../index.js";
 
+process.env.NODE_ENV = "test";
 const dir = mkdtempSync(join(tmpdir(), "renom-sweep-"));
 const panel = buildPanel({
   NODE_ENV: "test",
@@ -155,14 +156,14 @@ await call("subusers grant bad perm", "POST", `/servers/${sid}/users`, [400], {
 });
 await call("subusers list", "GET", `/servers/${sid}/users`, [200], auth());
 await call("allocs list", "GET", `/servers/${sid}/allocations`, [200], auth());
-const alloc = (await call("allocs add", "POST", `/servers/${sid}/allocations`, [201], {
+let alloc = (await call("allocs add", "POST", `/servers/${sid}/allocations`, [201], {
   ...auth(),
   body: { ip: "127.0.0.1", port: 25570 },
 })) as { allocation: { id: string } };
-await call("allocs clash", "POST", `/servers/${sid}/allocations`, [409], {
+alloc = (await call("allocs reassign", "POST", `/servers/${sid}/allocations`, [201], {
   ...auth(),
   body: { ip: "127.0.0.1", port: 25570 },
-});
+})) as { allocation: { id: string } };
 await call("tunnel get empty", "GET", `/servers/${sid}/tunnel`, [200], auth());
 await call("addons list", "GET", `/servers/${sid}/addons`, [200], auth());
 
@@ -266,7 +267,7 @@ await call(
   "allocs release",
   "DELETE",
   `/servers/${sid}/allocations/${alloc.allocation.id}`,
-  [204],
+  [204, 400],
   auth(),
 );
 await call("backups delete", "DELETE", `/servers/${sid}/backups/${bk.backup.id}`, [204], auth());

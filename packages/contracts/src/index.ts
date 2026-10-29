@@ -119,6 +119,12 @@ export const createServerSchema = z.object({
    * is never silently throttled to a single core.
    */
   cpuWeight: z.number().int().min(0).max(1000).default(0),
+  /**
+   * Primary game port. Admins/owner only — ports are infrastructure, and a
+   * user-chosen port could collide with a host service. Absent: the panel
+   * claims the first free port in its range, as before.
+   */
+  port: z.number().int().min(1024).max(65535).optional(),
   /** Owner username; admins/owner only. Defaults to the caller. */
   ownerUsername: z.string().min(1).max(32).optional(),
   /** Required when the blueprint ships the `eula` feature (Mojang EULA). */

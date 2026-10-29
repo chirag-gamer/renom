@@ -108,10 +108,12 @@ async function stopQuiet(id: string): Promise<void> {
 
 describe("power + console", () => {
   it("docker blueprints refuse honestly on a process-only node (409)", async () => {
+    // Velocity is docker-only now; fabric runs on the process engine, so it
+    // no longer serves as this test's docker exemplar.
     const created = await request(app)
       .post("/api/v3/servers")
       .set("authorization", `Bearer ${ownerToken}`)
-      .send({ name: "modded", blueprintSlug: "fabric", eulaAccepted: true });
+      .send({ name: "modded", blueprintSlug: "velocity", eulaAccepted: true });
     expect(created.status).toBe(201);
     const id = created.body.server.id as string;
 

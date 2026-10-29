@@ -197,6 +197,37 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(res.body.server.cpuWeight).toBe(300);
   });
 
+  it("admin-chosen port is honored when free and 409 when taken", async () => {
+    // Free port: the server's primary allocation is exactly the chosen one.
+    const created = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "port-picked",
+        blueprintSlug: "generic-nodejs",
+        memoryMb: 128,
+        diskQuotaMb: 256,
+        port: 25601,
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.server.primaryAllocation.port).toBe(25601);
+
+    // Taken port: a readable 409, not a generic 500.
+    const clash = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "port-clash",
+        blueprintSlug: "generic-nodejs",
+        memoryMb: 128,
+        diskQuotaMb: 256,
+        port: 25601,
+      });
+    expect(clash.status).toBe(409);
+    expect(clash.body.error.code).toBe("conflict");
+    expect(clash.body.error.message).toContain("25601");
+  });
+
   it("alice renames her server; blueprint stays immutable", async () => {
     const res = await request(app)
       .patch(`/api/v3/servers/${aliceServerId}`)
@@ -355,6 +386,32 @@ describe("servers CRUD + ownership + quotas", () => {
       .prepare("SELECT value FROM server_variables WHERE server_id = ? AND key = 'mcVersion'")
       .get(testId) as { value: string } | undefined;
     expect(varRow?.value).toBe("2.5.0");
+  });
+
+  it("boot reconciles stale installing servers to install_failed", async () => {
+    const srv = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ name: "stale-install-test", blueprintSlug: "generic-python" });
+    expect(srv.status).toBe(201);
+    const staleId = srv.body.server.id as string;
+
+    // Set a server to installing to simulate an interrupted background install
+    ctx.servers.setStatus(staleId, "installing");
+    expect(ctx.servers.byId(staleId)?.status).toBe("installing");
+
+    // Booting a new panel on the same DB reconciles stale installing state
+    const rebooted = buildPanel({
+      NODE_ENV: "test",
+      DATA_DIR: dir,
+      LOG_LEVEL: "error",
+      BCRYPT_COST: 10,
+    } as NodeJS.ProcessEnv);
+    try {
+      expect(rebooted.ctx.servers.byId(staleId)?.status).toBe("install_failed");
+    } finally {
+      rebooted.ctx.db.close();
+    }
   });
 
   it("audit trail records the server lifecycle", () => {

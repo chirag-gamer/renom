@@ -3,6 +3,14 @@ import { ulid } from "../../shared/ulid.js";
 import type { PublicServer } from "@renom/contracts";
 import { hostAddress } from "../net/host-address.js";
 
+/** Thrown when an admin-assigned creation port is already allocated. */
+export class PortTakenError extends Error {
+  constructor(port: number) {
+    super(`Port ${port} is already allocated`);
+    this.name = "PortTakenError";
+  }
+}
+
 export interface ServerRow {
   id: string;
   name: string;
@@ -109,6 +117,8 @@ export class ServersRepo {
     diskQuotaMb: number;
     /** Percentage of one core; 0 or omitted means unlimited. */
     cpuWeight?: number;
+    /** Admin-chosen primary game port; omitted claims the first free one. */
+    preferredPort?: number;
     now?: number;
   }): ServerRow {
     const now = input.now ?? Date.now();
@@ -143,6 +153,8 @@ export class ServersRepo {
       diskQuotaMb: number;
       /** Percentage of one core; 0 or omitted means unlimited. */
       cpuWeight?: number;
+      /** Admin-chosen primary game port; omitted claims the first free one. */
+      preferredPort?: number;
     },
     now: number,
   ): ServerRow {
@@ -174,8 +186,12 @@ export class ServersRepo {
          ON CONFLICT(server_id, key) DO UPDATE SET value = excluded.value`,
       )
       .run(id, "maxMemory", String(input.memoryMb));
-    // Primary allocation: first free game port on all interfaces, claimed atomically.
-    const port = this.claimFreePort("0.0.0.0", 25565, 26565);
+    // Primary allocation: first free game port on all interfaces, claimed
+    // atomically — or the admin-assigned port, pre-checked so a taken one is
+    // a clean conflict rather than a retry that silently picks another port.
+    const port = input.preferredPort
+      ? this.claimSpecificPort("0.0.0.0", input.preferredPort)
+      : this.claimFreePort("0.0.0.0", 25565, 26565);
     this.db
       .prepare(
         `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
@@ -203,6 +219,19 @@ export class ServersRepo {
       if (!taken.has(port)) return port;
     }
     throw new Error("no free ports in allocation range");
+  }
+
+  /**
+   * A specific port an admin assigned at creation. Checked inside the same
+   * transaction as the insert, so the UNIQUE(ip,port) index still backs the
+   * race. `create` does not retry it; the route maps it to a 409 instead.
+   */
+  private claimSpecificPort(ip: string, port: number): number {
+    const taken = this.db
+      .prepare("SELECT 1 FROM allocations WHERE port = ? AND released = 0")
+      .get(port);
+    if (taken) throw new PortTakenError(port);
+    return port;
   }
 
   update(

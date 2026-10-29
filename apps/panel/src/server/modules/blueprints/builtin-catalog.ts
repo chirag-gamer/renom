@@ -283,14 +283,29 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     slug: "fabric",
     name: "Fabric",
     category: "minecraft-java",
-    description: "Fabric mod loader. Boots under Docker; local installs wire up next.",
+    description: "Fabric mod loader, installed by Fabric's own installer.",
     docsUrl: "https://fabricmc.net",
     tag: "v1",
-    requirements: { engine: "docker", arch: ["amd64", "arm64"], hostOs: ["linux"] },
+    requirements: { engine: "process", arch: ["amd64", "arm64"], hostOs: ["linux", "windows"] },
     resolvers: [{ id: "fabric-meta", kind: "fabric-meta" }],
-    versions: {},
+    versions: {
+      javaMapping: [
+        { mcRange: ">=1.21.9", image: "ghcr.io/renom/java:25" },
+        { mcRange: "1.20.5 - 1.21.x", image: "ghcr.io/renom/java:21" },
+        { mcRange: "1.18 - 1.20.4", image: "ghcr.io/renom/java:17" },
+      ],
+    },
     image: "ghcr.io/renom/java:21",
-    install: [{ op: "fetch-fabric", mcVersion: "{mcVersion}" }],
+    install: [
+      { op: "fetch-fabric", mcVersion: "{mcVersion}" },
+      { op: "eula-accept" },
+      {
+        op: "writefile",
+        path: "server.properties",
+        contentTemplate:
+          "motd={MOTD}\nserver-port={allocation.port}\nenforce-secure-profile=false\n",
+      },
+    ],
     run: {
       command: [
         "java",
@@ -306,6 +321,16 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     },
     variables: [
       {
+        key: "javaVersion",
+        label: "Java version",
+        type: "enum",
+        default: "auto",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        options: ["auto", "17", "21", "25"],
+      },
+      {
         key: "mcVersion",
         label: "Minecraft version",
         type: "string",
@@ -313,6 +338,28 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
         userViewable: true,
         userEditable: true,
         internal: false,
+      },
+      {
+        // Resolved by the Fabric installer; the run command never needs it
+        // (fabric-server-launch.jar pins it). Persisted so the panel can show
+        // exactly what was installed.
+        key: "loaderVersion",
+        label: "Loader version",
+        type: "string",
+        default: "",
+        userViewable: true,
+        userEditable: false,
+        internal: true,
+      },
+      {
+        key: "MOTD",
+        label: "Message of the day",
+        type: "string",
+        default: "A Renom server",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        rules: { maxLength: 64 },
       },
       {
         key: "maxMemory",
@@ -347,21 +394,36 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     slug: "forge",
     name: "Forge",
     category: "minecraft-java",
-    description: "Minecraft Forge mod loader. Boots under Docker; local installs wire up next.",
+    description: "Minecraft Forge mod loader, installed by Forge's own installer.",
     docsUrl: "https://minecraftforge.net",
     tag: "v1",
-    requirements: { engine: "docker", arch: ["amd64", "arm64"], hostOs: ["linux"] },
+    requirements: { engine: "process", arch: ["amd64", "arm64"], hostOs: ["linux", "windows"] },
     resolvers: [{ id: "forge", kind: "forge-promotions" }],
-    versions: {},
+    versions: {
+      javaMapping: [
+        { mcRange: ">=1.21.9", image: "ghcr.io/renom/java:25" },
+        { mcRange: "1.20.5 - 1.21.x", image: "ghcr.io/renom/java:21" },
+        { mcRange: "1.18 - 1.20.4", image: "ghcr.io/renom/java:17" },
+      ],
+    },
     image: "ghcr.io/renom/java:21",
-    install: [{ op: "fetch-forge", mcVersion: "{mcVersion}" }],
+    install: [
+      { op: "fetch-forge", mcVersion: "{mcVersion}" },
+      { op: "eula-accept" },
+      {
+        op: "writefile",
+        path: "server.properties",
+        contentTemplate:
+          "motd={MOTD}\nserver-port={allocation.port}\nenforce-secure-profile=false\n",
+      },
+    ],
     run: {
       command: [
         "java",
         "-Xms{initMemory}M",
         "-Xmx{maxMemory}M",
         "@user_jvm_args.txt",
-        "@libraries/net/minecraftforge/forge/{mcVersion}-forge-args.txt",
+        "@{forgeArgsFile}",
         "nogui",
       ],
       workdir: "/data",
@@ -370,6 +432,16 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
     },
     variables: [
       {
+        key: "javaVersion",
+        label: "Java version",
+        type: "enum",
+        default: "auto",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        options: ["auto", "17", "21", "25"],
+      },
+      {
         key: "mcVersion",
         label: "Minecraft version",
         type: "string",
@@ -377,6 +449,40 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
         userViewable: true,
         userEditable: true,
         internal: false,
+      },
+      {
+        // Resolved by the Forge installer. The run command builds its
+        // `libraries/net/minecraftforge/forge/<mc>-<loader>/…args.txt` path
+        // from these two, so both must be persisted after install or the
+        // server can never start.
+        key: "loaderVersion",
+        label: "Loader version",
+        type: "string",
+        default: "",
+        userViewable: true,
+        userEditable: false,
+        internal: true,
+      },
+      {
+        // Relative path of the installer-written args file (unix_args.txt or
+        // win_args.txt, OS-dependent). `@{forgeArgsFile}` in the run command.
+        key: "forgeArgsFile",
+        label: "Forge arguments file",
+        type: "string",
+        default: "",
+        userViewable: false,
+        userEditable: false,
+        internal: true,
+      },
+      {
+        key: "MOTD",
+        label: "Message of the day",
+        type: "string",
+        default: "A Renom server",
+        userViewable: true,
+        userEditable: true,
+        internal: false,
+        rules: { maxLength: 64 },
       },
       {
         key: "maxMemory",
@@ -486,12 +592,25 @@ export const BUILTIN_BLUEPRINTS: BlueprintDocInput[] = [
       },
     ],
     run: {
-      command: ["bin/php/php", "PocketMine-MP.phar", "--no-wizard"],
+      command: ["{phpBinary}", "PocketMine-MP.phar", "--no-wizard"],
       workdir: "/data",
       stop: { kind: "console", command: "stop", timeoutSec: 30 },
       envCanon: {},
     },
     variables: [
+      {
+        // Set by the fetch-pocketmine op: `bin/php/php` on Windows,
+        // `bin/php7/bin/php` on Linux (the path PMMP's own start.sh uses).
+        // The default matches the pre-variable literal run command, so
+        // servers installed before the op persisted the row still start.
+        key: "phpBinary",
+        label: "PHP interpreter",
+        type: "string",
+        default: "bin/php/php",
+        userViewable: false,
+        userEditable: false,
+        internal: true,
+      },
       {
         key: "MOTD",
         label: "Message of the day",
