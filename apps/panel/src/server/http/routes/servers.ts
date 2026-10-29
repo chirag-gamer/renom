@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import type { UsersRepo } from "../../modules/users/repo.js";
-import type { ServersRepo } from "../../modules/servers/repo.js";
-import { toPublicServer } from "../../modules/servers/repo.js";
+import type { ServerRow, ServersRepo } from "../../modules/servers/repo.js";
+import { toPublicServer, PortTakenError } from "../../modules/servers/repo.js";
 import type { BlueprintRegistry } from "../../modules/blueprints/registry.js";
 import type { AuditService } from "../../modules/audit/service.js";
 import type { AuthService } from "../../modules/auth/service.js";
@@ -91,6 +91,15 @@ function persistInstalledVersion(
   vars: Record<string, string> | null,
   requested: string | undefined,
 ): void {
+  // Installer-resolved facts come first: a blueprint without an
+  // mcVersion/bedrockVersion variable (PocketMine) would otherwise return
+  // below before persisting the binary its run command needs —
+  // `loaderVersion` feeds the panel display, `forgeArgsFile` is load-bearing
+  // (`@{forgeArgsFile}`), and PocketMine's run command is `{phpBinary}`.
+  for (const derived of ["loaderVersion", "forgeArgsFile", "phpBinary"]) {
+    const value = vars?.[derived];
+    if (value) servers.setVariable(serverId, derived, value);
+  }
   const isExplicit = Boolean(requested && requested !== "latest");
   const version = isExplicit ? requested! : vars?.["mcVersion"] || vars?.["bedrockVersion"];
   if (!version || version === "latest") return;
@@ -186,25 +195,42 @@ export function serversRouter(deps: ServersDeps): Router {
       const bp = blueprints.lookup(body.blueprintSlug);
       const doc = blueprints.getDoc(body.blueprintSlug);
 
+      // Ports are infrastructure, the same class as CPU/RAM: only an admin
+      // assigns one, and the schema accepts it from anyone only so the error
+      // can name the rule instead of failing validation.
+      if (body.port !== undefined && !privileged) {
+        throw new ForbiddenError("Only panel administrators can assign a specific port");
+      }
+
       // Mojang's EULA must be accepted by a human, in the open — never implied.
       if (doc.features?.includes("eula") && body.eulaAccepted !== true) {
         throw new BadRequestError("This server needs the Minecraft EULA accepted first");
       }
 
-      const created = servers.create({
-        name: body.name,
-        description: body.description,
-        ownerId,
-        blueprintId: bp.id,
-        versionTag: doc.tag,
-        imageRef: doc.image,
-        memoryMb: body.memoryMb,
-        diskQuotaMb: body.diskQuotaMb,
-        // CPU is a panel resource, not a user plan: only an administrator may
-        // choose it. The PATCH route enforces the same rule, and honouring it
-        // here for anyone else would let a plain account mint a 10-core server.
-        cpuWeight: privileged ? body.cpuWeight : DEFAULT_CPU_WEIGHT,
-      });
+      let created: ServerRow;
+      try {
+        created = servers.create({
+          name: body.name,
+          description: body.description,
+          ownerId,
+          blueprintId: bp.id,
+          versionTag: doc.tag,
+          imageRef: doc.image,
+          memoryMb: body.memoryMb,
+          diskQuotaMb: body.diskQuotaMb,
+          // CPU is a panel resource, not a user plan: only an administrator may
+          // choose it. The PATCH route enforces the same rule, and honouring it
+          // here for anyone else would let a plain account mint a 10-core server.
+          cpuWeight: privileged ? body.cpuWeight : DEFAULT_CPU_WEIGHT,
+          preferredPort: body.port,
+        });
+      } catch (err) {
+        // claimSpecificPort raises this inside the create transaction; the
+        // admin picked a port that is already allocated — answer 409, not a
+        // generic 500.
+        if (err instanceof PortTakenError) throw new ConflictError(err.message);
+        throw err;
+      }
       const serverDir = join(dataDir, "servers", created.id);
       try {
         mkdirSync(serverDir, { recursive: true });
@@ -442,21 +468,33 @@ export function serversRouter(deps: ServersDeps): Router {
       });
       // Captured before the install, which overwrites it in place.
       const requestedVersion = vars["mcVersion"];
-      try {
-        await runInstallOps(doc, { serverId: id, dir: join(dataDir, "servers", id), vars });
-        persistInstalledVersion(servers, id, vars, requestedVersion);
-        servers.setStatus(id, "ready");
-        audit.record({ event: "server.install.done", serverId: id });
-      } catch (err) {
-        servers.setStatus(id, "install_failed");
-        audit.record({
-          event: "server.install.failed",
-          serverId: id,
-          target: { error: err instanceof Error ? err.message : String(err) },
-        });
-        throw err;
+      // Backgrounded: a reinstall downloads and extracts runtime archives
+      // that can run for minutes. Holding the HTTP request open turned every
+      // longer install into a proxy 502 (the PUT-software report), and the
+      // client polls `status` exactly as it does after server creation.
+      // Test mode stays synchronous (see the software swap for the rationale).
+      const runInstall = () =>
+        runInstallOps(doc, { serverId: id, dir: join(dataDir, "servers", id), vars })
+          .then(() => {
+            persistInstalledVersion(servers, id, vars, requestedVersion);
+            servers.setStatus(id, "ready");
+            audit.record({ event: "server.install.done", serverId: id });
+          })
+          .catch((err: unknown) => {
+            servers.setStatus(id, "install_failed");
+            audit.record({
+              event: "server.install.failed",
+              serverId: id,
+              target: { error: err instanceof Error ? err.message : String(err) },
+            });
+          });
+      if (process.env.NODE_ENV === "test") {
+        await runInstall();
+        res.json({ status: "ready" });
+        return;
       }
-      res.json({ status: "ready" });
+      void runInstall();
+      res.status(202).json({ status: "installing" });
     })().catch(next);
   });
 
@@ -675,25 +713,45 @@ export function serversRouter(deps: ServersDeps): Router {
         },
       });
 
-      try {
-        await runInstallOps(doc, {
+      // Backgrounded for the same reason as reinstall: a Fabric/Forge
+      // install downloads tens of MB and runs an installer. The response is
+      // 202 "installing"; clients poll the server status for readiness.
+      // (Test mode stays synchronous like server creation: the spec reads
+      // post-install variables immediately after the response.)
+      const background = process.env.NODE_ENV !== "test";
+      const runInstall = () =>
+        runInstallOps(doc, {
           serverId: id,
           dir: join(dataDir, "servers", id),
           vars,
           blueprintSlug: bp.slug,
+        })
+          .then(() => {
+            persistInstalledVersion(servers, id, vars, body.version);
+            servers.setStatus(id, "ready");
+            audit.record({ event: "server.install.done", serverId: id });
+          })
+          .catch((err: unknown) => {
+            servers.setStatus(id, "install_failed");
+            audit.record({
+              event: "server.install.failed",
+              serverId: id,
+              target: { error: err instanceof Error ? err.message : String(err) },
+            });
+          });
+      if (background) {
+        void runInstall();
+        res.status(202).json({
+          status: "installing",
+          software: bp.slug,
+          name: bp.name,
+          category: bp.category,
+          backedUp,
+          backupId,
         });
-        persistInstalledVersion(servers, id, vars, body.version);
-        servers.setStatus(id, "ready");
-        audit.record({ event: "server.install.done", serverId: id });
-      } catch (err) {
-        servers.setStatus(id, "install_failed");
-        audit.record({
-          event: "server.install.failed",
-          serverId: id,
-          target: { error: err instanceof Error ? err.message : String(err) },
-        });
-        throw err;
+        return;
       }
+      await runInstall();
       res.json({
         status: "ready",
         software: bp.slug,

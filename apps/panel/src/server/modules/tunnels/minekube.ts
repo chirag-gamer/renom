@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { downloadFile, guardedFetch } from "../runtime/install.js";
 import { EngineError } from "../../shared/errors.js";
@@ -233,4 +233,44 @@ export async function installPlugin(
     });
   }
   return dest;
+}
+
+/**
+ * Keep the Connect plugin's authentication in step with server.properties.
+ *
+ * `allow-offline-mode-players` in plugins/connect/config.yml decides whether
+ * the connector admits non-premium players. Per the plugin's own config
+ * template (core/src/main/resources/config.yml, verified 2026-10-29): "If
+ * left blank, the correct mode will be securely detected automatically" —
+ * the plugin then follows the server's `online-mode` instead of overriding
+ * it. So when the owner flips `online-mode` off, the value goes BLANK (the
+ * secure auto-detect); when they flip it back on, the value returns to the
+ * shipped default `false`.
+ *
+ * Best-effort by design: the properties write already succeeded, and an
+ * absent config.yml (tunnel never installed) or an unusual config shape is
+ * simply left alone — this never invents keys in a file it does not manage.
+ */
+export function syncConnectOfflineMode(serverDir: string, onlineMode: boolean): void {
+  const configPath = join(serverDir, "plugins", "connect", "config.yml");
+  if (!existsSync(configPath)) return;
+  const text = readFileSync(configPath, "utf8");
+  const pattern = /^([ \t]*)allow-offline-mode-players[ \t]*:.*$/m;
+  const replacement = onlineMode
+    ? "$1allow-offline-mode-players: false"
+    : "$1allow-offline-mode-players:";
+  const updated = text.replace(pattern, replacement);
+  if (updated === text) return;
+  writeFileSync(configPath, updated, "utf8");
+}
+
+/** The server's effective `online-mode`, defaulting to true (Mojang default). */
+export function readOnlineMode(serverDir: string): boolean {
+  try {
+    const text = readFileSync(join(serverDir, "server.properties"), "utf8");
+    const m = /^\s*online-mode\s*=\s*(.*)$/m.exec(text);
+    return (m?.[1] ?? "true").trim() !== "false";
+  } catch {
+    return true;
+  }
 }

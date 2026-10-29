@@ -6,7 +6,12 @@ import type { ServersRepo } from "../servers/repo.js";
 import type { BlueprintRegistry } from "../blueprints/registry.js";
 import type { BlueprintVariable } from "../blueprints/schema.js";
 import { EngineError } from "../../shared/errors.js";
-import { claimEndpointName, endpointValid } from "../tunnels/minekube.js";
+import {
+  claimEndpointName,
+  endpointValid,
+  readOnlineMode,
+  syncConnectOfflineMode,
+} from "../tunnels/minekube.js";
 import { perSecond, readNetworkCounters, readProcessReading } from "./stats.js";
 
 export type PowerAction = "start" | "stop" | "restart" | "kill";
@@ -93,7 +98,17 @@ export function javaRuntimeCandidates(mcVersion?: string): string[] {
   return ["17", "21"];
 }
 
-function resolveJavaBinary(version: string | undefined, mcVersion?: string): string | null {
+/**
+ * The Java executable this blueprint should run under, or null when none of
+ * the candidate JDKs match. Exported because installer ops (`fetch-forge`,
+ * `fetch-fabric`) must invoke the SAME JDK the server will later use — an
+ * installer run under a different major writes arguments the runtime cannot
+ * load.
+ */
+export function resolveJavaExecutable(
+  version: string | undefined,
+  mcVersion?: string,
+): string | null {
   if (version === "auto" || !version) {
     for (const candidate of javaRuntimeCandidates(mcVersion)) {
       const binary = resolveJavaBinaryVersion(candidate);
@@ -241,7 +256,7 @@ export class LocalProcessEngine {
     let cmd = rawCmd;
     const args = [...restArgs];
     if (rawCmd === "java") {
-      const javaBinary = resolveJavaBinary(vars["javaVersion"], vars["mcVersion"]);
+      const javaBinary = resolveJavaExecutable(vars["javaVersion"], vars["mcVersion"]);
       if (!javaBinary) {
         throw new EngineError(
           `Java ${vars["javaVersion"] ?? "runtime"} is not installed on this host. Install it before starting this server.`,
@@ -314,6 +329,17 @@ export class LocalProcessEngine {
     mkdirSync(dir, { recursive: true });
     const cwd = confineWorkdir(dir, doc.run?.workdir ?? "/data");
     mkdirSync(cwd, { recursive: true });
+
+    // The Connect plugin writes config.yml on its FIRST boot, so a sync that
+    // only fires on the properties flip can miss a server where the flip
+    // happened before the file existed. Converge again on every start —
+    // best-effort, exactly like the properties-flip path: an unreadable or
+    // read-only config must never block the start itself.
+    try {
+      syncConnectOfflineMode(dir, readOnlineMode(dir));
+    } catch {
+      // non-fatal: the plugin re-reads the server on the next boot
+    }
 
     this.servers.setRuntimeState(serverId, "starting");
     // Reuse a lazy slot (listeners survive restarts) or create one.

@@ -33,18 +33,23 @@ export function createApp(deps: AppDeps): Express {
   // Baseline hardening headers (no dependency): no MIME sniffing, no
   // framing, no referrer leakage, conservative script/style sourcing for the
   // same-origin client. Tighten `connect-src` if the API ever leaves origin.
+  //
+  // The shell carries NO inline scripts (index.html has exactly two tags,
+  // both `src=`) and no inline event handlers (`on*=` count: 0), so CSP
+  // never blocks the client today — verified by loading the panel with the
+  // browser console open. The policy documents that invariant and makes any
+  // future inline handler fail loudly instead of silently working.
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
-    // Project icons come from Modrinth's CDN and are plain <img> sources, so
-    // that one host is allowed for images only — scripts stay same-origin.
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "default-src 'self'; script-src 'self'; script-src-attr 'none'; " +
+        "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data: https://cdn.modrinth.com; " +
         "connect-src 'self' ws: wss:; frame-ancestors 'none'; " +
-        "base-uri 'self'; form-action 'self'",
+        "object-src 'none'; base-uri 'self'; form-action 'self'",
     );
     next();
   });

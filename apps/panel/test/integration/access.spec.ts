@@ -238,18 +238,20 @@ describe("subusers", () => {
 });
 
 describe("allocations", () => {
-  it("lists the primary, assigns a second, refuses conflicts and last-release", async () => {
+  it("lists the primary, refuses a second port and last-release; non-admins get 403", async () => {
     const list = await request(app)
       .get(`/api/v3/servers/${serverId}/allocations`)
       .set("authorization", `Bearer ${ownerToken}`);
     expect(list.body.allocations.length).toBe(1);
     const primary = list.body.allocations[0] as { id: string; port: number };
 
-    const add = await request(app)
+    // One port per server: a second allocation is refused even when the
+    // port itself is free.
+    const second = await request(app)
       .post(`/api/v3/servers/${serverId}/allocations`)
       .set("authorization", `Bearer ${ownerToken}`)
       .send({ ip: "127.0.0.1", port: 25570 });
-    expect(add.status).toBe(201);
+    expect(second.status).toBe(409);
 
     const clash = await request(app)
       .post(`/api/v3/servers/${serverId}/allocations`)
@@ -257,11 +259,22 @@ describe("allocations", () => {
       .send({ ip: "0.0.0.0", port: primary.port });
     expect(clash.status).toBe(409);
 
-    const release = await request(app)
-      .delete(`/api/v3/servers/${serverId}/allocations/${add.body.allocation.id}`)
-      .set("authorization", `Bearer ${ownerToken}`);
-    expect(release.status).toBe(204);
+    // A collaborator who actually HOLDS allocation.update is still refused:
+    // the port rule is an admin rule, not a permission — without the grant
+    // the 403 would come from the permission guard and never reach
+    // requireAdmin.
+    const grant = await request(app)
+      .post(`/api/v3/servers/${serverId}/users`)
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({ username: "alice", permissions: ["allocation.read", "allocation.update"] });
+    expect(grant.status).toBe(201);
+    const forbidden = await request(app)
+      .post(`/api/v3/servers/${serverId}/allocations`)
+      .set("authorization", `Bearer ${aliceToken}`)
+      .send({ ip: "127.0.0.1", port: 25571 });
+    expect(forbidden.status).toBe(403);
 
+    // Releasing the only allocation is refused — every server keeps one.
     const last = await request(app)
       .delete(`/api/v3/servers/${serverId}/allocations/${primary.id}`)
       .set("authorization", `Bearer ${ownerToken}`);

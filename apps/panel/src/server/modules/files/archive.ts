@@ -1,9 +1,21 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { confinePath } from "./confinement.js";
+import { tarBinary } from "../../shared/tar.js";
 
 const execFileAsync = promisify(execFileCb);
 
@@ -21,6 +33,23 @@ export function stripLeading(member: string, n: number): string {
 }
 
 /**
+ * Options for {@link extractArchiveSafe}.
+ *
+ * `allowSymlinks` is a VENDOR-ONLY escape hatch. User-uploaded archives keep
+ * the default refusal: SPEC FR-020.3 / SEC-008 make a symlink member an
+ * outright error, because a link is how an archive escapes its directory.
+ * Vendor runtimes are a different case — the PocketMine PHP tarball ships 24
+ * links (e.g. `bin/php7/bin/libpng-config -> libpng16-config`, verified
+ * 2026-10-29) and refusing them made every PocketMine install fail. When
+ * enabled, a link is only honoured if it is relative and resolves to a
+ * REGULAR FILE inside the staging tree; anything else is dropped. A link is
+ * never written into `dest`, so nothing that survives can point outside it.
+ */
+export interface ExtractOptions {
+  allowSymlinks?: boolean;
+}
+
+/**
  * Safe archive extraction with zip-slip protection.
  * Supports .tar.gz, .tgz, .tar, .zip.
  */
@@ -30,11 +59,13 @@ export async function extractArchiveSafe(
   dest: string,
   strip = 0,
   safe = true,
+  options: ExtractOptions = {},
 ): Promise<void> {
   if (!safe) throw new ArchiveError("Refusing archive extraction without safe=true");
   const outDir = confinePath(serverDir, dest);
   mkdirSync(outDir, { recursive: true });
   const lower = src.toLowerCase();
+  const allowSymlinks = options.allowSymlinks === true;
 
   const runOut = async (cmd: string, args: string[]): Promise<string | null> => {
     try {
@@ -62,18 +93,18 @@ export async function extractArchiveSafe(
   let extract: ((archive: string, out: string) => Promise<boolean>) | null = null;
 
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-    const listing = await runOut("tar", ["-tzf", src]);
+    const listing = await runOut(tarBinary(), ["-tzf", src]);
     if (listing !== null) {
       members = listing.split(/\r?\n/).filter((l) => l.length > 0);
       const stripArgs = strip > 0 ? [`--strip-components=${strip}`] : [];
-      extract = (a, o) => runOk("tar", ["-xzf", a, "-C", o, ...stripArgs]);
+      extract = (a, o) => runOk(tarBinary(), ["-xzf", a, "-C", o, ...stripArgs]);
     }
   } else if (lower.endsWith(".tar")) {
-    const listing = await runOut("tar", ["-tf", src]);
+    const listing = await runOut(tarBinary(), ["-tf", src]);
     if (listing !== null) {
       members = listing.split(/\r?\n/).filter((l) => l.length > 0);
       const stripArgs = strip > 0 ? [`--strip-components=${strip}`] : [];
-      extract = (a, o) => runOk("tar", ["-xf", a, "-C", o, ...stripArgs]);
+      extract = (a, o) => runOk(tarBinary(), ["-xf", a, "-C", o, ...stripArgs]);
     }
   } else if (lower.endsWith(".zip")) {
     if (strip > 0) {
@@ -93,10 +124,10 @@ export async function extractArchiveSafe(
           .filter((l) => l.length > 0 && l !== src.split(/[\\/]/).pop());
         extract = (a, o) => runOk("7z", ["x", a, `-o${o}`, "-y"]);
       } else {
-        const tarList = await runOut("tar", ["-tf", src]);
+        const tarList = await runOut(tarBinary(), ["-tf", src]);
         if (tarList !== null) {
           members = tarList.split(/\r?\n/).filter((l) => l.length > 0);
-          extract = (a, o) => runOk("tar", ["-xf", a, "-C", o]);
+          extract = (a, o) => runOk(tarBinary(), ["-xf", a, "-C", o]);
         }
       }
     }
@@ -124,20 +155,68 @@ export async function extractArchiveSafe(
       throw new ArchiveError(`Could not extract ${src} (extraction failed after validation)`);
     }
 
-    const checkNoLinks = (dir: string) => {
-      const entries = readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
+    // A symlink is how an archive escapes its destination, so the default is
+    // still refusal. Vendor runtimes legitimately ship links (the PocketMine
+    // PHP tarball carries 24, including `bin/php7/bin/libpng-config`), and
+    // refusing those broke every PocketMine install. Under the opt-in policy a
+    // link is REPLACED BY THE FILE IT POINTS AT, in staging, and is never
+    // written into `dest`; a link that does not resolve to a regular file
+    // inside staging is dropped. Copying rather than linking means the
+    // extracted tree holds no link at all, so nothing can point outside it.
+    const materializeLinks = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
         const st = lstatSync(full);
         if (st.isSymbolicLink()) {
-          throw new ArchiveError(`Archive member is a symbolic link: ${entry.name}`);
+          // resolve() does NOT dereference the final component, so a link
+          // pointing at another link could pass the lexical check and then
+          // statSync through to a host file. realpathSync dereferences fully;
+          // containment is decided on the real path (and once the intermediate
+          // link is removed, a second-hop copy would fail anyway).
+          const target = resolve(dirname(full), readlinkSync(full));
+          let real = "";
+          try {
+            real = realpathSync(target);
+          } catch {
+            real = "";
+          }
+          let realRoot = "";
+          try {
+            realRoot = realpathSync(staging);
+          } catch {
+            realRoot = staging;
+          }
+          const inside = real !== "" && (real === realRoot || real.startsWith(realRoot + sep));
+          let resolvedIsFile = false;
+          if (inside) {
+            try {
+              resolvedIsFile = statSync(real).isFile();
+            } catch {
+              resolvedIsFile = false;
+            }
+          }
+          rmSync(full, { force: true });
+          if (resolvedIsFile) copyFileSync(real, full);
+          continue;
         }
-        if (st.isDirectory()) {
-          checkNoLinks(full);
-        }
+        if (st.isDirectory()) materializeLinks(full);
       }
     };
-    checkNoLinks(staging);
+    if (allowSymlinks) {
+      materializeLinks(staging);
+    } else {
+      const checkNoLinks = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          const st = lstatSync(full);
+          if (st.isSymbolicLink()) {
+            throw new ArchiveError(`Archive member is a symbolic link: ${entry.name}`);
+          }
+          if (st.isDirectory()) checkNoLinks(full);
+        }
+      };
+      checkNoLinks(staging);
+    }
 
     confinePath(serverDir, dest);
     cpSync(staging, outDir, { recursive: true, verbatimSymlinks: false });
@@ -190,7 +269,7 @@ export async function createArchive(
   const archivePath = confinePath(baseDir, archiveName);
 
   try {
-    await execFileAsync("tar", ["-czf", archivePath, "-C", baseDir, "--", ...cleanFiles], {
+    await execFileAsync(tarBinary(), ["-czf", archivePath, "-C", baseDir, "--", ...cleanFiles], {
       timeout: 5 * 60_000,
       windowsHide: true,
     });

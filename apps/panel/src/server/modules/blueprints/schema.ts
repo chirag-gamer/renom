@@ -35,6 +35,12 @@ export const installOpSchema = z.discriminatedUnion("op", [
     dest: z.string().min(1),
     strip: z.number().int().min(0).max(8).default(0),
     safe: z.literal(true), // only explicitly-safe extractions validate
+    // VENDOR-ONLY: a runtime tarball may legitimately ship relative links
+    // (PocketMine's PHP build carries 24). "materialize" replaces each link
+    // that resolves to a regular file INSIDE the staging tree with a copy and
+    // drops the rest, so nothing pointing outside the destination is ever
+    // written. User uploads keep the default refusal (FR-020.3 / SEC-008).
+    symlinks: z.enum(["reject", "materialize"]).default("reject"),
   }),
   z.object({
     op: z.literal("writefile"),

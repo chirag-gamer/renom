@@ -680,6 +680,8 @@ document.getElementById("form-server").addEventListener("submit", async (e) => {
     // so the value belongs with the other admin-only fields.
     body.cpuWeight = Math.max(0, Number(fd.get("cpuWeight")) || 0);
     body.ownerUsername = fd.get("ownerUsername") || undefined;
+    const port = Number(fd.get("port"));
+    body.port = Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined;
   }
   const { status, data } = await api("/servers", {
     method: "POST",
@@ -1219,15 +1221,16 @@ async function openServer(id, tab = "overview", updateUrl = true) {
   if (canServer("backup.read")) tasks.push(refreshBackups(generation));
   if (canServer("schedule.read")) tasks.push(refreshSchedules(generation));
   if (canServer("startup.read")) {
-    tasks.push(
-      refreshAddons(generation),
-      refreshSoftware(generation),
-      refreshVariables(generation),
-    );
+    // Software/Startup do not depend on the capability kind — start them
+    // immediately. Capability decides the addons folder filter; awaiting it
+    // keeps a Fabric server's first paint from filtering to /plugins, and
+    // the hook itself refreshes the installed list when the kind is decided
+    // (its registry probe can be slow, so it must not gate the other tabs).
+    tasks.push(refreshSoftware(generation), refreshVariables(generation));
+    await refreshAddonCapability(generation);
   }
   if (canServer("allocation.read")) tasks.push(refreshNetwork(generation));
   if (canServer("user.read")) tasks.push(refreshSubusers(generation));
-  tasks.push(refreshAddonCapability(generation));
   if (
     canServer("settings.rename") ||
     canServer("settings.reinstall") ||
@@ -1259,6 +1262,8 @@ function leaveServer() {
   tunnelAddress = "";
   addonSearchQuery = "";
   addonSearchPage = 1;
+  // The next server's capability decides the folder filter again.
+  addonCapabilityKind = null;
   const addonInput = document.getElementById("addon-search-input");
   if (addonInput) addonInput.value = "";
   const addonContainer = document.getElementById("addon-cards-container");
@@ -1330,9 +1335,16 @@ function applyServerPermissions() {
   document.getElementById("btn-delete-server").hidden =
     !canServer("settings.delete") || !isPanelAdmin();
   const canEditResources = isPanelAdmin() && canServer("settings.resources");
-  document.getElementById("settings-cpu").closest("label").hidden = !canEditResources;
-  document.getElementById("settings-memory").closest("label").hidden = !canEditResources;
-  document.getElementById("settings-disk").closest("label").hidden = !canEditResources;
+  for (const id of ["settings-cpu", "settings-memory", "settings-disk"]) {
+    const el = document.getElementById(id);
+    // Read-only, not hidden: a server owner still sees the quota they were
+    // given, but the API refuses edits from anyone but a panel admin, so the
+    // form must say the same thing instead of inviting a 403.
+    el.readOnly = !canEditResources;
+    el.closest("label").classList.toggle("field-locked", !canEditResources);
+  }
+  const note = document.getElementById("settings-resources-note");
+  if (note) note.hidden = canEditResources;
   document.getElementById("console-note").hidden = false;
   applyConsoleNote();
 }
@@ -1559,6 +1571,10 @@ function setTab(name, updateUrl = true) {
   // this server doing?" without opening the log.
   document.getElementById("server-rail").hidden = name !== "console" && name !== "overview";
   if (updateUrl && name === "files" && currentServer && canServer("file.read")) {
+    // Opening Files is a fresh browse: root, every time. Remembering the last
+    // folder across tab switches stranded users inside /plugins/connect/
+    // with no visible breadcrumb context.
+    filesDir = "";
     void refreshFiles(serverGeneration);
   }
   if (name === "activity" && currentServer && canServer("activity.read")) {
@@ -1852,6 +1868,18 @@ function joinConsoleSocket() {
     }
   });
 }
+
+// Back/forward cache restores the page without refiring scripts, but kills
+// the underlying TCP connection: the socket client still reports connected
+// while nothing flows ("The WebSocket connection ... was interrupted" is the
+// visible symptom). Restore the live view the way a fresh visit would:
+// rebuild the socket and replay the console history, dedupe handles overlap.
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  if (!currentServer || !canServer("websocket.connect")) return;
+  joinConsoleSocket();
+  void refreshConsoleHistory(serverGeneration);
+});
 
 // 60 samples at the engine's 2s cadence is two minutes of history. The ring
 // is the client's own — the server pushes samples and keeps none, so there is
@@ -2574,6 +2602,9 @@ let addonSearchTotalPages = 1;
 
 let addonInstalledPage = 1;
 const addonInstalledPageSize = 6;
+// "plugin" | "mod" | "bedrock" | null — mirrors the capability endpoint so
+// the installed list filters the right folder between capability refreshes.
+let addonCapabilityKind = null;
 
 async function refreshAddons(generation) {
   const list = document.getElementById("addon-list");
@@ -2589,22 +2620,30 @@ async function refreshAddons(generation) {
     fail(err, "You don't have permission to see plugins.");
     return;
   }
-  const plugins = (data.addons || []).filter((a) => a.folder === "plugins");
-  if (title) title.textContent = `Installed (${plugins.length})`;
-  if (plugins.length === 0) {
+  // The tab lists the folder the capability serves: mods on mod loaders,
+  // plugins everywhere else — the server-side list returns both folders.
+  const folder = addonCapabilityKind === "mod" ? "mods" : "plugins";
+  const noun = folder === "mods" ? "mods" : "plugins";
+  const lede = document.getElementById("addon-installed-lede");
+  if (lede) {
+    lede.textContent = `${noun === "mods" ? "Mods" : "Plugins"} in your /${folder} folder. Changes apply after a restart.`;
+  }
+  const installed = (data.addons || []).filter((a) => a.folder === folder);
+  if (title) title.textContent = `Installed (${installed.length})`;
+  if (installed.length === 0) {
     if (pager) pager.hidden = true;
     const li = document.createElement("li");
     li.className = "empty-state";
-    li.textContent = "No plugins installed yet. Search Modrinth below to install plugins.";
+    li.textContent = `No ${noun} installed yet. Search Modrinth below to install ${noun}.`;
     list.append(li);
     return;
   }
-  const totalPages = Math.max(1, Math.ceil(plugins.length / addonInstalledPageSize));
+  const totalPages = Math.max(1, Math.ceil(installed.length / addonInstalledPageSize));
   addonInstalledPage = Math.min(addonInstalledPage, totalPages);
   const start = (addonInstalledPage - 1) * addonInstalledPageSize;
-  const visible = plugins.slice(start, start + addonInstalledPageSize);
+  const visible = installed.slice(start, start + addonInstalledPageSize);
   if (pager) {
-    pager.hidden = plugins.length <= addonInstalledPageSize;
+    pager.hidden = installed.length <= addonInstalledPageSize;
     const prev = document.getElementById("btn-installed-prev");
     const next = document.getElementById("btn-installed-next");
     const indicator = document.getElementById("installed-page-indicator");
@@ -2639,7 +2678,7 @@ async function refreshAddons(generation) {
     remove.textContent = "Remove";
     remove.hidden = !canServer("startup.update");
     remove.addEventListener("click", async () => {
-      if (!window.confirm(`Remove plugin "${a.name}"?`)) return;
+      if (!window.confirm(`Remove ${noun === "mods" ? "mod" : "plugin"} "${a.name}"?`)) return;
       const res = await api(
         `/servers/${currentServer.id}/addons/${a.folder}/${encodeURIComponent(a.name)}`,
         { method: "DELETE", token: store.token },
@@ -2649,7 +2688,7 @@ async function refreshAddons(generation) {
       } else {
         const success = document.getElementById("addons-alert-success");
         if (success) {
-          success.textContent = `Removed plugin "${a.name}".`;
+          success.textContent = `Removed ${noun === "mods" ? "mod" : "plugin"} "${a.name}".`;
           success.hidden = false;
         }
         refreshAddons();
@@ -2673,6 +2712,73 @@ document.getElementById("btn-installed-next")?.addEventListener("click", () => {
   void refreshAddons();
 });
 
+/**
+ * BDS packs: list what is installed under behavior_packs/ and
+ * resource_packs/ and let owners remove a pack. There is no search here on
+ * purpose — no public Bedrock addon registry exists that the panel can call
+ * (Modrinth has zero bedrock loaders; CurseForge requires an API key), so
+ * packs arrive through the Files tab.
+ */
+async function refreshBedrockPacks() {
+  const section = document.getElementById("bedrock-packs-section");
+  const list = document.getElementById("bedrock-packs-list");
+  if (!section || !list) return;
+  // Revalidate after the await: switching servers while the pack listing is
+  // in flight must not paint the previous server's packs here.
+  const serverId = currentServer?.id;
+  const generation = serverGeneration;
+  const { status, data } = await api(`/servers/${serverId}/addons/bedrock`, {
+    token: store.token,
+  });
+  if (isStaleLoad(generation) || currentServer?.id !== serverId) return;
+  list.replaceChildren();
+  if (status !== 200) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const packs = data.packs ?? [];
+  if (packs.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty-state";
+    empty.textContent = "No packs installed yet.";
+    list.append(empty);
+    return;
+  }
+  for (const pack of packs) {
+    const li = document.createElement("li");
+    li.className = "file-row";
+    const name = document.createElement("span");
+    name.className = "addon-name";
+    name.textContent = pack.name + (pack.version ? ` · ${pack.version}` : "");
+    const kind = document.createElement("span");
+    kind.className = "chip";
+    kind.textContent = pack.type === "behavior_packs" ? "behavior" : "resource";
+    li.append(name, kind);
+    if (canServer("startup.update")) {
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "secondary";
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", async () => {
+        if (!window.confirm(`Remove pack "${pack.name}"?`)) return;
+        const del = await api(
+          `/servers/${currentServer.id}/addons/bedrock/${pack.type}/${encodeURIComponent(pack.folder)}`,
+          { method: "DELETE", token: store.token },
+        );
+        if (del.status === 204) {
+          showToast(`Removed ${pack.name}.`, "success");
+        } else {
+          showToast(describeProblem(del.status, del.data), "error");
+        }
+        void refreshBedrockPacks();
+      });
+      li.append(removeBtn);
+    }
+    list.append(li);
+  }
+}
+
 async function refreshAddonCapability(generation) {
   const note = document.getElementById("addon-search-note");
   const { status, data } = await api(`/servers/${currentServer.id}/addons/capability`, {
@@ -2680,9 +2786,16 @@ async function refreshAddonCapability(generation) {
   });
   if (isStaleLoad(generation)) return;
   const navLink = document.getElementById("server-nav-addons");
+  const kind = status === 200 ? data.kind : null;
   const supported = status === 200 && data.supported;
   const usable = supported && canServer("startup.read");
+  const kindChanged = addonCapabilityKind !== (usable ? kind : null);
+  addonCapabilityKind = usable ? kind : null;
   if (navLink) navLink.hidden = !usable;
+  // The installed list may have painted before the kind was known or with a
+  // stale kind (openServer now awaits this, but swaps fire it fire-and-forget);
+  // re-derive the list only when the folder decision actually changed.
+  if (usable && kindChanged) void refreshAddons(generation);
   if (!usable) {
     if (!document.getElementById("tab-addons").hidden) {
       setTab(availableServerTabs()[0] || "console");
@@ -2690,7 +2803,43 @@ async function refreshAddonCapability(generation) {
     return;
   }
   const navLabel = document.getElementById("server-nav-addons-label");
-  if (navLabel) navLabel.textContent = "Plugins";
+  if (navLabel)
+    navLabel.textContent = kind === "bedrock" ? "Addons" : kind === "mod" ? "Mods" : "Plugins";
+  const isBedrock = kind === "bedrock";
+  // The jar "Installed" list, the Modrinth browse form and their ledes are
+  // plugin/mod furniture; BDS gets its pack list instead. The pack section
+  // must also re-hide when a Bedrock server swaps to non-Bedrock software.
+  for (const id of [
+    "addon-list",
+    "addons-installed-pagination",
+    "addon-browse-title",
+    "addon-browse-lede",
+    "addon-installed-lede",
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = isBedrock;
+  }
+  if (!isBedrock) {
+    const packs = document.getElementById("bedrock-packs-section");
+    if (packs) packs.hidden = true;
+  }
+  const browseBar = document.getElementById("form-addon-search");
+  if (browseBar) browseBar.hidden = isBedrock;
+  const cards = document.getElementById("addon-cards-container");
+  if (cards) cards.hidden = isBedrock;
+  const searchPagination = document.getElementById("addons-pagination");
+  if (searchPagination) searchPagination.hidden = true;
+  if (isBedrock) {
+    // BDS has no search backend (Modrinth ships zero bedrock loaders), so
+    // the tab shows installed packs instead of a search form.
+    if (note) {
+      note.hidden = false;
+      note.textContent =
+        "Bedrock addons install from the Files tab: upload a .mcpack/.mcaddon and extract it into behavior_packs/ or resource_packs/. Installed packs appear below.";
+    }
+    void refreshBedrockPacks();
+    return;
+  }
   if (note) note.hidden = true;
   if (!addonSearchQuery) {
     void executeAddonSearch("", 1);
@@ -2773,6 +2922,12 @@ async function executeAddonSearch(query, page = 1) {
       icon.src = hit.iconUrl;
       icon.alt = "";
       icon.loading = "lazy";
+      // The box is a fixed 46×46; declaring the intrinsic size lets the
+      // browser reserve the slot before the bytes arrive (kills the
+      // "width/height to reduce layout shift" Lighthouse hint) instead of
+      // measuring the placeholder as 0×0.
+      icon.width = 46;
+      icon.height = 46;
       // A blocked or dead icon must not leave a hole where the mark was.
       icon.addEventListener("error", () => {
         iconBox.textContent = "✦";
@@ -2881,12 +3036,20 @@ async function handleInstallAddon(hit, installBtn) {
   installBtn.disabled = false;
   installBtn.textContent = "Install";
 
-  if (res.status !== 201) {
+  if (res.status !== 201 && res.status !== 200) {
     if (errorAlert) fail(errorAlert, describeProblem(res.status, res.data));
     showToast(
       `Failed to install "${hit.title}": ${describeProblem(res.status, res.data)}`,
       "error",
     );
+  } else if (res.status === 200) {
+    // 200 = every requested file was already installed (nothing downloaded).
+    if (successAlert) {
+      successAlert.textContent = `"${hit.title}" is already installed — nothing to download.`;
+      successAlert.hidden = false;
+    }
+    showToast(`"${hit.title}" is already installed.`, "success");
+    refreshAddons();
   } else {
     if (successAlert) {
       successAlert.textContent = `Plugin "${hit.title}" installed successfully! It will activate on the next server start.`;
@@ -2943,12 +3106,17 @@ function openAddonVersionDialog(hit, versions) {
       });
       btn.disabled = false;
       btn.textContent = "Install";
-      if (res.status !== 201) {
+      if (res.status !== 201 && res.status !== 200) {
         if (err) fail(err, describeProblem(res.status, res.data));
         showToast(
           `Failed to install "${hit.title}": ${describeProblem(res.status, res.data)}`,
           "error",
         );
+      } else if (res.status === 200) {
+        // 200 = every requested file was already installed (nothing new).
+        if (typeof dialog.close === "function") dialog.close();
+        else dialog.removeAttribute("open");
+        showToast(`"${hit.title}" is already installed.`, "success");
       } else {
         if (typeof dialog.close === "function") dialog.close();
         else dialog.removeAttribute("open");
@@ -3204,7 +3372,36 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
     confirmBtn.textContent = `Switch to ${pendingSwapSoftware.name}`;
   }
 
-  if (res.status !== 200) {
+  if (res.status === 202) {
+    // The install runs in the background now; the API returns before the
+    // downloads finish, so a multi-minute Fabric/Forge swap no longer dies
+    // as a proxy 502.
+    if (dialog) {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    }
+    if (successAlert) {
+      successAlert.textContent = `Swapping to ${pendingSwapSoftware.name} — the install is running in the background. This page updates when it finishes.`;
+      successAlert.hidden = false;
+    }
+    showToast(`Installing ${pendingSwapSoftware.name}…`, "success");
+    const settled = await awaitServerInstall(currentServer.id);
+    if (settled && settled.status === "ready") {
+      showToast(`Swapped to ${pendingSwapSoftware.name}.`, "success");
+    } else if (settled && settled.status === "install_failed") {
+      if (successAlert) successAlert.hidden = true;
+      if (err)
+        fail(
+          err,
+          "The software install failed. Check the server overview for details, then try the swap again.",
+        );
+      showToast("The software install failed.", "error");
+    }
+    await refreshAfterSwap();
+    return;
+  }
+
+  if (res.status !== 200 && res.status !== 202) {
     if (err) fail(err, describeProblem(res.status, res.data));
     return;
   }
@@ -3223,15 +3420,32 @@ document.getElementById("btn-software-swap-confirm")?.addEventListener("click", 
     showToast(`Swapped to ${pendingSwapSoftware.name}.`, "success");
   }
 
+  await refreshAfterSwap();
+});
+
+/**
+ * Everything that is a function of the server's blueprint must be refreshed
+ * after a swap: the tab set (applyServerPermissions), the Plugins/Mods/Addons
+ * tab label and visibility (refreshAddonCapability), software + variables.
+ * Without this a Paper→BDS swap left the jar list and search visible, and
+ * Java↔Bedrock swaps left a stale Properties link until a full page reload.
+ */
+async function refreshAfterSwap() {
   const srv = await api(`/servers/${currentServer.id}`, { token: store.token });
   if (srv.status === 200) {
     currentServer = srv.data.server;
     renderServerHeader();
     renderServerNav();
+    applyServerPermissions();
   }
+  void refreshAddonCapability(serverGeneration);
+  // A swap can change the folder contents even when the capability kind stays
+  // the same (paper → purpur), so always re-read the installed list; the
+  // capability hook skips its own refresh when the kind did not change.
+  void refreshAddons(serverGeneration);
   refreshSoftware();
   refreshVariables();
-});
+}
 
 document.getElementById("btn-software-prev")?.addEventListener("click", () => {
   if (softwarePage > 1) {
@@ -3448,8 +3662,33 @@ document.getElementById("form-settings").addEventListener("submit", async (e) =>
   else {
     currentServer = data.server;
     renderServerHeader();
+    showToast("Settings saved.", "success");
   }
 });
+
+/**
+ * Waits for a backgrounded install (reinstall, software swap) to settle.
+ * The 202 responses return before the install runs, so the caller polls the
+ * server row: `installing` until runInstallOps resolves, then `ready` or
+ * `install_failed`. Returns the settled server row, or null when the poll
+ * ended without a verdict (navigation away, poll error, 15-minute deadline).
+ */
+async function awaitServerInstall(serverId) {
+  const deadline = Date.now() + 15 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (serverId !== currentServer?.id) return null;
+    const { status, data } = await api(`/servers/${serverId}`, { token: store.token });
+    if (status !== 200) return null;
+    const srv = data.server;
+    if (srv) {
+      currentServer = srv;
+      renderServerHeader();
+      if (srv.status !== "installing") return srv;
+    }
+  }
+  return null;
+}
 
 document.getElementById("btn-reinstall").addEventListener("click", async () => {
   const err = document.getElementById("settings-error");
@@ -3464,6 +3703,16 @@ document.getElementById("btn-reinstall").addEventListener("click", async () => {
     method: "POST",
     token: store.token,
   });
+  if (status === 202) {
+    showToast("Reinstall started — files download in the background.", "success");
+    const settled = await awaitServerInstall(currentServer.id);
+    if (settled && settled.status === "install_failed") {
+      fail(err, "Reinstall failed. Check the server status and try again.");
+    } else if (settled && settled.status === "ready") {
+      showToast("Reinstall finished.", "success");
+    }
+    return;
+  }
   if (status !== 200) fail(err, describeProblem(status, data));
 });
 

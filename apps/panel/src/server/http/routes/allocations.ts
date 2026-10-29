@@ -10,7 +10,12 @@ import {
   assertSuspendedReadable,
 } from "../middleware/authz.js";
 import { parseBody } from "../../shared/validate.js";
-import { BadRequestError, ConflictError, NotFoundError } from "../../shared/errors.js";
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from "../../shared/errors.js";
 import { ulid } from "../../shared/ulid.js";
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
@@ -36,6 +41,13 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
   router.use(requireAuth(auth));
   const guard = (perm: string) => requireServerPermission(perm, db);
 
+  /** Ports are infrastructure: assign/release is a panel-admin decision. */
+  const requireAdmin = (req: { principal?: { role?: string } | undefined }) => {
+    if (req.principal?.role !== "owner" && req.principal?.role !== "admin") {
+      throw new ForbiddenError("Only panel administrators can manage port allocations");
+    }
+  };
+
   router.get("/servers/:id/allocations", guard("allocation.read"), (req, res, next) => {
     try {
       assertSuspendedReadable(req, res);
@@ -53,15 +65,33 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
   router.post("/servers/:id/allocations", guard("allocation.update"), (req, res, next) => {
     try {
       assertNotSuspendedForMutation(req, res);
+      requireAdmin(req);
       const body = parseBody(assignSchema, req);
       const serverId = req.params.id ?? "";
       const now = Date.now();
       const id = ulid(now);
+      // One port per server: a second unreleased allocation is refused
+      // before the insert. The check + insert share one transaction so two
+      // concurrent POSTs cannot both pass the count probe; the UNIQUE(ip,
+      // port) partial index remains the backstop for the same-port race.
+      // Blueprints may declare auxiliary ports (BDS's IPv6 game port); those
+      // are derived from the blueprint at boot, not separately allocated
+      // rows, so the one-row rule stands.
       try {
-        db.prepare(
-          `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
-           VALUES (?, ?, ?, ?, '', ?, ?)`,
-        ).run(id, serverId, body.ip, body.port, now, now);
+        db.transaction(() => {
+          const existing = db
+            .prepare("SELECT COUNT(*) AS n FROM allocations WHERE server_id = ? AND released = 0")
+            .get(serverId) as { n: number };
+          if (Number(existing.n) > 0) {
+            throw new ConflictError(
+              "This server already has an allocation — one port per server; release it first",
+            );
+          }
+          db.prepare(
+            `INSERT INTO allocations (id, server_id, ip, port, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, '', ?, ?)`,
+          ).run(id, serverId, body.ip, body.port, now, now);
+        });
       } catch (err) {
         // Only the address-in-use conflict maps to 409; anything else is a
         // real database problem and must surface as a 500, not a lie.
@@ -91,6 +121,7 @@ export function allocationsRouter(deps: AllocationsDeps): Router {
     (req, res, next) => {
       try {
         assertNotSuspendedForMutation(req, res);
+        requireAdmin(req);
         const serverId = req.params.id ?? "";
         const allocationId = req.params.allocationId ?? "";
         const remaining = db

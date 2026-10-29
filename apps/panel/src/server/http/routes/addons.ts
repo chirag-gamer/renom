@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "../../infra/db/database.js";
 import type { ServersRepo } from "../../modules/servers/repo.js";
@@ -40,6 +40,7 @@ const addonsSchema = z
   });
 
 const ADDON_DIRS = ["mods", "plugins"] as const;
+const BEDROCK_PACK_TYPES = ["behavior_packs", "resource_packs"] as const;
 
 export interface AddonsDeps {
   db: Database;
@@ -83,15 +84,27 @@ export function addonsRouter(deps: AddonsDeps): Router {
     return modrinthPlatform(server.blueprint_slug);
   };
 
-  // What the client needs to decide whether to show the Addons tab at all.
+  // What the client needs to decide whether to show the Addons tab at all,
+  // and which flavor it is: "plugin" (Paper/Purpur/Velocity search Modrinth
+  // plugins), "mod" (Fabric/Forge search mods — hiding the tab there would
+  // leave mod servers with no way to install anything), "bedrock" (BDS
+  // manages .mcaddon packs from disk; Modrinth publishes zero bedrock
+  // loaders, verified live, so there is no search backend to call).
   router.get("/servers/:id/addons/capability", guard("startup.read"), (req, res, next) => {
     (async () => {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
-      const platform = platformOf(id);
-      const isPluginPlatform = platform !== null && platform.projectType === "plugin";
+      const server = servers.byId(id);
+      if (!server) throw new NotFoundError("Not found");
+      const platform = modrinthPlatform(server.blueprint_slug);
+      const kind =
+        server.blueprint_slug === "bedrock-bds"
+          ? "bedrock"
+          : platform
+            ? platform.projectType
+            : null;
       let mcVersion: string | null = null;
-      if (isPluginPlatform) {
+      if (kind === "plugin" || kind === "mod") {
         try {
           mcVersion = await mcVersionOf(id);
         } catch {
@@ -99,30 +112,30 @@ export function addonsRouter(deps: AddonsDeps): Router {
         }
       }
       res.json({
-        supported: isPluginPlatform,
-        folder: isPluginPlatform ? platform.dir : null,
-        projectType: isPluginPlatform ? platform.projectType : null,
+        supported: kind !== null,
+        kind,
+        folder: platform ? platform.dir : null,
+        projectType: platform ? platform.projectType : null,
         mcVersion,
       });
     })().catch(next);
   });
 
   // Search is filtered to this server's loader and exact Minecraft version.
-  // Restrict this tab to display ONLY plugins per FR.
   router.get("/servers/:id/addons/search", guard("startup.read"), (req, res, next) => {
     (async () => {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
-      if (!platform || platform.projectType !== "plugin") {
-        throw new ConflictError("This server software has no plugin platform");
+      if (!platform) {
+        throw new ConflictError("This server software has no Modrinth platform");
       }
       const mcVersion = await mcVersionOf(id);
       const q = parseQuery(searchQuery, req);
       const offset = (q.page - 1) * q.limit;
       const result = await searchModrinthProjects(
         fetch,
-        { loaders: platform.loaders, projectType: "plugin" },
+        { loaders: platform.loaders, projectType: platform.projectType },
         mcVersion,
         q.q,
         q.limit,
@@ -146,8 +159,8 @@ export function addonsRouter(deps: AddonsDeps): Router {
       assertSuspendedReadable(req, res);
       const id = req.params.id ?? "";
       const platform = platformOf(id);
-      if (!platform || platform.projectType !== "plugin") {
-        throw new ConflictError("This server software has no plugin platform");
+      if (!platform) {
+        throw new ConflictError("This server software has no Modrinth platform");
       }
       const mcVersion = await mcVersionOf(id);
       const projectId = req.params.projectId ?? "";
@@ -165,6 +178,141 @@ export function addonsRouter(deps: AddonsDeps): Router {
     if (!(ADDON_DIRS as readonly string[]).includes(folder)) return null;
     return join(dataDir, "servers", serverId, folder);
   };
+
+  // --- Bedrock addon packs (BDS) ---
+  // BDS has no search backend to call: Modrinth publishes zero bedrock
+  // loaders/categories (probed live 2026-10-29) and CurseForge needs an API
+  // key the panel does not have. What IS real and verifiable: BDS loads packs
+  // from `behavior_packs/` and `resource_packs/`, each folder carrying a
+  // manifest.json. Addons land there via the file manager (upload a
+  // .mcpack/.mcaddon and extract it — the Files tab decompress supports both
+  // shapes); this endpoint lists and removes what is installed.
+
+  const packDirFor = (serverId: string, type: string, name: string): string => {
+    if (!(BEDROCK_PACK_TYPES as readonly string[]).includes(type)) {
+      throw new BadRequestError("Pack type must be behavior_packs or resource_packs");
+    }
+    // `name` is a folder under the pack root: no separators, no dot-storms.
+    if (!/^[A-Za-z0-9][A-Za-z0-9 ._+-]*$/.test(name) || name.includes("..")) {
+      throw new BadRequestError("Invalid pack folder name");
+    }
+    return join(dataDir, "servers", serverId, type, name);
+  };
+
+  router.get("/servers/:id/addons/bedrock", guard("startup.read"), (req, res, next) => {
+    try {
+      assertSuspendedReadable(req, res);
+      const id = req.params.id ?? "";
+      const server = servers.byId(id);
+      if (!server) throw new NotFoundError("Not found");
+      if (server.blueprint_slug !== "bedrock-bds") {
+        throw new ConflictError("Bedrock packs only apply to the Bedrock Dedicated Server");
+      }
+      const packs: Array<{
+        name: string;
+        uuid: string | null;
+        version: string | null;
+        type: string;
+        folder: string;
+      }> = [];
+      for (const type of BEDROCK_PACK_TYPES) {
+        const root = join(dataDir, "servers", id, type);
+        if (!existsSync(root)) continue;
+        for (const entry of readdirSync(root, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const manifestPath = join(root, entry.name, "manifest.json");
+          if (!existsSync(manifestPath)) continue;
+          try {
+            const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+              header?: { name?: string; uuid?: string; version?: number[] };
+            };
+            const header = manifest.header ?? {};
+            const version = Array.isArray(header.version)
+              ? header.version.map(String).join(".")
+              : null;
+            packs.push({
+              name: header.name ?? entry.name,
+              uuid: header.uuid ?? null,
+              version,
+              type,
+              folder: entry.name,
+            });
+          } catch {
+            // A pack with a broken manifest still shows up, by folder name.
+            packs.push({
+              name: entry.name,
+              uuid: null,
+              version: null,
+              type,
+              folder: entry.name,
+            });
+          }
+        }
+      }
+      res.json({ packs });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete(
+    "/servers/:id/addons/bedrock/:type/:name",
+    guard("startup.update"),
+    (req, res, next) => {
+      try {
+        assertNotSuspendedForMutation(req, res);
+        const id = req.params.id ?? "";
+        const server = servers.byId(id);
+        if (!server) throw new NotFoundError("Not found");
+        if (server.blueprint_slug !== "bedrock-bds") {
+          throw new ConflictError("Bedrock packs only apply to the Bedrock Dedicated Server");
+        }
+        const packDir = packDirFor(id, req.params.type ?? "", req.params.name ?? "");
+        if (!existsSync(packDir)) throw new NotFoundError("Pack not found");
+        rmSync(packDir, { recursive: true, force: true });
+        // Drop the pack from BDS's known-packs registry when it was listed;
+        // a stale entry pointing at a deleted folder makes BDS log warnings.
+        const knownPath = join(dataDir, "servers", id, "valid_known_packs.json");
+        if (existsSync(knownPath)) {
+          try {
+            const known = JSON.parse(readFileSync(knownPath, "utf8")) as Array<{
+              pack_id?: string;
+              path?: string;
+            }>;
+            // Match the exact registry entry for the removed folder —
+            // `includes("/<name>")` would also drop sibling folders whose
+            // names merely start with the removed one (my_pack vs my_pack_v2).
+            // BDS writes paths like "behavior_packs/<folder>" (no leading
+            // slash); normalize the leading "./" or "/" away before comparing.
+            const wanted = `${req.params.type}/${req.params.name}`;
+            const filtered = known.filter((entry) => {
+              const path = (entry.path ?? "").replace(/^\.{0,2}\//, "");
+              return path !== wanted;
+            });
+            if (filtered.length !== known.length) {
+              writeFileSync(knownPath, `${JSON.stringify(filtered, null, 2)}\n`, "utf8");
+            }
+          } catch {
+            // An unparsable registry is BDS's problem, not a reason to fail
+            // the deletion — the folder itself is gone, which is what the
+            // user asked for.
+          }
+        }
+        audit.record({
+          event: "server.addons.remove",
+          actorUserId: req.principal!.userId,
+          actorApiKeyId: req.principal!.apiKeyId,
+          actorIp: req.ip,
+          requestId: req.requestId,
+          serverId: id,
+          target: { type: req.params.type, name: req.params.name },
+        });
+        res.status(204).send();
+      } catch (e) {
+        next(e);
+      }
+    },
+  );
 
   router.get("/servers/:id/addons", guard("startup.read"), (req, res, next) => {
     try {
@@ -197,8 +345,8 @@ export function addonsRouter(deps: AddonsDeps): Router {
       const server = servers.byId(id);
       if (!server) throw new NotFoundError("Not found");
       const platform = modrinthPlatform(server.blueprint_slug);
-      if (!platform || platform.projectType !== "plugin") {
-        throw new ConflictError("This server software has no plugin platform");
+      if (!platform) {
+        throw new ConflictError("This server software has no Modrinth platform");
       }
       const vars = storedVariables(db, id, []);
       const mcRow = db
@@ -206,7 +354,7 @@ export function addonsRouter(deps: AddonsDeps): Router {
         .get(id) as { value: string } | undefined;
       if (mcRow) vars["mcVersion"] = mcRow.value;
       const targets = body.projects && body.projects.length > 0 ? body.projects : [body.project!];
-      await installModrinthProjects(
+      const result = await installModrinthProjects(
         fetch,
         {
           serverId: id,
@@ -224,9 +372,15 @@ export function addonsRouter(deps: AddonsDeps): Router {
         actorIp: req.ip,
         requestId: req.requestId,
         serverId: id,
-        target: { projects: targets, versionId: body.versionId },
+        target: { projects: targets, versionId: body.versionId, skipped: result.skipped },
       });
-      res.status(201).json({ installed: targets, versionId: body.versionId ?? null });
+      // 200 when everything was already installed (a repeat click must not
+      // look like a fresh download), 201 when something new landed.
+      res.status(result.downloaded.length > 0 ? 201 : 200).json({
+        installed: result.downloaded,
+        skipped: result.skipped,
+        versionId: body.versionId ?? null,
+      });
     })().catch(next);
   });
 

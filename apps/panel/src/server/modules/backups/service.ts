@@ -1,7 +1,16 @@
 import { spawnSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, rmSync, statSync, renameSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  rmSync,
+  statSync,
+  renameSync,
+} from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { join, resolve, sep } from "node:path";
 import type { Database } from "../../infra/db/database.js";
@@ -11,6 +20,7 @@ import type { LocalProcessEngine } from "../runtime/engine.js";
 import type { AuditService } from "../audit/service.js";
 import { ulid } from "../../shared/ulid.js";
 import { ConflictError, NotFoundError } from "../../shared/errors.js";
+import { tarBinary } from "../../shared/tar.js";
 
 export interface BackupRecord {
   id: string;
@@ -33,7 +43,7 @@ let tarAvailable: boolean | null = null;
 export function isTarAvailable(): boolean {
   if (tarAvailable === null) {
     try {
-      const r = spawnSync("tar", ["--version"], {
+      const r = spawnSync(tarBinary(), ["--version"], {
         stdio: "ignore",
         timeout: 5000,
         windowsHide: true,
@@ -107,11 +117,37 @@ export class BackupsService {
 
     const now = Date.now();
     const id = ulid(now);
-    const fileName = `${id}.tar.gz`;
-    const srcDir = join(this.dataDir, "servers", serverId);
+    // Human-readable archive name: <software>_<YYYY-MM-DD>_<HH-MM-SS>.tar.gz
+    // (the requested [Software]_[Day]_[Time-with-seconds] convention). The
+    // database id stays a ULID — routes address backups by id — but a wall of
+    // opaque ids told an operator nothing about which archive to restore.
+    // Collision handling keeps the format: a second backup taken in the same
+    // second gains -2, -3, … after the stamp.
+    const software = server.blueprint_slug.replace(/[^\w.-]+/g, "-") || "server";
+    const stamp = new Date(now);
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    const day = `${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}`;
+    const time = `${pad(stamp.getHours())}-${pad(stamp.getMinutes())}-${pad(stamp.getSeconds())}`;
+    let fileName = `${software}_${day}_${time}.tar.gz`;
     const destDir = join(this.dataDir, "backups", serverId);
     mkdirSync(destDir, { recursive: true });
-    const dest = join(destDir, fileName);
+    // Reserve the name atomically (exclusive create) instead of probing with
+    // existsSync: two creators in the same second (manual POST + schedule)
+    // would both pass a probe and then tar into the same path, truncating
+    // the first archive and breaking its recorded checksum.
+    let dest = join(destDir, fileName);
+    let reserved = -1;
+    for (let attempt = 2; reserved === -1; attempt++) {
+      try {
+        reserved = openSync(dest, "wx");
+        closeSync(reserved);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+        fileName = `${software}_${day}_${time}-${attempt}.tar.gz`;
+        dest = join(destDir, fileName);
+      }
+    }
+    const srcDir = join(this.dataDir, "servers", serverId);
 
     if (!existsSync(srcDir)) mkdirSync(srcDir, { recursive: true });
     // Blueprint denylist plus the hardcoded secret excludes (n2: tar emits
@@ -121,13 +157,21 @@ export class BackupsService {
       sanitizeExclude(p),
     ]);
     try {
-      await this.execTar("tar", ["-czf", dest, ...excludes, "-C", srcDir, "."], {
+      await this.execTar(tarBinary(), ["-czf", dest, ...excludes, "-C", srcDir, "."], {
         timeout: 10 * 60_000,
         windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
       });
-    } catch {
+    } catch (err) {
       rmSync(dest, { force: true });
-      throw new ConflictError("Backup failed while archiving the server directory");
+      // The blanket message hid every real cause (a locked file, a vanished
+      // log, an unreadable library). Tar's own stderr names the member.
+      const detail =
+        err && typeof err === "object" && "stderr" in err ? String(err.stderr ?? "").trim() : "";
+      const tail = detail.split(/\r?\n/).filter(Boolean).slice(-3).join("; ");
+      throw new ConflictError(
+        `Backup failed while archiving the server directory${tail ? `: ${tail}` : ""}`,
+      );
     }
 
     const bytes = statSync(dest).size;
@@ -191,14 +235,22 @@ export class BackupsService {
     mkdirSync(staging, { recursive: true });
     try {
       await assertTarMembersSafe(file, staging);
-      await this.execTar("tar", ["-xzf", file, "-C", staging], {
+      await this.execTar(tarBinary(), ["-xzf", file, "-C", staging], {
         timeout: 10 * 60_000,
         windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
       });
     } catch (err) {
       rmSync(staging, { recursive: true, force: true });
       if (err instanceof ConflictError) throw err;
-      throw new ConflictError("Restore failed while extracting the archive");
+      // Same diagnosability as the archive path: tar's own stderr names the
+      // member that broke the extraction.
+      const detail =
+        err && typeof err === "object" && "stderr" in err ? String(err.stderr ?? "").trim() : "";
+      const tail = detail.split(/\r?\n/).filter(Boolean).slice(-3).join("; ");
+      throw new ConflictError(
+        `Restore failed while extracting the archive${tail ? `: ${tail}` : ""}`,
+      );
     }
     // Swap: move the live dir aside, move staging in, drop the old copy.
     // A crash between the moves leaves `<id>.pre-restore-<backup>` behind —
@@ -293,7 +345,7 @@ async function assertTarMembersSafe(archive: string, destDir: string): Promise<v
   const execFileAsync = promisify(execFile);
   let listing: string;
   try {
-    const { stdout } = await execFileAsync("tar", ["-tzf", archive], {
+    const { stdout } = await execFileAsync(tarBinary(), ["-tzf", archive], {
       timeout: 60_000,
       windowsHide: true,
       maxBuffer: 32 * 1024 * 1024,

@@ -197,6 +197,35 @@ describe("servers CRUD + ownership + quotas", () => {
     expect(res.body.server.cpuWeight).toBe(300);
   });
 
+  it("admin-chosen port is honored when free and 409 when taken", async () => {
+    // Free port: the server's primary allocation is exactly the chosen one.
+    const created = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "port-picked",
+        blueprintSlug: "generic-nodejs",
+        memoryMb: 128,
+        diskQuotaMb: 256,
+        port: 25601,
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.server.primaryAllocation.port).toBe(25601);
+
+    // Taken port: a readable 409, not a generic 500.
+    const clash = await request(app)
+      .post("/api/v3/servers")
+      .set("authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "port-clash",
+        blueprintSlug: "generic-nodejs",
+        memoryMb: 128,
+        diskQuotaMb: 256,
+        port: 25601,
+      });
+    expect(clash.status).toBe(409);
+  });
+
   it("alice renames her server; blueprint stays immutable", async () => {
     const res = await request(app)
       .patch(`/api/v3/servers/${aliceServerId}`)
